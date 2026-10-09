@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { encodeRequest, decodeRequest, type PayRequest } from "./slippayqr.ts";
+import { encodeRequest, decodeRequest, stroopsToXlm, type PayRequest } from "./slippayqr.ts";
 
 // A known-valid Stellar ed25519 public key (56 chars, base32). The decoder only
 // shape-checks against /^[GC][A-Z2-7]{55}$/, so these round-trips are
@@ -39,5 +39,54 @@ describe("encodeRequest → decodeRequest round-trip", () => {
 
   it("treats a missing asset as the legacy (XLM) default", () => {
     expect(decodeRequest(`slippay:pay?to=${TO}&amount=10`).asset).toBeUndefined();
+  });
+});
+
+describe("decodeRequest malformed input", () => {
+  it("rejects a non-slippay string", () => {
+    expect(() => decodeRequest("https://slippay.cc/pay")).toThrow("Esse QR não é um pedido de pagamento Slippay.");
+  });
+
+  it("rejects a truncated payload with no query string", () => {
+    expect(() => decodeRequest("slippay:pay")).toThrow("Esse QR não é um pedido de pagamento Slippay.");
+    expect(() => decodeRequest("slippay:pay?")).toThrow("QR incompleto (falta destinatário ou valor).");
+  });
+
+  it("rejects a payload missing the recipient or the amount", () => {
+    expect(() => decodeRequest(`slippay:pay?amount=10`)).toThrow("QR incompleto (falta destinatário ou valor).");
+    expect(() => decodeRequest(`slippay:pay?to=${TO}`)).toThrow("QR incompleto (falta destinatário ou valor).");
+  });
+
+  it("rejects a recipient that is not a Stellar G/C address", () => {
+    expect(() => decodeRequest(`slippay:pay?to=0xdeadbeef&amount=10`)).toThrow("Endereço do QR é inválido.");
+    // valid base32 but 55 chars (one short)
+    expect(() => decodeRequest(`slippay:pay?to=${TO.slice(0, 55)}&amount=10`)).toThrow("Endereço do QR é inválido.");
+  });
+
+  it("rejects a non-numeric amount", () => {
+    expect(() => decodeRequest(`slippay:pay?to=${TO}&amount=1.5`)).toThrow("Valor do QR é inválido.");
+    expect(() => decodeRequest(`slippay:pay?to=${TO}&amount=-10`)).toThrow("Valor do QR é inválido.");
+    expect(() => decodeRequest(`slippay:pay?to=${TO}&amount=abc`)).toThrow("Valor do QR é inválido.");
+  });
+
+  it("drops an unknown asset value instead of populating it partially", () => {
+    expect(decodeRequest(`slippay:pay?to=${TO}&amount=10&asset=DOGE`).asset).toBeUndefined();
+  });
+
+  it("is case-insensitive on the scheme", () => {
+    expect(decodeRequest(`SLIPPAY:PAY?to=${TO}&amount=10`)).toEqual({ to: TO, amount: "10" });
+  });
+});
+
+describe("stroopsToXlm", () => {
+  it("renders stroops as a pt-BR human amount", () => {
+    expect(stroopsToXlm("3000000")).toBe("0,3");
+    expect(stroopsToXlm("10000000")).toBe("1");
+    expect(stroopsToXlm("15000000")).toBe("1,5");
+  });
+
+  it("handles the minimum unit and zero without crashing", () => {
+    expect(stroopsToXlm("1")).toBe("0,0000001");
+    expect(stroopsToXlm("0")).toBe("0");
   });
 });
