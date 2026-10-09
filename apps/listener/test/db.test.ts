@@ -131,6 +131,51 @@ describe("reconcileMatch — lease-scoped order-status writes", () => {
     ).toBe(true);
   });
 
+  it("treats a zero-row update as a lost write, not success, and enqueues no webhook", async () => {
+    // Zero rows matched: this pod no longer holds the row (lease lost, or the
+    // lease holder already transitioned it). reconcileMatch must not fall
+    // through to the success side-effect.
+    const mock = makeMockDb({ orderUpdates: [{ data: null, error: null }] });
+
+    await reconcileMatch(mock.db, order, { outcome: "paid" }, "tx-1");
+
+    expect(callsTo(mock.calls, "orders", "update")).toHaveLength(1);
+    expect(callsTo(mock.calls, "webhook_deliveries", "insert")).toHaveLength(0);
+    // The caller is told: a structured `reconcile_skipped` warning is emitted.
+    expect(logged.some((l) => l.includes("reconcile_skipped"))).toBe(true);
+  });
+
+  it("is idempotent: a replayed match writes exactly one webhook, not two", async () => {
+    const mock = makeMockDb({
+      orderUpdates: [{ data: paidRow, error: null }, { data: null, error: null }],
+      webhookInsert: { error: null },
+    });
+
+    // First delivery matches the row and enqueues the webhook.
+    await reconcileMatch(mock.db, order, { outcome: "paid" }, "tx-1");
+    // Replay: the status predicate no longer matches → zero rows.
+    await reconcileMatch(mock.db, order, { outcome: "paid" }, "tx-1");
+
+    expect(callsTo(mock.calls, "webhook_deliveries", "insert")).toHaveLength(1);
+  });
+
+  it("only permits pending → underpaid (no backwards paid → underpaid transition)", async () => {
+    const mock = makeMockDb({ orderUpdates: [{ data: null, error: null }] });
+
+    await reconcileMatch(
+      mock.db,
+      order,
+      { outcome: "underpaid", expected: "1.6500000", received: "0.5000000" },
+      "tx-partial",
+    );
+
+    const update = callsTo(mock.calls, "orders", "update");
+    expect(update[0]!.args[0]).toMatchObject({ status: "underpaid", paid_at: null });
+
+    const ins = callsTo(mock.calls, "orders", "in");
+    expect(ins.some((c) => JSON.stringify(c.args[1]) === JSON.stringify(["pending"]))).toBe(true);
+  });
+
   it("does not touch the database at all when the match is ignored", async () => {
     const mock = makeMockDb();
 
