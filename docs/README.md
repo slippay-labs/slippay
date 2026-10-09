@@ -4,17 +4,19 @@ Non-custodial dollar settlement over one core, with three surfaces: a human
 "dollar account" (receive, verify, pay with a passkey), an agent/builder surface
 (autonomous payments bounded by on-chain policy, a fail-closed integrity
 attestation, and an offline-checkable proof), and a comex B2B treasury (a
-corporate account that holds USD, converts R$↔USD via a licensed partner, and
-earns yield on idle dollars). Every money path is protected by the same
+corporate account that holds USD and converts R$↔USD via a licensed partner;
+yield on idle dollars is phase 2). Every money path is protected by the same
 [**what-you-see-is-what-you-sign** gate](#security--threat-models).
 
 > **Status.** Mainnet (`PUBLIC`): subscription v0.2 autocharge
 > `CAQZECYTKQGUJETQRRBONGQA2DJBNQVYCSKBYCKXOVQOEEOMHKBTJZEP` and v0.4 (attested
 > gate + 2.97% on-chain fee) `CD2RFNOLMIKZN4EETDCGULGMD4ANS56IIUDIBLOE24P4JRZM2GCVFV2U`;
 > smart wallet (passkey) live via the relayer; ZK proof-of-KYC/mandate verified on
-> mainnet (zero-PII). The **comex treasury** (Solana: Privy non-custodial wallet +
-> 4P câmbio + DeFindex yield) is **built, adversarially reviewed, and gated** —
-> ships with the Solana cutover. AXL is build/test only. No traction or GMV claims;
+> mainnet (zero-PII). The **comex treasury** runs on **Base (EVM)**: Privy
+> non-custodial EVM wallet + native USDC + 4P câmbio; DeFindex yield is phase 2
+> (see the [go-live checklist](./comex-go-live-checklist.md)). The Solana adapter
+> and the Solana docs are **reference only** — not active in production, with no
+> cutover date. AXL is build/test only. No traction or GMV claims;
 > the deployed contracts have no third-party audit.
 
 ## Start here
@@ -52,14 +54,19 @@ earns yield on idle dollars). Every money path is protected by the same
 | [Compiler](./axl/compiler.md) | The `axlc` CLI, the z3 discharge, the certificate. |
 | [Proofs and limits](./axl/proofs-and-limits.md) | What is proved, and the honest gaps. |
 
-## Comex (B2B treasury · Solana)
+## Comex (B2B treasury · Base)
+
+The comex treasury runs on Base (EVM). The go-live checklist is the source of
+truth for its chain: the Solana docs below are kept **as technical reference
+only** and are not a roadmap.
 
 | | |
 |---|---|
-| [Design spec](./superpowers/specs) | Corporate treasury phase-1 design: Privy non-custodial wallet, câmbio, yield. |
-| [Go-live checklist](./comex-go-live-checklist.md) | Exact env vars + ordered steps to flip it live when the keys land. |
-| [4P Solana ramp](./4P_SOLANA_RAMP.md) | The licensed R$↔USD partner integration (Solana). **Reference only — Solana is not active in production; see `comex-go-live-checklist.md`.** |
+| [Go-live checklist](./comex-go-live-checklist.md) | Base (EVM) rollout: exact env vars + ordered steps, and the Solana status statement. |
+| [Design spec](./superpowers/specs/2026-06-22-comex-treasury-phase1-design.md) | Corporate treasury phase-1 design: non-custodial Privy wallet, câmbio, yield. Written before the move to Base; the checklist supersedes its chain and FX partner. |
+| [4P Solana ramp](./4P_SOLANA_RAMP.md) | The licensed R$↔USD partner integration (Solana). **Reference only — Solana is not active in production.** |
 | [Solana frontend port](./SOLANA_FRONTEND_PORT.md) | The `ChainAdapter` and the Stellar→Solana **reference** adapter — gated behind `VITE_CHAIN=solana`, not active in production. |
+| [Solana migration plan](./SOLANA_MIGRATION.md) | The parallel Stellar→Solana migration plan. **Reference only — frozen on `feat/solana-adapter`, no cutover date.** |
 
 ## Packages
 
@@ -107,7 +114,7 @@ money path — `decode → assert → human confirm → re-derive hash locally �
 | | |
 |---|---|
 | [Key custody](./security/key-custody.md) | Deployer and platform-fee key custody; what is and isn't held. |
-| [WYSIWYS signing gate](../apps/web/src/lib/txguard.ts) | `txguard.ts` (Stellar) / `solanaAuthorize.ts` (Solana): decode + assert + confirm before any signature. |
+| [WYSIWYS signing gate](../apps/web/src/lib/txguard.ts) | `txguard.ts` (Stellar) / `baseAuthorize.ts` (Base, comex) / `solanaAuthorize.ts` (Solana, reference only): decode + assert + confirm before any signature. |
 | [Threat models & plans](./superpowers) | Pre-code STRIDE threat models and the implementation plans they gate. |
 | [Audits 001–006](./security/audit-001.md) | WooCommerce plugin security audits (historical). |
 
