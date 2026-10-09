@@ -35,8 +35,9 @@ and platform fee rate.
 | `platform_fee_bp` | int | platform fee in basis points (297 = 2.97%, max 1000 = 10%), configured per-merchant on the `merchants` table (default: `DEFAULT_PLATFORM_FEE_BP` = 297) |
 | `active` | bool | inactive merchants don't receive new orders |
 
-`api_key_hash` and `webhook_secret` are stored but never returned; they are
-write-only.
+`api_key_hash` and `webhook_secret` are stored but never returned by any
+endpoint. The webhook secret is minted server-side at creation and is
+**write-only**: see [Webhook secret](#webhook-secret).
 
 ## Create merchant
 
@@ -71,7 +72,12 @@ write-only.
 }
 ```
 
-> **Important**: `api_key` is shown **once**. Store it now. If lost, rotate.
+> **Important**: `api_key` is shown **once**. Store it now. If lost, use
+> [`POST /me/rotate-key`](#rotate-api-key).
+
+The response does **not** include `webhook_secret` — the API strips it from the
+create response exactly as it does for every later read. See
+[Webhook secret](#webhook-secret).
 
 ## Get current merchant
 
@@ -119,9 +125,23 @@ must use the new key.
 
 ## Webhook secret
 
-The merchant has an internal `webhook_secret` (256-bit random) used to HMAC
-all outgoing webhook payloads. It is set automatically at merchant creation
-and is **not** rotatable via API in v0.1 — file an issue if you need this.
+Every merchant has an internal `webhook_secret` (256-bit random, hex) used to
+HMAC-sign all outgoing webhook payloads (`X-Slippay-Signature`). The API
+generates it server-side when the merchant is created and **never returns it**:
 
-To verify HMAC on your side, store the secret from the dashboard (Settings
-tab) and use it as documented in [authentication](./authentication.md#webhook-hmac).
+- `POST /api/v1/merchants` strips it from the response
+  (`const { api_key_hash, webhook_secret, ...safe } = data`), so it is not in
+  the create response either.
+- `GET /api/v1/merchants/me` and `PATCH /api/v1/merchants/me` strip it too.
+- Column-level grants exclude it from authenticated reads, so the dashboard
+  cannot display it.
+
+Treat the secret as **one-time, write-only material** minted with the merchant.
+Unlike the API key there is no rotation endpoint in this version: there is no
+`POST /me/rotate-webhook-secret` and no reveal affordance on `GET /me`. If you
+need to read the stored value (for example to re-provision a handler) it is
+readable only with service-role database access; if you need a supported
+rotate/reveal path, file an issue.
+
+To verify HMAC on your side, use the secret as documented in
+[authentication](./authentication.md#webhook-hmac).
