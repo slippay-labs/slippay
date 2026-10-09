@@ -107,7 +107,7 @@ describe("watchAccount · resume cursor", () => {
   });
 });
 
-describe("watchAccount · cursor paging", () => {
+describe("watchAccount · cursor paging (duplicate + out-of-order)", () => {
   it("advances the paging token monotonically and persists every record's token", async () => {
     stateRow.current = { paging_token: "10" };
     hz.setQueue([{ records: [paymentRecord("11"), paymentRecord("12")] }, { records: [] }]);
@@ -131,5 +131,44 @@ describe("watchAccount · cursor paging", () => {
     // ...and the empty second page adds nothing.
     expect(upserted.map((u) => u.paging_token)).toEqual(["13"]);
     stop();
+  });
+
+  it("keeps the last Horizon token across a non-contiguous token gap (does not reset to head)", async () => {
+    stateRow.current = { paging_token: "20" };
+    hz.setQueue([{ records: [paymentRecord("21"), paymentRecord("30"), paymentRecord("40")] }, { records: [] }]);
+    const stop = await watchAccount({ db, network: "TESTNET", accountId: ACCOUNT });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(4_000);
+
+    expect(upserted.map((u) => u.paging_token)).toEqual(["21", "30", "40"]);
+    // next request is anchored on the highest token seen, not on the head.
+    expect(hz.calls[1]).toMatchObject({ cursor: "40" });
+    stop();
+  });
+
+  it("handles a page that repeats a token by leaving the cursor idempotent", async () => {
+    stateRow.current = { paging_token: "50" };
+    hz.setQueue([{ records: [paymentRecord("50"), paymentRecord("50")] }, { records: [] }]);
+    const stop = await watchAccount({ db, network: "TESTNET", accountId: ACCOUNT });
+    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(4_000);
+
+    expect(upserted.map((u) => u.paging_token)).toEqual(["50", "50"]);
+    expect(hz.calls[1]).toMatchObject({ cursor: "50" });
+    stop();
+  });
+});
+
+describe("watchAccount · shutdown", () => {
+  it("stops polling after the returned stop() is called", async () => {
+    stateRow.current = { paging_token: "1" };
+    hz.setQueue([{ records: [] }]);
+    const stop = await watchAccount({ db, network: "TESTNET", accountId: ACCOUNT });
+    await vi.advanceTimersByTimeAsync(0);
+    const before = hz.calls.length;
+
+    stop();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(hz.calls.length).toBe(before);
   });
 });
