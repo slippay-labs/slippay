@@ -82,3 +82,87 @@ describe("quoteBRLtoUSDC — fee and rate math", () => {
     expect(large.usdcOut).toBeGreaterThan(small.usdcOut);
   });
 });
+
+describe("quoteBRLtoUSDC — guard rails", () => {
+  it("returns zero output for zero and negative input (no throw)", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+
+    const zero = await quote.quoteBRLtoUSDC(0);
+    expect(zero.usdcOut).toBe(0);
+    expect(zero.usdcAtMid).toBe(0);
+    expect(zero.marginUsd).toBe(0);
+
+    const negative = await quote.quoteBRLtoUSDC(-100);
+    expect(negative.usdcOut).toBe(0);
+    expect(negative.usdcAtMid).toBe(0);
+  });
+
+  it("treats non-numeric input as zero output", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+
+    const nan = await quote.quoteBRLtoUSDC(Number.NaN);
+    expect(nan.usdcOut).toBe(0);
+
+    const junk = await quote.quoteBRLtoUSDC("abc" as unknown as number);
+    expect(junk.usdcOut).toBe(0);
+  });
+});
+
+describe("midRateBRLperUSD — live rate with fallback", () => {
+  it("marks the fallback rate stale when the fetch throws", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    const q = await quote.quoteBRLtoUSDC(54);
+
+    expect(q.stale).toBe(true);
+    expect(q.midRate).toBe(5.4);
+    expect(q.usdcOut.toFixed(7)).toBe("9.8135427");
+  });
+
+  it("falls back when the upstream rate is not a usable positive number", async () => {
+    vi.stubGlobal("fetch", okFetch(0));
+
+    const { rate, stale } = await quote.midRateBRLperUSD();
+
+    expect(stale).toBe(true);
+    expect(rate).toBe(5.4);
+  });
+
+  it("caches a good rate for the next 60s", async () => {
+    const fetchMock = okFetch(5.25);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await quote.midRateBRLperUSD();
+    const again = await quote.midRateBRLperUSD();
+
+    expect(again).toEqual({ rate: 5.25, stale: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("recordConversionIntent — best-effort margin ledger", () => {
+  it("posts the quote fields and never blocks the flow", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+    const q = await quote.quoteBRLtoUSDC(100, 297);
+
+    const post = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal("fetch", post);
+
+    await quote.recordConversionIntent(q, "GABC");
+
+    expect(post).toHaveBeenCalledOnce();
+    const body = JSON.parse(post.mock.calls[0]![1].body as string);
+    expect(body.spreadBps).toBe(297);
+    expect(body.walletId).toBe("GABC");
+    expect(body.usdcOut).toBe(q.usdcOut);
+  });
+
+  it("swallows transport errors (measurement must never throw)", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+    const q = await quote.quoteBRLtoUSDC(10);
+
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
+
+    await expect(quote.recordConversionIntent(q)).resolves.toBeUndefined();
+  });
+});
