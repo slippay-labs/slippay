@@ -17,6 +17,7 @@ import { startManager } from "../src/manager.js";
 // Faked `merchants` query: the Supabase builder is a thenable resolving to the
 // rows set by the test.
 let merchants: { stellar_address: string }[] = [];
+let queryError: { message: string } | null = null;
 
 const db: any = {
   from: (_table: string) => {
@@ -24,7 +25,7 @@ const db: any = {
       select: () => b,
       eq: () => b,
       not: () => b,
-      then: (resolve: (v: unknown) => void) => resolve({ data: merchants, error: null }),
+      then: (resolve: (v: unknown) => void) => resolve(queryError ? { data: null, error: queryError } : { data: merchants, error: null }),
     };
     return b;
   },
@@ -36,6 +37,7 @@ let releases: Record<string, Fn>;
 
 function seed(active: string[]): void {
   merchants = active.map((stellar_address) => ({ stellar_address }));
+  queryError = null;
   stops = {};
   releases = {};
   m.watchAccount.mockImplementation(async ({ accountId }: { accountId: string }) => {
@@ -96,5 +98,48 @@ describe("startManager · desired-vs-running reconciliation", () => {
 
     await shutdown();
     expect(stops.B).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips a merchant whose lease is held by another pod", async () => {
+    seed(["A"]);
+    m.acquireLease.mockResolvedValue({ acquired: false, heldBy: "other-pod", expiresAt: "2999-01-01T00:00:00Z" });
+
+    const shutdown = startManager(db);
+    await flush();
+
+    expect(m.watchAccount).not.toHaveBeenCalled();
+    await shutdown();
+  });
+
+  it("logs and returns without starting anything when the query errors", async () => {
+    seed([]);
+    queryError = { message: "boom" };
+
+    const shutdown = startManager(db);
+    await flush();
+
+    expect(m.watchAccount).not.toHaveBeenCalled();
+    expect(m.log).toHaveBeenCalledWith("error", "manager_query_failed", expect.objectContaining({ error: "boom" }));
+    await shutdown();
+  });
+});
+
+describe("startManager · shutdown", () => {
+  it("stops and releases every running stream", async () => {
+    seed(["A", "B"]);
+    const shutdown = startManager(db);
+    await flush();
+
+    expect(Object.keys(stops).sort()).toEqual(["A", "B"]);
+    await shutdown();
+
+    for (const addr of ["A", "B"]) {
+      expect(stops[addr]).toHaveBeenCalledTimes(1);
+      expect(releases[addr]).toHaveBeenCalledTimes(1);
+    }
+
+    // The poll interval is cleared: no further reconciliation happens.
+    await poll();
+    expect(m.watchAccount).toHaveBeenCalledTimes(2);
   });
 });
