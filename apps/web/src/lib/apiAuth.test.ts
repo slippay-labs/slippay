@@ -56,4 +56,36 @@ describe("authFetch", () => {
     // Exactly one attempt: an accidental retry/refresh loop would raise this.
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("merges caller headers and forwards the request init", async () => {
+    getSession.mockResolvedValue(sessionWith("jwt-abc"));
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await authFetch("/pay", { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+
+    const [, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe("{}");
+    expect((init.headers as Record<string, string>)["content-type"]).toBe("application/json");
+    expect((init.headers as Record<string, string>).authorization).toBe("Bearer jwt-abc");
+  });
+
+  it("propagates a network rejection instead of swallowing it", async () => {
+    getSession.mockResolvedValue(sessionWith("jwt"));
+    const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(authFetch("/orders")).rejects.toThrow("network down");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("propagates a session-refresh failure and does not send the request", async () => {
+    getSession.mockRejectedValue(new Error("refresh failed"));
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(authFetch("/orders")).rejects.toThrow("refresh failed");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
 });
