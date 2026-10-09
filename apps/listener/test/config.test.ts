@@ -7,6 +7,9 @@ const ENV_KEYS = [
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
   "STELLAR_NETWORK",
+  "ALLOW_LOCAL_WEBHOOKS",
+  "MERCHANT_POLL_MS",
+  "STELLAR_USDC_ISSUER_OVERRIDE",
 ] as const;
 
 const ORIGINAL: Record<string, string | undefined> = {};
@@ -57,5 +60,40 @@ describe("config · network gating", () => {
     expect(c.network).toBe("PUBLIC");
     expect(c.merchantNetwork).toBe("mainnet");
     expect(c.isMainnet).toBe(true);
+  });
+
+  it("uppercases a lowercase network value", async () => {
+    const c = await loadConfig({ ...REQUIRED, STELLAR_NETWORK: "public" });
+    expect(c.network).toBe("PUBLIC");
+    expect(c.isMainnet).toBe(true);
+  });
+
+  it("treats an unknown value as mainnet (fails closed, never silently TESTNET)", async () => {
+    const c = await loadConfig({ ...REQUIRED, STELLAR_NETWORK: "devnet" });
+    expect(c.merchantNetwork).toBe("mainnet");
+    expect(c.isMainnet).toBe(true);
+  });
+
+  it("does not trust an issuer override to downgrade a PUBLIC network", async () => {
+    // config.ts exposes no override field; the SSRF flag the guards key off of is
+    // derived solely from the network, so an override can never relax it.
+    const c = await loadConfig({ ...REQUIRED, STELLAR_NETWORK: "PUBLIC", STELLAR_USDC_ISSUER_OVERRIDE: "GCUSTOM" + "X".repeat(49) });
+    expect(c.isMainnet).toBe(true);
+    expect((c as Record<string, unknown>).usdcIssuerOverride).toBeUndefined();
+    expect((c as Record<string, unknown>).isMainnet).toBe(true);
+  });
+});
+
+describe("config · webhook escape hatch and poll interval", () => {
+  it("only ALLOW_LOCAL_WEBHOOKS=1 enables local webhooks", async () => {
+    expect((await loadConfig(REQUIRED)).allowLocalWebhooks).toBe(false);
+    expect((await loadConfig({ ...REQUIRED, ALLOW_LOCAL_WEBHOOKS: "0" })).allowLocalWebhooks).toBe(false);
+    expect((await loadConfig({ ...REQUIRED, ALLOW_LOCAL_WEBHOOKS: "true" })).allowLocalWebhooks).toBe(false);
+    expect((await loadConfig({ ...REQUIRED, ALLOW_LOCAL_WEBHOOKS: "1" })).allowLocalWebhooks).toBe(true);
+  });
+
+  it("defaults MERCHANT_POLL_MS to 30s and honours an override", async () => {
+    expect((await loadConfig(REQUIRED)).merchantPollMs).toBe(30_000);
+    expect((await loadConfig({ ...REQUIRED, MERCHANT_POLL_MS: "5000" })).merchantPollMs).toBe(5_000);
   });
 });
