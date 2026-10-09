@@ -1,6 +1,7 @@
 # Quickstart
 
-Get from "no account" to "paid order" in five minutes.
+Get from "no account" to a paid **testnet** order in five minutes. Mainnet has
+extra prerequisites; see [Going to mainnet](#going-to-mainnet).
 
 ## 1. Sign up
 
@@ -26,28 +27,30 @@ curl -X POST https://api.slippay.cc/api/v1/orders \
   }'
 ```
 
-Response (`201 Created`):
+Response (`201 Created`, abridged):
 
 ```json
 {
   "order": {
-    "id": "ord_3f1a8c4d-...",
+    "id": "0b49ffe0-2ab2-4cbe-972c-feba218ea338",
     "memo": "ce230c1913a3668164c8544ac49fd244fba452b19ddee02425386945a5e85cd2",
-    "brl_amount": "99.90",
-    "usdc_amount": "18.16",
-    "rate_brl_usdc": "5.50",
+    "brl_amount": 99.9,
+    "usdc_amount": 18.1636364,
+    "rate_brl_usdc": 5.5,
     "expires_at": "2026-05-10T14:30:00Z",
     "status": "pending"
   },
-  "checkout_url": "https://api.slippay.cc/checkout/ord_3f1a8c4d-..."
+  "checkout_url": "https://api.slippay.cc/checkout/0b49ffe0-2ab2-4cbe-972c-feba218ea338?t=<signed token>"
 }
 ```
 
-Three fields you'll use downstream:
+Three fields you'll use later:
 
 - `order.id` — pass this to the SDK or store it on your side.
 - `order.memo` — 32-byte hash that Stellar uses to route the payment to this order.
-- `checkout_url` — open in a buyer browser to complete payment.
+- `checkout_url` — open in a buyer browser to complete payment. The `?t=`
+  token is signed by the API; pass the URL through unchanged. Its host comes
+  from `CHECKOUT_BASE_URL`.
 
 ## 3. Have the buyer pay
 
@@ -59,8 +62,10 @@ For embedded checkout in your own site, see the [drop-in SDK guide](./guides/dro
 
 ## 4. Receive the webhook
 
-Set a webhook URL in your merchant Settings. SlipPay posts to it when the
-on-chain payment confirms (~6 seconds after buyer signs):
+Set a webhook URL in your merchant Settings. SlipPay posts to it once the
+listener sees the confirmed payment. Expect roughly 5 to 10 seconds after the
+buyer signs: one Stellar ledger close plus one listener polling interval
+(`LISTENER_POLL_MS`, 4 seconds by default).
 
 ```http
 POST https://your-store.com/webhooks/slippay
@@ -70,7 +75,7 @@ X-Slippay-Signature: <hex hmac sha256>
 {
   "type": "order.paid",
   "data": {
-    "id": "ord_3f1a8c4d-...",
+    "id": "0b49ffe0-2ab2-4cbe-972c-feba218ea338",
     "external_ref": "test_order_001",
     "brl_amount": "99.90",
     "usdc_amount": "18.16",
@@ -123,7 +128,7 @@ your POST -> SlipPay api -> postgres (orders row, status=pending)
                                 |
                           Horizon broadcasts payment
                                 |
-                          SlipPay listener (Horizon SSE) sees it
+                          SlipPay listener polls Horizon and sees it
                                 |
                           matcher validates: asset, issuer, dest, memo, amount
                                 |
@@ -131,6 +136,11 @@ your POST -> SlipPay api -> postgres (orders row, status=pending)
                                 |
                           webhook delivery -> your endpoint (HMAC signed)
 ```
+
+The listener polls Horizon on a timer: every
+`LISTENER_POLL_MS` (default 4 seconds) it fetches new payments for each watched
+merchant account from the last saved cursor. Every `MERCHANT_POLL_MS` it
+re-reads the merchants table to pick up new or changed receive addresses.
 
 Three runtime processes, all live at the same domain. Architecture deep dive:
 [concepts/architecture](./concepts/architecture.md).
