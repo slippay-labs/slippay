@@ -123,7 +123,7 @@ your POST -> SlipPay api -> postgres (orders row, status=pending)
                                 |
                           Horizon broadcasts payment
                                 |
-                          SlipPay listener (Horizon SSE) sees it
+                          SlipPay listener polls Horizon /payments
                                 |
                           matcher validates: asset, issuer, dest, memo, amount
                                 |
