@@ -32,12 +32,16 @@ key — which never exists in any SlipPay system.
 
 ## What SlipPay observes (read-only)
 
-SlipPay's listener subscribes to Horizon's `/payments` stream filtered to
-the merchant's address. This is a **read-only** subscription. The listener
-sees payments land but cannot modify the merchant's account in any way.
+SlipPay's listener polls Horizon's `/payments` endpoint filtered to the
+merchant's address, paging forward with a persisted paging token and re-reading
+on an interval. This is a **read-only** poll: there is no long-lived stream
+subscription. The listener sees payments land but cannot modify the merchant's
+account in any way. A per-account lease (`listener_leases`) lets only one
+listener pod poll a given account, and the order-status write predicate stops a
+pod that lost the lease from marking an order paid.
 
 ```
-                  Horizon SSE
+            Horizon /payments (polled)
                       |
                       v
           listener (apps/listener/src/horizon.ts)
