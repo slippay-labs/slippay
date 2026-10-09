@@ -1,5 +1,5 @@
-import { describe, it, expect } from "vitest";
-import { derToRaw64 } from "./passkey.ts";
+import { describe, it, expect, vi, afterEach } from "vitest";
+import { derToRaw64, getAssertion, createPasskey } from "./passkey.ts";
 
 const subtle = globalThis.crypto.subtle;
 
@@ -41,6 +41,10 @@ async function signDer(privateKey: CryptoKey, msg: Uint8Array): Promise<Uint8Arr
 function verifyP256(pub: CryptoKey, raw64: Uint8Array, msg: Uint8Array): Promise<boolean> {
   return subtle.verify({ name: "ECDSA", hash: "SHA-256" }, pub, raw64, msg);
 }
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 describe("derToRaw64 — DER (WebAuthn) → raw 64-byte secp256r1 r||s", () => {
   it("accepts a real P-256 assertion built from a known key pair", async () => {
@@ -104,5 +108,46 @@ describe("derToRaw64 — DER (WebAuthn) → raw 64-byte secp256r1 r||s", () => {
     ).toThrow(/bad DER signature \(s\)/);
     // Empty payload.
     expect(() => derToRaw64(new Uint8Array(0))).toThrow(/bad DER signature \(r\)/);
+  });
+});
+
+describe("getAssertion — WebAuthn assertion plumbing", () => {
+  it("forwards the pending challenge and DER→raw normalizes the signature", async () => {
+    const { privateKey } = await p256Pair();
+    const challenge = Uint8Array.from([9, 9, 9, 9]);
+    const der = await signDer(privateKey, challenge);
+
+    const get = vi.fn().mockResolvedValue({
+      response: {
+        authenticatorData: new Uint8Array([1, 2, 3]).buffer,
+        clientDataJSON: new Uint8Array([4, 5]).buffer,
+        signature: der.buffer,
+      },
+    });
+    vi.stubGlobal("navigator", { credentials: { get } });
+
+    const assertion = await getAssertion(challenge);
+
+    expect(assertion.signature.length).toBe(64);
+    expect(Array.from(assertion.authenticatorData)).toEqual([1, 2, 3]);
+    expect(Array.from(assertion.clientDataJSON)).toEqual([4, 5]);
+    expect(get).toHaveBeenCalledOnce();
+    // The exact challenge bytes must be what the authenticator is asked to sign.
+    const arg = get.mock.calls[0]![0] as { publicKey: { challenge: Uint8Array } };
+    expect(Array.from(arg.publicKey.challenge)).toEqual([9, 9, 9, 9]);
+  });
+
+  it("throws when the user cancels biometrics", async () => {
+    vi.stubGlobal("navigator", { credentials: { get: vi.fn().mockResolvedValue(null) } });
+
+    await expect(getAssertion(new Uint8Array([1]))).rejects.toThrow("Biometria cancelada.");
+  });
+});
+
+describe("createPasskey — platform support gate", () => {
+  it("throws a clear error when the device has no WebAuthn support", async () => {
+    vi.stubGlobal("window", {});
+
+    await expect(createPasskey("alice")).rejects.toThrow(/não suporta passkey/);
   });
 });
