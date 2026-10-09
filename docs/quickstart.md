@@ -2,11 +2,27 @@
 
 Get from "no account" to "paid order" in five minutes.
 
-## 1. Sign up
+## 1. Create a merchant
 
-Open [api.slippay.cc/signup](https://api.slippay.cc/signup), create a merchant
-account, drop a Stellar receive address, and copy the API key shown on the
-Settings tab. The key is shown once; rotate from the dashboard if you lose it.
+Sign up, then create the merchant — from the dashboard or directly through the
+API with your Supabase JWT:
+
+```sh
+curl -X POST https://api.slippay.cc/api/v1/merchants \
+  -H "Authorization: Bearer <supabase-jwt>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "display_name": "Vortex Athletic",
+    "stellar_address": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+    "webhook_url": "https://your-store.com/webhooks/slippay"
+  }'
+```
+
+The response returns the merchant plus an `api_key`, shown **once** — store it
+immediately. If you lose it, `POST /api/v1/merchants/me/rotate-key` issues a new
+one. The merchant's `webhook_secret` is separate and **write-only**: it is
+generated at creation and never returned by any endpoint (see
+[merchants](./api-reference/merchants.md#webhook-secret)).
 
 API keys look like:
 
@@ -34,12 +50,21 @@ Response (`201 Created`):
     "id": "ord_3f1a8c4d-...",
     "memo": "ce230c1913a3668164c8544ac49fd244fba452b19ddee02425386945a5e85cd2",
     "brl_amount": "99.90",
-    "usdc_amount": "18.16",
-    "rate_brl_usdc": "5.50",
+    "usd_amount": null,
+    "usdc_amount": "18.1636364",
+    "rate_brl_usdc": "5.5000000",
     "expires_at": "2026-05-10T14:30:00Z",
-    "status": "pending"
+    "status": "pending",
+    "platform_fee_bp": 297,
+    "fee_usdc": "0.5394600"
   },
-  "checkout_url": "https://api.slippay.cc/checkout/ord_3f1a8c4d-..."
+  "checkout_url": "https://api.slippay.cc/checkout/ord_3f1a8c4d-...?t=<checkout-token>",
+  "fee": {
+    "platform_fee_bp": 297,
+    "gross_usdc": "18.1636364",
+    "fee_usdc": "0.5394600",
+    "net_usdc": "17.6241764"
+  }
 }
 ```
 
@@ -121,9 +146,10 @@ your POST -> SlipPay api -> postgres (orders row, status=pending)
                                 |
                           buyer signs Stellar tx with order.memo
                                 |
-                          Horizon broadcasts payment
+                          payment lands on Stellar (Horizon)
                                 |
                           SlipPay listener polls Horizon /payments
+                          (paging token, MERCHANT_POLL_MS lease per account)
                                 |
                           matcher validates: asset, issuer, dest, memo, amount
                                 |
@@ -134,6 +160,28 @@ your POST -> SlipPay api -> postgres (orders row, status=pending)
 
 Three runtime processes, all live at the same domain. Architecture deep dive:
 [concepts/architecture](./concepts/architecture.md).
+
+## Run it locally
+
+To run the whole stack from the repo instead of the hosted API (requires Node
+22+, pnpm 9, Deno 2.x, and the Supabase CLI):
+
+```sh
+git clone git@github.com:Galmanus/slippay.git
+cd slippay && pnpm install
+pnpm supabase:start && pnpm supabase:reset    # local Postgres + auth + schema
+
+# in separate terminals:
+cd supabase/functions/api && deno run --allow-all --watch index.ts  # API :8000
+cd apps/listener && pnpm dev                                        # listener
+cd apps/web && pnpm dev                                             # web :5173
+```
+
+Copy `.env.example` to `.env` and set at minimum `SUPABASE_URL` and
+`SUPABASE_SERVICE_ROLE_KEY`. `CHECKOUT_BASE_URL` is the base used to build the
+`checkout_url` the orders route returns, and `MERCHANT_POLL_MS` is how often the
+listener re-reads the active-merchant set; all four variables are defined in
+[`.env.example`](../.env.example).
 
 ## Going to mainnet
 
