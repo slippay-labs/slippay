@@ -95,3 +95,59 @@ describe("reverifyCert — valid certificate", () => {
     expect(result.obligations.map((o) => o.name)).not.toContain("predecessor K=1 NOT sound (minimal)");
   });
 });
+
+describe("reverifyCert — failure cases fail closed", () => {
+  it("fails when the bound was mutated relative to the on-chain multiplier", async () => {
+    const cert = validCert({
+      onchain: { ssl_hash: SPEC_SHA256, window_cap_multiplier: 4 },
+    });
+    const result = await reverifyCert(cert, SPEC);
+
+    expect(result.allGreen).toBe(false);
+    const multiplier = result.checks.find((c) => c.label === "On-chain window multiplier == proved bound");
+    expect(multiplier?.ok).toBe(false);
+  });
+
+  it("fails when the certificate is bound to a different spec than the one supplied", async () => {
+    // Same cert, but the caller pastes a spec that hashes to something else.
+    const result = await reverifyCert(validCert(), SPEC + ";; tampered\n");
+
+    expect(result.allGreen).toBe(false);
+    const binding = result.checks.find((c) => c.label === "Spec ↔ certificate binding (SHA-256)");
+    expect(binding?.ok).toBe(false);
+  });
+
+  it("fails when the on-chain ssl_hash does not match the spec hash", async () => {
+    const cert = validCert({
+      onchain: { ssl_hash: "f".repeat(64), window_cap_multiplier: 3 },
+    });
+    const result = await reverifyCert(cert, SPEC);
+
+    expect(result.allGreen).toBe(false);
+    const onchain = result.checks.find((c) => c.label === "On-chain ssl_hash == spec hash");
+    expect(onchain?.ok).toBe(false);
+  });
+
+  it("fails when the certificate was not ISSUED", async () => {
+    const result = await reverifyCert(validCert({ verdict: "REJECTED" }), SPEC);
+
+    expect(result.allGreen).toBe(false);
+    expect(result.checks.find((c) => c.label === "Verdict is ISSUED")?.ok).toBe(false);
+  });
+
+  it("fails closed on malformed JSON (single failing check, no obligations)", async () => {
+    const result = await reverifyCert("{ not json", SPEC);
+
+    expect(result.allGreen).toBe(false);
+    expect(result.checks).toHaveLength(1);
+    expect(result.checks[0]).toMatchObject({ label: "Certificate parses", ok: false });
+    expect(result.obligations).toEqual([]);
+  });
+
+  it("fails when the certificate kind is not an axl proof certificate", async () => {
+    const result = await reverifyCert(validCert({ kind: "something-else" }), SPEC);
+
+    expect(result.allGreen).toBe(false);
+    expect(result.checks.find((c) => c.label === "Certificate kind")?.ok).toBe(false);
+  });
+});
