@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // The Soroban RPC server is the only thing in the Stellar SDK the adapter touches
 // over the wire; swap just `rpc.Server` for a fake that returns a fixed ledger so
@@ -33,7 +33,14 @@ vi.mock("../../stellar.ts", () => stellar);
 const soroban = vi.hoisted(() => ({ approveAllowance: vi.fn() }));
 vi.mock("../../soroban.ts", () => soroban);
 
+import { Asset, Networks } from "@stellar/stellar-sdk";
+import { NETWORK } from "@slippay/shared";
 import { stellarAdapter } from "./adapter.ts";
+
+// The adapter's default subscription contract (SEP-41 spender) — mainnet CBJMQ6ZY.
+const SUB_CONTRACT = "CBJMQ6ZYQJ2OMM46FGXPEIKKZDRHHERBXUVE54ZN64FDPKN5DJKSEVQN";
+// Default recurring duration = 5_000_000 ledgers when no durationSecs is given.
+const DEFAULT_DURATION_LEDGERS = 5_000_000;
 
 const BUYER = "GBUYER" + "A".repeat(49);
 const MERCHANT = "GMERCHANT" + "B".repeat(47);
@@ -112,5 +119,49 @@ describe("stellarAdapter · payOneTime", () => {
     })).rejects.toThrow("invalid_amount");
     expect(wallet.signTx).not.toHaveBeenCalled();
     expect(stellar.submitSignedTx).not.toHaveBeenCalled();
+  });
+});
+
+describe("stellarAdapter · approveRecurring", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sdk.latestLedger = 5_000;
+    soroban.approveAllowance.mockResolvedValue("APPROVE_HASH");
+  });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("approves the SEP-41 spender over the TESTNET SAC that matches the shared USDC issuer", async () => {
+    await expect(
+      stellarAdapter.approveRecurring({ buyerAddress: BUYER, capUsdc: "12", durationSecs: 3_600 }),
+    ).resolves.toEqual({ hash: "APPROVE_HASH" });
+
+    // The SAC the adapter approves is derived from packages/shared's testnet issuer —
+    // this is the "reported asset matches the shared constants" guarantee.
+    const expectedSac = new Asset("USDC", NETWORK.testnet.usdc_issuer).contractId(Networks.TESTNET);
+    expect(soroban.approveAllowance).toHaveBeenCalledWith({
+      sacAddress: expectedSac,
+      owner: BUYER,
+      spender: SUB_CONTRACT,
+      amount: "120000000", // 12 USDC at 7 dp
+      expirationLedger: 5_000 + Math.floor(3_600 / 5), // durationSecs -> ledgers
+      rpcUrl: "https://soroban-testnet.stellar.org",
+    });
+  });
+
+  it("defaults the expiration to ~9 months of ledgers when durationSecs is omitted", async () => {
+    await stellarAdapter.approveRecurring({ buyerAddress: BUYER, capUsdc: "1" });
+    expect(soroban.approveAllowance).toHaveBeenCalledWith(
+      expect.objectContaining({ expirationLedger: 5_000 + DEFAULT_DURATION_LEDGERS, amount: "10000000" }),
+    );
+  });
+
+  it("switches to the mainnet SAC/URL and shared mainnet issuer under PUBLIC", async () => {
+    vi.stubEnv("VITE_STELLAR_NETWORK", "PUBLIC");
+    await stellarAdapter.approveRecurring({ buyerAddress: BUYER, capUsdc: "5" });
+
+    const expectedSac = new Asset("USDC", NETWORK.mainnet.usdc_issuer).contractId(Networks.PUBLIC);
+    expect(soroban.approveAllowance).toHaveBeenCalledWith(
+      expect.objectContaining({ sacAddress: expectedSac, rpcUrl: "https://soroban-mainnet.stellar.org" }),
+    );
   });
 });
