@@ -35,8 +35,9 @@ and platform fee rate.
 | `platform_fee_bp` | int | platform fee in basis points (297 = 2.97%, max 1000 = 10%), configured per-merchant on the `merchants` table (default: `DEFAULT_PLATFORM_FEE_BP` = 297) |
 | `active` | bool | inactive merchants don't receive new orders |
 
-`api_key_hash` and `webhook_secret` are stored but never returned; they are
-write-only.
+`api_key_hash` and `webhook_secret` are stored but never returned by any
+endpoint. The webhook secret is minted server-side at creation and is
+**write-only**: see [Webhook secret](#webhook-secret).
 
 ## Create merchant
 
