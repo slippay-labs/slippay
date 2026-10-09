@@ -4,6 +4,13 @@
 - **author:** Manuel Galmanus
 - **audience:** SCF reviewers · prospective merchants · internal scope-discipline
 
+> **Fee provenance.** The shipped platform fee is **297 basis points (2.97%)**,
+> `DEFAULT_PLATFORM_FEE_BP` in
+> [`packages/shared/src/constants.ts`](../../packages/shared/src/constants.ts).
+> This model was first drafted for the v0.2 launch and has been recomputed end to
+> end at 297 bp; where a number below and that constant disagree, the constant —
+> and the on-chain v0.4 contract that charges it — is the source of truth.
+
 ## TL;DR
 
 **Slippay takes 2.97% (297 basis points) of the gross USDC settlement amount,
