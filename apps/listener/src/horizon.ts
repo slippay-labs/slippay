@@ -24,7 +24,7 @@ export interface AccountWatcherDeps {
 // the connection hangs with no `onerror`, no events, and no auto-reconnect, so a
 // "online" listener stops confirming payments invisibly (observed 2026-06-26).
 // Polling makes every tick a fresh HTTP GET: immune to silent-death, and a
-// heartbeat log makes a stall visible. Latency (~POLL_MS) is fine — x402 buyers
+// heartbeat log makes a stall reachable. Latency (~POLL_MS) is fine — x402 buyers
 // poll for tens of seconds. One poller per account is still gated by the lease.
 export async function watchAccount({ db, network, accountId }: AccountWatcherDeps): Promise<() => void> {
   const server = new Horizon.Server(HORIZON[network]);

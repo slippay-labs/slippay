@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { authFetch } from "../lib/apiAuth.ts";
+import { computeFeeStroops } from "../../../../packages/shared/src/fees.ts";
 
 const display = { fontFamily: "'DM Sans', sans-serif" } as const;
 const EXPLORER_BASE =
-  (import.meta.env.VITE_STELLAR_NETWORK ?? "TESTNET").toUpperCase() === "PUBLIC"
+  (import.meta.env.VITE_STELAR_NETWORK ?? "TESTNET").toUpperCase() === "PUBLIC"
     ? "https://stellar.expert/explorer/public/tx"
     : "https://stellar.expert/explorer/testnet/tx";
 
@@ -26,6 +27,15 @@ const STATUS_DOT: Record<string, string> = {
   cancelled: "bg-[#0a0a0a]/25",
   dead: "bg-red-500",
 };
+
+const DEFAULT_PLATFORM_FEE_BP = 100;
+
+function feeStroops(usdcAmount: string, feeBp: number): bigint {
+  const [whole, frac = ""] = usdcAmount.split(".");
+  const frac7 = (frac + "0000000").slice(0, 7);
+  const amountStroops = BigInt(whole) * 10_000_000n + BigInt(frac7);
+  return computeFeeStroops(amountStroops, feeBp).feeStroops;
+}
 
 export default function DashboardOrders() {
   const [orders, setOrders] = useState<OrderRow[] | null>(null);
@@ -85,7 +95,7 @@ export default function DashboardOrders() {
               <span className="font-mono text-xs text-[#0a0a0a]/60">{o.id.slice(0, 8)}{o.external_ref ? ` · ${o.external_ref}` : ""}</span>
               <span className="text-right md:text-left tabular-nums" style={display}>{o.usdc_amount}<span className="text-[#0a0a0a]/45 text-sm"> USDC</span></span>
               <span className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/65">
-                <span className={`inline-block w-1.5 h-1.5 rounded-full ${STATUS_DOT[o.status] ?? "bg-[#0a0a0a]/25"}`} />{o.status}
+                <span className={`block w-1.5 h-1.5 rounded-full ${STATUS_DOT[o.status] ?? "bg-[#0a0a0a]/25"}`} />{o.status}
               </span>
               <span className="font-mono text-[11px] text-[#0a0a0a]/45 tabular-nums">{new Date(o.created_at).toLocaleDateString()}</span>
               <span className="font-mono text-[11px] text-right md:text-left">

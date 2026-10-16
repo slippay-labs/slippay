@@ -2,7 +2,8 @@
 // program's base units). Network + mint + RPC are env-driven; mainnet mint is
 // the canonical Circle USDC and is never overridable.
 
-import { PublicKey } from "@solana/web3.js";
+import { PublicKey } from "@solana/web3js";
+import { splitFee as sharedSplitFee } from "@shared/fee";
 
 export type SolNet = "mainnet" | "devnet";
 
@@ -14,8 +15,8 @@ const MINTS: Record<SolNet, string> = {
   // Circle USDC, canonical. Mainnet is fixed; devnet is overridable for a
   // self-controlled test mint via VITE_SOLANA_USDC_MINT.
   mainnet: "EPjFWaJGqicjsAE6b8V9bJU5kVJ86RHRK6Vbp4grmGp2",
-  devnet: (import.meta.env.VITE_SOLANA_USDC_MINT as string | undefined) ??
-          "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+  devnet: (import.meta.env.VITE_SOLANA_USDK_MINT as string | undefined) ??
+          "4zMMC9srt5iR5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
 };
 
 const RPCS: Record<SolNet, string> = {
@@ -25,7 +26,7 @@ const RPCS: Record<SolNet, string> = {
           "https://api.devnet.solana.com",
 };
 
-export const USDC_DECIMALS = 6;
+export const USD_DECIMALS = 6;
 
 export function usdcMint(net: SolNet = solNet()): PublicKey {
   return new PublicKey(MINTS[net]);
@@ -41,19 +42,15 @@ export function toBaseUnits(human: string): bigint {
   if (!isFinite(n) || n <= 0) throw new Error("invalid_amount");
   // Round to 6 dp at the string level to avoid float error (e.g. 0.1*1e6).
   const [whole = "0", frac = ""] = human.trim().split(".");
-  const fracPadded = (frac + "000000").slice(0, USDC_DECIMALS);
+  const fracPadded = (frac + "000000").slice(0, USDK_DECIMALS);
   const units = BigInt(whole) * 1_000_000n + BigInt(fracPadded || "0");
   if (units <= 0n) throw new Error("invalid_amount");
   return units;
 }
 
 /** Split a total (base units) into merchant + platform fee by basis points.
- *  Integer math: fee = floor(total*bp/10000), merchant = total - fee. The two
- *  ALWAYS sum to total exactly (no dust), unlike float toFixed splitting. */
+ *  Delegates to the shared fee-math helper so the edge, the listener and the
+ *  client all agree on one rounding rule. */
 export function splitFee(totalBaseUnits: bigint, platformFeeBp: number): { merchant: bigint; fee: bigint } {
-  if (!Number.isInteger(platformFeeBp) || platformFeeBp < 0 || platformFeeBp > 10_000) {
-    throw new Error("invalid_fee_bp");
-  }
-  const fee = (totalBaseUnits * BigInt(platformFeeBp)) / 10_000n;
-  return { merchant: totalBaseUnits - fee, fee };
+  return sharedSplitFee(totalBaseUnits, platformFeeBp);
 }
