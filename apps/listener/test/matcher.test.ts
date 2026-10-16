@@ -32,9 +32,34 @@ describe("matchPaymentToOrder", () => {
     expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({ outcome: "underpaid", expected: "9.9000000", received: "5.0000000" });
   });
 
-  it("ignores when memo doesnt match", () => {
+  it("ignores with memo_mismatch when valid 32-byte hash belongs to another order", () => {
     const e = { ...validEvent, memo_b64: Buffer.from("cd".repeat(32), "hex").toString("base64") };
-    expect(matchPaymentToOrder(e, order, "TESTNET").outcome).toBe("ignore");
+    expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({ outcome: "ignore", reason: "memo_mismatch" });
+  });
+
+  it("ignores with memo_malformed when memo_b64 contains invalid characters", () => {
+    const e = { ...validEvent, memo_b64: "not-valid-base64!@#$" };
+    expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({ outcome: "ignore", reason: "memo_malformed" });
+  });
+
+  it("ignores with memo_malformed when memo_b64 decodes to truncated byte length", () => {
+    // 16 bytes base64 instead of 32 bytes
+    const shortB64 = Buffer.from("ab".repeat(16), "hex").toString("base64");
+    const e = { ...validEvent, memo_b64: shortB64 };
+    expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({ outcome: "ignore", reason: "memo_malformed" });
+  });
+
+  it("ignores with memo_malformed when order.memo is not valid 64-char hex", () => {
+    const malformedOrder = { ...order, memo: "not-a-valid-hex" };
+    expect(matchPaymentToOrder(validEvent, malformedOrder, "TESTNET")).toEqual({
+      outcome: "ignore",
+      reason: "memo_malformed",
+    });
+  });
+
+  it("matches payment when order.memo uses uppercase hex", () => {
+    const upperOrder = { ...order, memo: order.memo.toUpperCase() };
+    expect(matchPaymentToOrder(validEvent, upperOrder, "TESTNET")).toEqual({ outcome: "paid" });
   });
 
   it("ignores when wrong asset", () => {

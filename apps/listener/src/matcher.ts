@@ -1,4 +1,10 @@
 import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
+import { constantTimeEqual } from "./crypto.js";
+
+// Memo encoding contract validation (Audit fixes #255, see docs/concepts/memo-encoding.md)
+// 32-byte CSPRNG entropy stored as 64-char hex in orders.memo, emitted as 44-char base64 by Horizon.
+const BASE64_STRICT_REGEX = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+const HEX_64_REGEX = /^[0-9a-fA-F]{64}$/;
 
 export interface StellarPaymentEvent {
   memo_type: string;
@@ -39,8 +45,28 @@ export function matchPaymentToOrder(
 
   if (ev.to !== order.merchant_stellar_address) return { outcome: "ignore", reason: "destination" };
 
-  const evMemoHex = Buffer.from(ev.memo_b64, "base64").toString("hex");
-  if (evMemoHex !== order.memo) return { outcome: "ignore", reason: "memo_mismatch" };
+  // Validate memo encoding (fixes #255, see docs/concepts/memo-encoding.md).
+  // Buffer.from(..., "base64") is lenient and silently discards invalid characters.
+  // Validate strict RFC 4648 Base64, exact 32-byte decoded length, and 64-char hex order.memo.
+  if (
+    typeof ev.memo_b64 !== "string" ||
+    !BASE64_STRICT_REGEX.test(ev.memo_b64) ||
+    typeof order.memo !== "string" ||
+    !HEX_64_REGEX.test(order.memo)
+  ) {
+    return { outcome: "ignore", reason: "memo_malformed" };
+  }
+
+  const memoBuf = Buffer.from(ev.memo_b64, "base64");
+  if (memoBuf.length !== 32) {
+    return { outcome: "ignore", reason: "memo_malformed" };
+  }
+
+  // Canonicalize to lowercase hex and compare in constant time to prevent timing attacks.
+  const evMemoHex = memoBuf.toString("hex").toLowerCase();
+  if (!constantTimeEqual(evMemoHex, order.memo.toLowerCase())) {
+    return { outcome: "ignore", reason: "memo_mismatch" };
+  }
 
   // Money math runs in stroops (BigInt) to avoid IEEE-754 boundary errors at
   // the 7th decimal. Audit-003 L4. Stellar amounts are decimal strings with

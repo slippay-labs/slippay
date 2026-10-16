@@ -12,21 +12,26 @@ export async function signWebhook(secret: string, body: string, t: number): Prom
   return `t=${t},v1=${hex}`;
 }
 
+/**
+ * Constant-time string equality comparison.
+ * Avoids early exits on character mismatches to defend against timing attacks.
+ */
+export function constantTimeEqual(a: string, b: string): boolean {
+  const len = Math.max(a.length, b.length);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < len; i++) {
+    const charA = i < a.length ? a.charCodeAt(i) : 0;
+    const charB = i < b.length ? b.charCodeAt(i) : 0;
+    diff |= charA ^ charB;
+  }
+  return diff === 0;
+}
+
 export async function verifyWebhook(secret: string, body: string, header: string, nowSec: number): Promise<boolean> {
   const parts = Object.fromEntries(header.split(",").map(p => p.split("=") as [string, string]));
   const t = Number(parts.t);
   if (!isFinite(t) || Math.abs(nowSec - t) > TOLERANCE_S) return false;
   const expected = await signWebhook(secret, body, t);
-  // Audit-003 L7: always run the constant-time loop, even on length mismatch.
-  // The length of `expected` is deterministic given the secret/hash, so the
-  // pre-check leaks only attacker-controlled header length — but the
-  // asymmetry is a code smell that the PHP receiver's `hash_equals` avoids.
-  const len = Math.max(expected.length, header.length);
-  let diff = expected.length ^ header.length;
-  for (let i = 0; i < len; i++) {
-    const a = i < expected.length ? expected.charCodeAt(i) : 0;
-    const b = i < header.length ? header.charCodeAt(i) : 0;
-    diff |= a ^ b;
-  }
-  return diff === 0;
+  return constantTimeEqual(expected, header);
 }
+
