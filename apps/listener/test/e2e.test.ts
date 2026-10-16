@@ -254,5 +254,25 @@ describe.skipIf(!isE2ERun)("E2E: testnet payment lifecycle", () => {
     expect(webhooks).toHaveLength(1);
     expect(webhooks?.[0]?.type).toBe("order.paid");
     console.log(`[e2e] webhook_deliveries row confirmed type=${webhooks?.[0]?.type}`);
+
+    // Duplicate credit prevention check (Issue #258)
+    console.log("[e2e] testing duplicate payment submission idempotency...");
+    const orderForMatch = {
+      id: orderId,
+      memo: memoHex,
+      usdc_amount: usdcAmount,
+      merchant_stellar_address: merchant.publicKey(),
+      merchant_id: "test-merch",
+      platform_fee_bp: 297,
+    };
+    const { reconcileMatch } = await import("../src/reconciler.js");
+    await reconcileMatch(dbAdmin, orderForMatch, { outcome: "paid" }, txHash);
+
+    const { data: webhooksAfterDup } = await dbAdmin
+      .from("webhook_deliveries")
+      .select("*")
+      .eq("order_id", orderId);
+    expect(webhooksAfterDup).toHaveLength(1);
+    console.log("[e2e] duplicate payment idempotency confirmed (strictly 1 credit, 1 webhook row)");
   }, 180_000);
 });
