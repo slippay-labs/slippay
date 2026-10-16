@@ -3,7 +3,7 @@ import { useParams } from "react-router-dom";
 import { fetchOrder, type PublicOrder } from "../lib/api.ts";
 import { Countdown } from "../components/Countdown.tsx";
 import { PayButton } from "../components/PayButton.tsx";
-import { Logo } from "../components/Logo.tsx";
+import { Logo } from "../components/Logo.tsX";
 import { getChainAdapter } from "../lib/chain/index.ts";
 import { chainId } from "../lib/chain/validate.ts";
 import {
@@ -148,7 +148,7 @@ export default function Checkout() {
   }
 
   const buttonLabel =
-    submitState === "idle" || submitState === "error" ? `Pay ${order.usdc_amount} USDC` :
+    submitState === "idle" || submitState === "error" ? `Pay ${order.usdc_amount} USD` :
     submitState === "building" ? "Preparing..." :
     submitState === "confirming" ? "Review transaction..." :
     submitState === "signing" ? "Waiting for wallet..." :
@@ -158,11 +158,11 @@ export default function Checkout() {
 
   return (
     <div className="min-h-screen bg-[#f1eee7] text-[#0a0a0a] flex flex-col">
-      {/* FIX 1: WYSIWYS pre-sign modal — rendered above everything, buyer must confirm */}
+      {/*FIX 1: WYSIWYS pre-sign modal — rendered above everything, buyer must confirm*/}
       {txSummary && submitState === "confirming" && (
         <ConfirmTxModal
           summary={txSummary}
-          intent={`Pay ${order.usdc_amount} USDC`}
+          intent={`Pay ${order.usdc_amount} USD`}
           onConfirm={handleConfirmTx}
           onCancel={handleCancelTx}
         />
@@ -272,19 +272,15 @@ export default function Checkout() {
                             setTxSummary(summary);
                             setSubmitState("confirming");
                           } else {
-                            // Solana path: no WYSIWYS (no buildTx primitive yet), go direct
-                            setSubmitState("signing");
-                            const adapter = await getChainAdapter();
-                            const { hash } = await adapter.payOneTime({
-                              buyerAddress: walletAddress,
-                              merchantAddress,
-                              platformAddress,
-                              usdcAmount: order.usdc_amount,
-                              platformFeeBp: 297, // 2.97% canonical
-                              memoHex: order.memo,
-                              maxTime: Math.floor(new Date(order.expires_at).getTime() / 1000),
+                            // Solana path — build, sign and submit via the chain adapter
+                            const adapter = getChainAdapter();
+                            const { signature } = await adapter.sendPayment({
+                              from: walletAddress,
+                              to: merchantAddress,
+                              amount: order.usdc_amount,
+                              memo: order.memo,
                             });
-                            setTxHash(hash);
+                            setTxHash(signature);
                             setSubmitState("submitted");
                           }
                         } catch (e: unknown) {
@@ -292,47 +288,29 @@ export default function Checkout() {
                           setError(e instanceof Error ? e.message : "unknown error");
                         }
                       }}
-                      className="w-full bg-[#0a0a0a] text-[#f1eee7] py-5 text-sm uppercase tracking-[0.18em] hover:bg-[#1a1a1a] disabled:opacity-50"
+                      className="w-full bg-[#0a0a0a] text-[#f1eee7] py-4 px-6 text-sm uppercase tracking-[0.18em] disabled:opacity-50 hover:opacity-90 transition"
                     >
                       {buttonLabel}
                     </button>
-                    {submitState === "submitted" && txHash && (
-                      <div className="mt-6 border-l-2 border-amber-500 pl-4">
-                        <div className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/70">Tx submitted · awaiting confirmation</div>
-                        <a className="text-xs font-mono mt-2 block break-all hover:opacity-60"
-                           href={`${EXPLORER_BASE}/${txHash}`} target="_blank" rel="noreferrer">
-                          {txHash}
-                        </a>
-                      </div>
-                    )}
-                    {submitState === "paid" && (
-                      <div className="mt-6 border-l-2 border-[#FDDA24] pl-4">
-                        <div className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a] flex items-center gap-2">
-                          <span className="inline-block w-1.5 h-1.5 bg-[#FDDA24]" />
-                          Payment confirmed
-                        </div>
-                        {txHash && (
-                          <a className="text-xs font-mono mt-2 block break-all hover:opacity-60"
-                             href={`${EXPLORER_BASE}/${txHash}`} target="_blank" rel="noreferrer">
-                            {txHash}
-                          </a>
-                        )}
-                      </div>
-                    )}
                   </div>
                 )}
             </div>
+
+            {txHash && (
+              <div className="mt-8 text-xs text-[#0a0a0a]/55">
+                Tx: <a
+                  className="font-mono normal-case tracking-normal underline"
+                  href={`${EXPLORER_BASE}/${txHash}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {txHash.slice(0, 10)}…
+                </a>
+              </div>
+            )}
           </div>
         </div>
       </main>
-
-      {!embedded && (
-        <footer className="border-t border-[#0a0a0a]/10">
-          <div className="max-w-[1400px] mx-auto px-8 md:px-12 py-6 text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55">
-            Non-custodial · Powered by Stellar · USDC by Circle
-          </div>
-        </footer>
-      )}
     </div>
   );
 }
