@@ -6,7 +6,12 @@ type QuoteModule = typeof import("./quote.ts");
 let quote: QuoteModule;
 
 const okFetch = (brlPerUsd: number) =>
-  vi.fn().mockResolvedValue({ json: async () => ({ rates: { BRL: brlPerUsd } }) });
+  vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    headers: { get: (name: string) => (name.toLowerCase() === "content-type" ? "application/json" : null) },
+    json: async () => ({ rates: { BRL: brlPerUsd } }),
+  });
 
 beforeEach(async () => {
   vi.resetModules();
@@ -32,6 +37,7 @@ describe("quoteBRLtoUSDC — fee and rate math", () => {
     expect(q.marginUsd).toBe(0);
     expect(q.marginBrl).toBe(0);
     expect(q.stale).toBe(false);
+    expect(q.source).toBe("live");
   });
 
   it("applies the canonical platform fee (DEFAULT_PLATFORM_FEE_BP = 297)", async () => {
@@ -108,35 +114,106 @@ describe("quoteBRLtoUSDC — guard rails", () => {
   });
 });
 
-describe("midRateBRLperUSD — live rate with fallback", () => {
+describe("midRateBRLperUSD — live rate with fallback and HTTP response validation (Issue #235)", () => {
   it("marks the fallback rate stale when the fetch throws", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
 
     const q = await quote.quoteBRLtoUSDC(54);
 
     expect(q.stale).toBe(true);
+    expect(q.source).toBe("fallback");
     expect(q.midRate).toBe(5.4);
     expect(q.usdcOut.toFixed(7)).toBe("9.8135427");
+  });
+
+  it("treats non-200 responses (e.g. 500, 404, 429) as failures even if body contains rates", async () => {
+    // Upstream returns 500 or 429 with plausible JSON body
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        headers: { get: () => "application/json" },
+        json: async () => ({ rates: { BRL: 9.99 } }),
+      })
+    );
+
+    const res = await quote.midRateBRLperUSD();
+    expect(res.stale).toBe(true);
+    expect(res.source).toBe("fallback");
+    expect(res.rate).toBe(5.4);
+  });
+
+  it("rejects non-JSON response (e.g. HTML error gateway page)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => "text/html; charset=utf-8" },
+        json: async () => ({ rates: { BRL: 7.77 } }),
+      })
+    );
+
+    const res = await quote.midRateBRLperUSD();
+    expect(res.stale).toBe(true);
+    expect(res.source).toBe("fallback");
+    expect(res.rate).toBe(5.4);
+  });
+
+  it("fails fast on hanging upstream requests without leaving quote pending", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((_url, opts) => {
+        return new Promise((_, reject) => {
+          if (opts?.signal) {
+            opts.signal.addEventListener("abort", () => {
+              reject(new Error("aborted by timeout"));
+            });
+          }
+        });
+      })
+    );
+
+    // Call with short 10ms timeout for deterministic test speed
+    const res = await quote.midRateBRLperUSD(10);
+    expect(res.stale).toBe(true);
+    expect(res.source).toBe("fallback");
+    expect(res.rate).toBe(5.4);
   });
 
   it("falls back when the upstream rate is not a usable positive number", async () => {
     vi.stubGlobal("fetch", okFetch(0));
 
-    const { rate, stale } = await quote.midRateBRLperUSD();
+    const { rate, stale, source } = await quote.midRateBRLperUSD();
 
     expect(stale).toBe(true);
+    expect(source).toBe("fallback");
     expect(rate).toBe(5.4);
   });
 
-  it("caches a good rate for the next 60s", async () => {
+  it("caches a good rate for the next 60s and tracks source: cache", async () => {
     const fetchMock = okFetch(5.25);
     vi.stubGlobal("fetch", fetchMock);
 
-    await quote.midRateBRLperUSD();
-    const again = await quote.midRateBRLperUSD();
+    const first = await quote.midRateBRLperUSD();
+    expect(first).toEqual({ rate: 5.25, stale: false, source: "live" });
 
-    expect(again).toEqual({ rate: 5.25, stale: false });
+    const again = await quote.midRateBRLperUSD();
+    expect(again).toEqual({ rate: 5.25, stale: false, source: "cache" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("records rate source in every generated Quote object", async () => {
+    vi.stubGlobal("fetch", okFetch(5.1));
+
+    const liveQuote = await quote.quoteBRLtoUSDC(100);
+    expect(liveQuote.source).toBe("live");
+    expect(liveQuote.stale).toBe(false);
+
+    const cachedQuote = await quote.quoteBRLtoUSDC(100);
+    expect(cachedQuote.source).toBe("cache");
+    expect(cachedQuote.stale).toBe(false);
   });
 });
 
