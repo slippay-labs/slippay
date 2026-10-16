@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { SupabaseClient } from "supabase";
+import { aggregatePeriodTotals } from "@slippay/shared";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
 import { mapDbError } from "../lib/db-error.ts";
 
@@ -31,18 +32,18 @@ r.get("/fees", requireApiKeyOrJwt, async (c) => {
     .lte("paid_at", to);
   if (error) { const m = mapDbError(error); return c.json({ error: m.code }, m.status as 400 | 409); }
 
-  const rows = data ?? [];
-  const sum = (k: string) => rows.reduce((a, o) => a + parseFloat((o as Record<string, string>)[k] ?? "0"), 0);
-  const feeTotal = sum("fee_usdc");
-  const grossTotal = sum("usdc_amount");
+  const rows = (data ?? []) as Array<{ usdc_amount?: string | null; fee_usdc?: string | null }>;
+  // Money amounts are aggregated in integer stroops (BigInt, numeric exact scale)
+  // to avoid IEEE-754 binary floating-point drift over multi-row periods (audit-003 L4, issue #222).
+  const totals = aggregatePeriodTotals(rows);
 
   return c.json({
     merchant_id: merchant.id,
     period: { from, to },
     orders_count: rows.length,
-    gross_usdc: grossTotal.toFixed(7),
-    fee_usdc_total: feeTotal.toFixed(7),     // what SlipPay invoices for the period
-    net_usdc_total: (grossTotal - feeTotal).toFixed(7),
+    gross_usdc: totals.gross_usdc,
+    fee_usdc_total: totals.fee_usdc_total,     // what SlipPay invoices for the period
+    net_usdc_total: totals.net_usdc_total,
     platform_fee_bp: Number(merchant.platform_fee_bp ?? 98),
   });
 });
