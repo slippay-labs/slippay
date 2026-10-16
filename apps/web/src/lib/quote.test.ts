@@ -6,7 +6,12 @@ type QuoteModule = typeof import("./quote.ts");
 let quote: QuoteModule;
 
 const okFetch = (brlPerUsd: number) =>
-  vi.fn().mockResolvedValue({ json: async () => ({ rates: { BRL: brlPerUsd } }) });
+  vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    headers: new Headers({ "content-type": "application/json" }),
+    json: async () => ({ rates: { BRL: brlPerUsd } }),
+  });
 
 beforeEach(async () => {
   vi.resetModules();
@@ -83,7 +88,7 @@ describe("quoteBRLtoUSDC — fee and rate math", () => {
   });
 });
 
-describe("quoteBRLtoUSDC — guard rails", () => {
+describe("quoteBRLtoUSDC — guard rails & spread bounds", () => {
   it("returns zero output for zero and negative input (no throw)", async () => {
     vi.stubGlobal("fetch", okFetch(5));
 
@@ -106,37 +111,194 @@ describe("quoteBRLtoUSDC — guard rails", () => {
     const junk = await quote.quoteBRLtoUSDC("abc" as unknown as number);
     expect(junk.usdcOut).toBe(0);
   });
+
+  it("rejects negative spread bounds with RangeError", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+    await expect(quote.quoteBRLtoUSDC(100, -1)).rejects.toThrow(RangeError);
+    await expect(quote.quoteBRLtoUSDC(100, -100)).rejects.toThrow("spread_out_of_bounds");
+  });
+
+  it("rejects spread exceeding MAX_SPREAD_BPS (10000) with RangeError", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+    await expect(quote.quoteBRLtoUSDC(100, 10_001)).rejects.toThrow(RangeError);
+    await expect(quote.quoteBRLtoUSDC(100, 50_000)).rejects.toThrow("spread_out_of_bounds");
+  });
+
+  it("rejects non-finite spread (NaN, Infinity)", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+    await expect(quote.quoteBRLtoUSDC(100, Number.NaN)).rejects.toThrow("spread_out_of_bounds");
+    await expect(quote.quoteBRLtoUSDC(100, Number.POSITIVE_INFINITY)).rejects.toThrow("spread_out_of_bounds");
+  });
 });
 
-describe("midRateBRLperUSD — live rate with fallback", () => {
-  it("marks the fallback rate stale when the fetch throws", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+describe("midRateBRLperUSD — failure modes & upstream resilience", () => {
+  it("falls back and marks stale when upstream returns non-OK HTTP status", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        statusText: "Bad Gateway",
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ rates: { BRL: 5.5 } }),
+      }),
+    );
+
+    const res = await quote.midRateBRLperUSD();
+    expect(res.stale).toBe(true);
+    expect(res.rate).toBe(quote.FALLBACK_BRL_PER_USD);
 
     const q = await quote.quoteBRLtoUSDC(54);
-
     expect(q.stale).toBe(true);
     expect(q.midRate).toBe(5.4);
     expect(q.usdcOut.toFixed(7)).toBe("9.8135427");
   });
 
-  it("falls back when the upstream rate is not a usable positive number", async () => {
-    vi.stubGlobal("fetch", okFetch(0));
+  it("falls back and marks stale when body is unparsable non-JSON", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "text/html" }),
+        json: async () => { throw new SyntaxError("Unexpected token < in JSON at position 0"); },
+      }),
+    );
 
-    const { rate, stale } = await quote.midRateBRLperUSD();
-
-    expect(stale).toBe(true);
-    expect(rate).toBe(5.4);
+    const res = await quote.midRateBRLperUSD();
+    expect(res.stale).toBe(true);
+    expect(res.rate).toBe(5.4);
   });
 
-  it("caches a good rate for the next 60s", async () => {
-    const fetchMock = okFetch(5.25);
-    vi.stubGlobal("fetch", fetchMock);
+  it("falls back and marks stale when response is missing rates.BRL", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ rates: {} }),
+      }),
+    );
 
-    await quote.midRateBRLperUSD();
-    const again = await quote.midRateBRLperUSD();
+    const res = await quote.midRateBRLperUSD();
+    expect(res.stale).toBe(true);
+    expect(res.rate).toBe(5.4);
+  });
 
-    expect(again).toEqual({ rate: 5.25, stale: false });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+  it("falls back and marks stale when upstream rate is zero or negative", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ rates: { BRL: -5.0 } }),
+      }),
+    );
+
+    const neg = await quote.midRateBRLperUSD();
+    expect(neg.stale).toBe(true);
+    expect(neg.rate).toBe(5.4);
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        json: async () => ({ rates: { BRL: 0 } }),
+      }),
+    );
+
+    const zero = await quote.midRateBRLperUSD();
+    expect(zero.stale).toBe(true);
+    expect(zero.rate).toBe(5.4);
+  });
+
+  it("falls back and marks stale when request hangs and aborts", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((_url: string, opts?: { signal?: AbortSignal }) => {
+        return new Promise((_resolve, reject) => {
+          opts?.signal?.addEventListener("abort", () => {
+            const err = new Error("This operation was aborted");
+            err.name = "AbortError";
+            reject(err);
+          });
+        });
+      }),
+    );
+
+    // Call with short 10ms timeout to trigger abort path quickly
+    const res = await quote.midRateBRLperUSD(10);
+    expect(res.stale).toBe(true);
+    expect(res.rate).toBe(5.4);
+  });
+
+  it("cache-hit path asserts stale correctly and never mislabels fallback as fresh", async () => {
+    const failingFetch = vi.fn().mockRejectedValue(new Error("offline"));
+    vi.stubGlobal("fetch", failingFetch);
+
+    const first = await quote.midRateBRLperUSD();
+    expect(first).toEqual({ rate: 5.4, stale: true });
+
+    // Ensure fallback is never stored in cache as fresh
+    const second = await quote.midRateBRLperUSD();
+    expect(second).toEqual({ rate: 5.4, stale: true });
+    expect(failingFetch).toHaveBeenCalledTimes(2);
+
+    // Now mock recovery
+    const recoveryFetch = okFetch(5.5);
+    vi.stubGlobal("fetch", recoveryFetch);
+
+    const third = await quote.midRateBRLperUSD();
+    expect(third).toEqual({ rate: 5.5, stale: false });
+
+    // Subsequent call within TTL hits cache
+    const cached = await quote.midRateBRLperUSD();
+    expect(cached).toEqual({ rate: 5.5, stale: false });
+    expect(recoveryFetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("quoteBRLtoUSDC — stale refusal and opt-in protection", () => {
+  it("refuses pricing from a stale quote when allowStale is false", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network error")));
+
+    await expect(
+      quote.quoteBRLtoUSDC(100, undefined, { allowStale: false }),
+    ).rejects.toThrow("stale_quote_refused");
+  });
+
+  it("permits pricing from a stale quote when allowStale is explicitly true", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network error")));
+
+    const q = await quote.quoteBRLtoUSDC(100, undefined, { allowStale: true });
+    expect(q.stale).toBe(true);
+    expect(q.midRate).toBe(5.4);
+    expect(q.usdcOut).toBeGreaterThan(0);
+  });
+
+  it("assertUsableQuote rejects stale quote without explicit opt-in", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network error")));
+
+    const staleQuote = await quote.quoteBRLtoUSDC(100);
+    expect(staleQuote.stale).toBe(true);
+
+    expect(() => quote.assertUsableQuote(staleQuote)).toThrow("stale_quote_refused");
+    expect(() => quote.assertUsableQuote(staleQuote, false)).toThrow("stale_quote_refused");
+    expect(() => quote.assertUsableQuote(staleQuote, true)).not.toThrow();
+  });
+
+  it("assertUsableQuote accepts fresh quote unconditionally", async () => {
+    vi.stubGlobal("fetch", okFetch(5.0));
+
+    const freshQuote = await quote.quoteBRLtoUSDC(100);
+    expect(freshQuote.stale).toBe(false);
+
+    expect(quote.assertUsableQuote(freshQuote)).toBe(freshQuote);
+    expect(quote.assertUsableQuote(freshQuote, false)).toBe(freshQuote);
   });
 });
 

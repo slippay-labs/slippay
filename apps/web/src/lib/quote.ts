@@ -11,9 +11,24 @@
 // this is the pricing + measurement layer that makes the spread live the moment
 // the anchor is connected.
 
-const SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
+export const MIN_SPREAD_BPS = 0;
+export const MAX_SPREAD_BPS = 10_000; // 0% to 100% max bound
+
+export function validateSpreadBps(bps: number): number {
+  if (!Number.isFinite(bps) || bps < MIN_SPREAD_BPS || bps > MAX_SPREAD_BPS) {
+    throw new RangeError(
+      `spread_out_of_bounds: spread ${bps} must be finite between ${MIN_SPREAD_BPS} and ${MAX_SPREAD_BPS} bps`,
+    );
+  }
+  return bps;
+}
+
+const rawEnvSpread = import.meta.env.VITE_FX_SPREAD_BPS != null
+  ? Number(import.meta.env.VITE_FX_SPREAD_BPS)
+  : 190;
+const SPREAD_BPS = validateSpreadBps(rawEnvSpread);
 const RATE_URL = "https://open.er-api.com/v6/latest/USD";
-const FALLBACK_BRL_PER_USD = 5.4;
+export const FALLBACK_BRL_PER_USD = 5.4;
 
 export const SPREAD_PCT = SPREAD_BPS / 100;
 
@@ -30,21 +45,56 @@ export interface Quote {
   ts: string;
 }
 
+export interface QuoteOptions {
+  allowStale?: boolean;
+}
+
+export function assertUsableQuote(q: Quote, allowStale = false): Quote {
+  if (q.stale && !allowStale) {
+    throw new Error("stale_quote_refused: live FX rate is unavailable and allowStale is false");
+  }
+  return q;
+}
+
 let cache: { rate: number; at: number } | null = null;
 
-export async function midRateBRLperUSD(): Promise<{ rate: number; stale: boolean }> {
+export async function midRateBRLperUSD(timeoutMs = 5000): Promise<{ rate: number; stale: boolean }> {
   if (cache && Date.now() - cache.at < 60_000) return { rate: cache.rate, stale: false };
   try {
-    const r = await fetch(RATE_URL);
-    const j = await r.json();
-    const rate = Number(j?.rates?.BRL);
-    if (rate > 0) { cache = { rate, at: Date.now() }; return { rate, stale: false }; }
-  } catch { /* fall through to fallback */ }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const r = await fetch(RATE_URL, { signal: controller.signal });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const contentType = r.headers?.get("content-type");
+      if (contentType && !contentType.includes("application/json")) {
+        throw new Error(`invalid_content_type: ${contentType}`);
+      }
+      const j = await r.json();
+      const rate = Number(j?.rates?.BRL);
+      if (Number.isFinite(rate) && rate > 0) {
+        cache = { rate, at: Date.now() };
+        return { rate, stale: false };
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  } catch {
+    /* fall through to fallback */
+  }
   return { rate: FALLBACK_BRL_PER_USD, stale: true };
 }
 
-export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Promise<Quote> {
+export async function quoteBRLtoUSDC(
+  brlIn: number,
+  spreadBps = SPREAD_BPS,
+  opts: QuoteOptions = {},
+): Promise<Quote> {
+  validateSpreadBps(spreadBps);
   const { rate: midRate, stale } = await midRateBRLperUSD();
+  if (stale && opts.allowStale === false) {
+    throw new Error("stale_quote_refused: live FX rate unavailable and allowStale is false");
+  }
   const quotedRate = midRate * (1 + spreadBps / 10000);
   const usdcOut = brlIn > 0 ? brlIn / quotedRate : 0;
   const usdcAtMid = brlIn > 0 ? brlIn / midRate : 0;
