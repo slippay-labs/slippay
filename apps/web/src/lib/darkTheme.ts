@@ -32,3 +32,45 @@ export const dk = {
 
 // The animated glow background block, as a reusable JSX-less marker. Pages render
 // <DarkGlow/> from darkGlow.tsx; the CSS ships once via that component.
+
+export type Theme = "dark" | "system";
+export const THEME_KEY = "slippay_theme";
+export const DEFAULT_THEME: Theme = "dark";
+
+export function normalizeTheme(raw: unknown): Theme {
+  if (raw === "dark" || raw === "system") return raw;
+  return DEFAULT_THEME;
+}
+
+function getStorage(): Storage | null {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) return window.localStorage;
+    if (typeof localStorage !== "undefined") return localStorage;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+export function detectTheme(): Theme {
+  const storage = getStorage();
+  if (storage) {
+    try {
+      const stored = storage.getItem(THEME_KEY);
+      if (stored === "dark" || stored === "system") return stored;
+    } catch {
+      /* ignore storage errors */
+    }
+  }
+  return DEFAULT_THEME;
+}
+
+export function setTheme(theme: Theme): void {
+  const storage = getStorage();
+  if (!storage) return;
+  try {
+    storage.setItem(THEME_KEY, theme);
+  } catch {
+    /* ignore storage errors */
+  }
+}

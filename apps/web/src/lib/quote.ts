@@ -1,3 +1,5 @@
+import { createElement, useState, useEffect, createContext, useContext, useMemo, type ReactNode } from "react";
+
 // FX quote engine — Pix (BRL) -> USDC. This is the real margin layer: SlipPay
 // quotes the mid-market rate x (1 + spread) and keeps the difference. The spread
 // fires on EVERY conversion (including users who only hold dollars), which is why
@@ -31,16 +33,35 @@ export interface Quote {
 }
 
 let cache: { rate: number; at: number } | null = null;
+let inFlight: Promise<{ rate: number; stale: boolean }> | null = null;
+
+export function _resetQuoteCache(): void {
+  cache = null;
+  inFlight = null;
+}
 
 export async function midRateBRLperUSD(): Promise<{ rate: number; stale: boolean }> {
   if (cache && Date.now() - cache.at < 60_000) return { rate: cache.rate, stale: false };
-  try {
-    const r = await fetch(RATE_URL);
-    const j = await r.json();
-    const rate = Number(j?.rates?.BRL);
-    if (rate > 0) { cache = { rate, at: Date.now() }; return { rate, stale: false }; }
-  } catch { /* fall through to fallback */ }
-  return { rate: FALLBACK_BRL_PER_USD, stale: true };
+  if (inFlight) return inFlight;
+
+  inFlight = (async () => {
+    try {
+      const r = await fetch(RATE_URL);
+      const j = await r.json();
+      const rate = Number(j?.rates?.BRL);
+      if (rate > 0) {
+        cache = { rate, at: Date.now() };
+        return { rate, stale: false };
+      }
+    } catch {
+      /* fall through to fallback */
+    } finally {
+      inFlight = null;
+    }
+    return { rate: FALLBACK_BRL_PER_USD, stale: true };
+  })();
+
+  return inFlight;
 }
 
 export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Promise<Quote> {
@@ -73,3 +94,113 @@ export async function recordConversionIntent(q: Quote, walletId?: string): Promi
     });
   } catch { /* measurement is best-effort */ }
 }
+
+export interface FXQuoteState {
+  quote: Quote | null;
+  loading: boolean;
+  error: Error | null;
+  refetch: () => Promise<void>;
+}
+
+/**
+ * React hook to compute and track an FX quote.
+ * Benefits from in-flight request deduplication across mounting components.
+ */
+export function useFXQuote(brlIn = 0, spreadBps = SPREAD_BPS): FXQuoteState {
+  const [quote, setQuote] = useState<Quote | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  const fetchQuote = async () => {
+    setLoading(true);
+    try {
+      const q = await quoteBRLtoUSDC(brlIn, spreadBps);
+      setQuote(q);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err : new Error(String(err)));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    quoteBRLtoUSDC(brlIn, spreadBps)
+      .then((q) => {
+        if (!cancelled) {
+          setQuote(q);
+          setError(null);
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err : new Error(String(err)));
+          setLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [brlIn, spreadBps]);
+
+  return { quote, loading, error, refetch: fetchQuote };
+}
+
+export interface QuoteContextValue {
+  midRate: number | null;
+  stale: boolean;
+  loading: boolean;
+  refresh: () => Promise<void>;
+}
+
+export const QuoteContext = createContext<QuoteContextValue>({
+  midRate: null,
+  stale: false,
+  loading: false,
+  refresh: async () => {},
+});
+
+/**
+ * Shared quote context provider allowing an entire route or sub-tree
+ * of components to share a single resolved quote without redundant fetches.
+ */
+export function QuoteProvider({ children }: { children: ReactNode }) {
+  const [rateState, setRateState] = useState<{ rate: number | null; stale: boolean; loading: boolean }>({
+    rate: null,
+    stale: false,
+    loading: true,
+  });
+
+  const refresh = async () => {
+    setRateState((prev) => ({ ...prev, loading: true }));
+    try {
+      const res = await midRateBRLperUSD();
+      setRateState({ rate: res.rate, stale: res.stale, loading: false });
+    } catch {
+      setRateState({ rate: FALLBACK_BRL_PER_USD, stale: true, loading: false });
+    }
+  };
+
+  useEffect(() => {
+    refresh();
+  }, []);
+
+  const value = useMemo(
+    () => ({
+      midRate: rateState.rate,
+      stale: rateState.stale,
+      loading: rateState.loading,
+      refresh,
+    }),
+    [rateState.rate, rateState.stale, rateState.loading],
+  );
+
+  return createElement(QuoteContext.Provider, { value }, children);
+}
+
+export function useSharedQuote(): QuoteContextValue {
+  return useContext(QuoteContext);
+}
+

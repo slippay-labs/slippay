@@ -15,7 +15,7 @@ export default defineConfig({
     // (Buffer/global/process) that the browser lacks. Without this the Solana
     // path crashes (LazorkitProvider new Connection() throws on Buffer → infinite
     // re-render → blank page). Stellar path never needed it (stellar-sdk bundles its own).
-    nodePolyfills({ globals: { Buffer: true, global: true, process: true } }),
+    ...(!process.env.VITEST ? [nodePolyfills({ globals: { Buffer: true, global: true, process: true } })] : []),
   ],
   define: {
     __BUILD_TAG__: JSON.stringify(new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14)),

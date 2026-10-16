@@ -7,23 +7,55 @@ import { useEffect, useState } from "react";
 // so a manual toggle sticks.
 export type Lang = "pt" | "en";
 
-const KEY = "slippay_lang";
+export const LANG_KEY = "slippay_lang";
+export const DEFAULT_LANG: Lang = "pt";
+
+export function normalizeLang(raw: unknown): Lang {
+  if (raw === "pt" || raw === "en") return raw;
+  return DEFAULT_LANG;
+}
+
+function getStorage(): Storage | null {
+  try {
+    if (typeof window !== "undefined" && window.localStorage) return window.localStorage;
+    if (typeof localStorage !== "undefined") return localStorage;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
 
 export function detectLang(): Lang {
-  if (typeof window === "undefined") return "pt";
-  const stored = window.localStorage.getItem(KEY);
-  if (stored === "pt" || stored === "en") return stored;
+  const storage = getStorage();
+  if (storage) {
+    try {
+      const stored = storage.getItem(LANG_KEY);
+      if (stored === "pt" || stored === "en") return stored;
+    } catch {
+      /* ignore storage errors */
+    }
+  }
   // Default to PT (primary audience). Only EN for an explicitly English browser.
-  return navigator.language?.toLowerCase().startsWith("en") ? "en" : "pt";
+  const nav = typeof navigator !== "undefined" ? navigator.language : "";
+  return nav?.toLowerCase().startsWith("en") ? "en" : DEFAULT_LANG;
 }
 
 export function useLang(): [Lang, (l: Lang) => void] {
   const [lang, setLangState] = useState<Lang>(() => detectLang());
   useEffect(() => {
-    document.documentElement.lang = lang === "pt" ? "pt-BR" : "en";
+    if (typeof document !== "undefined") {
+      document.documentElement.lang = lang === "pt" ? "pt-BR" : "en";
+    }
   }, [lang]);
   const setLang = (l: Lang) => {
-    try { window.localStorage.setItem(KEY, l); } catch { /* ignore */ }
+    const storage = getStorage();
+    if (storage) {
+      try {
+        storage.setItem(LANG_KEY, l);
+      } catch {
+        /* ignore */
+      }
+    }
     setLangState(l);
   };
   return [lang, setLang];

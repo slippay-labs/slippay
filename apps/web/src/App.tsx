@@ -44,69 +44,113 @@ import Empresas from "./pages/Empresas.tsx";
 import ComexBase from "./pages/ComexBase.tsx";
 import { ComexBaseProvider } from "./lib/comexBase.tsx";
 import BusinessLanding from "./pages/comex/BusinessLanding";
+import { AppRootErrorBoundary, PaymentErrorBoundary } from "./components/ErrorBoundary.tsx";
+
 export default function App() {
   return (
-    <Routes>
-      <Route path="/" element={<LandingV2 />} />
-      <Route path="/v3" element={<LandingV3 />} />
-      <Route path="/zk" element={<ZkRedirect />} />
-      <Route path="/cofrinho-landing" element={<LandingV2 />} />
-      <Route path="/receber" element={<Receber />} />
-      {import.meta.env.VITE_PAGFINANCE_ENABLED === "1" && <Route path="/pix-pay" element={<PixPay />} />}
-      {import.meta.env.VITE_COMEX_ENABLED === "1" && (
-        <Route path="/comex" element={
-          import.meta.env.VITE_PRIVY_APP_ID
-            ? <ComexBaseProvider><ComexBase /></ComexBaseProvider>
-            : <BusinessLanding />
-        } />
-      )}
-      {import.meta.env.VITE_DEFINDEX_ENABLED === "1" && <Route path="/cofre" element={<Vault />} />}
-      <Route path="/empresas" element={<Empresas />} />
-      <Route path="/b2b" element={<Empresas />} />
-      <Route path="/v1" element={<AgentHome />} />
-      <Route path="/builders" element={<Builders />} />
-      <Route path="/v2" element={<LandingV2 />} />
-      <Route path="/human" element={<Home />} />
-      <Route path="/verify" element={<Verify />} />
-      <Route path="/agents" element={<Agents />} />
-      <Route path="/comprovante/:txhash" element={<Comprovante />} />
-      <Route path="/login" element={<Login />} />
-      <Route path="/signup" element={<Signup />} />
-      <Route path="/checkout/:order_id" element={<Checkout />} />
-      <Route path="/sub/:id" element={<Sub />} />
-      <Route path="/demo" element={<Demo />} />
-      <Route path="/preview" element={<Preview />} />
-      <Route path="/x402-demo" element={<X402Demo />} />
-      <Route path="/anchor-demo" element={<AnchorDemo />} />
-      <Route path="/withdraw-demo" element={<WithdrawDemo />} />
-      <Route path="/bio" element={<BioTest />} />
-      <Route path="/pay" element={<PayDemo />} />
-      <Route path="/cobrar" element={<Cobrar />} />
-      <Route path="/account" element={<Account />} />
-      <Route path="/buy" element={<Cash />} />
-      <Route path="/comprar" element={<Cash />} />
-      <Route path="/cash" element={<Cash />} />
-      <Route path="/pix" element={<Cash />} />
-      <Route path="/gate" element={<Gate />} />
-      <Route path="/loja" element={<Store />} />
-      <Route path="/s/:subId" element={<PolicySubscribe />} />
-      <Route path="/docs" element={<Docs />} />
-      <Route path="/docs/*" element={<Docs />} />
-      <Route path="/seguranca" element={<Security />} />
-      <Route path="/security" element={<Security />} />
-      <Route path="/manifesto" element={<Manifesto />} />
-      <Route path="/investors" element={<Investors />} />
-      <Route path="/investidores" element={<Investors />} />
-      <Route path="/pitch" element={<Investors />} />
-      <Route path="/conformidade" element={<Conformidade />} />
-      <Route path="/compliance" element={<Conformidade />} />
-      <Route path="/dashboard" element={<Dashboard />}>
-        <Route index element={<DashboardOverview />} />
-        <Route path="orders" element={<DashboardOrders />} />
-        <Route path="subscriptions" element={<DashboardSubscriptions />} />
-        <Route path="settings" element={<DashboardSettings />} />
-      </Route>
-      <Route path="*" element={<div className="p-8">not found</div>} />
-    </Routes>
+    <AppRootErrorBoundary>
+      <Routes>
+        {/* ── Landing & Campaign Routes ── */}
+        {/* Canonical main landing */}
+        <Route path="/" element={<LandingV2 />} />
+        {/* Explicit versioned landing routes */}
+        <Route path="/v2" element={<LandingV2 />} />
+        <Route path="/v3" element={<LandingV3 />} />
+        {/* Legacy v1 agent landing (preserved for historical bookmarks) */}
+        <Route path="/v1" element={<AgentHome />} />
+        {/* Marketing campaign alias for LandingV2 */}
+        <Route path="/cofrinho-landing" element={<LandingV2 />} />
+        <Route path="/zk" element={<ZkRedirect />} />
+        <Route path="/human" element={<Home />} />
+
+        {/* ── Cash / Ramp Routes (Payment Boundary) ── */}
+        {/* Canonical cash on/off-ramp */}
+        <Route path="/cash" element={<PaymentErrorBoundary><Cash /></PaymentErrorBoundary>} />
+        {/* Localized aliases for cash ramp (PT / EN / Pix) */}
+        <Route path="/buy" element={<PaymentErrorBoundary><Cash /></PaymentErrorBoundary>} />
+        <Route path="/comprar" element={<PaymentErrorBoundary><Cash /></PaymentErrorBoundary>} />
+        <Route path="/pix" element={<PaymentErrorBoundary><Cash /></PaymentErrorBoundary>} />
+        {import.meta.env.VITE_PAGFINANCE_ENABLED === "1" && (
+          <Route path="/pix-pay" element={<PaymentErrorBoundary><PixPay /></PaymentErrorBoundary>} />
+        )}
+
+        {/* ── Business & Enterprise (B2B) Routes ── */}
+        {/* Canonical B2B landing in primary PT */}
+        <Route path="/empresas" element={<Empresas />} />
+        {/* Global / English alias for enterprise */}
+        <Route path="/b2b" element={<Empresas />} />
+
+        {/* ── Compliance Routes ── */}
+        {/* Canonical global route */}
+        <Route path="/compliance" element={<Conformidade />} />
+        {/* Localized Portuguese alias */}
+        <Route path="/conformidade" element={<Conformidade />} />
+
+        {/* ── Security Routes ── */}
+        {/* Canonical global route */}
+        <Route path="/security" element={<Security />} />
+        {/* Localized Portuguese alias */}
+        <Route path="/seguranca" element={<Security />} />
+
+        {/* ── Investor & Pitch Routes ── */}
+        {/* Canonical global route */}
+        <Route path="/investors" element={<Investors />} />
+        {/* Localized Portuguese alias */}
+        <Route path="/investidores" element={<Investors />} />
+        {/* Marketing / Pitch deck shortcut */}
+        <Route path="/pitch" element={<Investors />} />
+
+        {/* ── Core Commerce & Payments (Payment Boundary) ── */}
+        <Route path="/checkout/:order_id" element={<PaymentErrorBoundary><Checkout /></PaymentErrorBoundary>} />
+        <Route path="/receber" element={<PaymentErrorBoundary><Receber /></PaymentErrorBoundary>} />
+        <Route path="/cobrar" element={<PaymentErrorBoundary><Cobrar /></PaymentErrorBoundary>} />
+        <Route path="/comprovante/:txhash" element={<PaymentErrorBoundary><Comprovante /></PaymentErrorBoundary>} />
+        <Route path="/sub/:id" element={<PaymentErrorBoundary><Sub /></PaymentErrorBoundary>} />
+        <Route path="/s/:subId" element={<PaymentErrorBoundary><PolicySubscribe /></PaymentErrorBoundary>} />
+        <Route path="/gate" element={<PaymentErrorBoundary><Gate /></PaymentErrorBoundary>} />
+        <Route path="/loja" element={<PaymentErrorBoundary><Store /></PaymentErrorBoundary>} />
+
+        {/* ── Auth & Account ── */}
+        <Route path="/login" element={<Login />} />
+        <Route path="/signup" element={<Signup />} />
+        <Route path="/account" element={<Account />} />
+        <Route path="/verify" element={<Verify />} />
+
+        {/* ── Ecosystem, Comex & Vault ── */}
+        {import.meta.env.VITE_COMEX_ENABLED === "1" && (
+          <Route path="/comex" element={
+            import.meta.env.VITE_PRIVY_APP_ID
+              ? <ComexBaseProvider><ComexBase /></ComexBaseProvider>
+              : <BusinessLanding />
+          } />
+        )}
+        {import.meta.env.VITE_DEFINDEX_ENABLED === "1" && <Route path="/cofre" element={<Vault />} />}
+        <Route path="/builders" element={<Builders />} />
+        <Route path="/agents" element={<Agents />} />
+        <Route path="/manifesto" element={<Manifesto />} />
+        <Route path="/docs" element={<Docs />} />
+        <Route path="/docs/*" element={<Docs />} />
+
+        {/* ── Interactive Demos & Testing Surfaces ── */}
+        <Route path="/demo" element={<Demo />} />
+        <Route path="/preview" element={<Preview />} />
+        <Route path="/x402-demo" element={<X402Demo />} />
+        <Route path="/anchor-demo" element={<AnchorDemo />} />
+        <Route path="/withdraw-demo" element={<WithdrawDemo />} />
+        <Route path="/bio" element={<BioTest />} />
+        <Route path="/pay" element={<PaymentErrorBoundary><PayDemo /></PaymentErrorBoundary>} />
+
+        {/* ── Merchant Dashboard ── */}
+        <Route path="/dashboard" element={<Dashboard />}>
+          <Route index element={<DashboardOverview />} />
+          <Route path="orders" element={<DashboardOrders />} />
+          <Route path="subscriptions" element={<DashboardSubscriptions />} />
+          <Route path="settings" element={<DashboardSettings />} />
+        </Route>
+
+        {/* ── Fallback ── */}
+        <Route path="*" element={<div className="p-8">not found</div>} />
+      </Routes>
+    </AppRootErrorBoundary>
   );
 }
