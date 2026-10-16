@@ -14,7 +14,7 @@ core is one rail; three surfaces sit on top of it.
 
 `Stellar mainnet` · `Base · comex functional on-chain` · `non-custodial` · `Apache-2.0`
 
-[**Read the paper (PDF)**](./docs/paper/slippay.pdf) · [Live](https://app.slippay.cc) · [Docs](./docs/README.md) · [Architecture](./docs/concepts/architecture.md) · [Security model](#security-model)
+[**Read the paper (PDF)**](./docs/paper/slippay.pdf) · [Live](https://app.slippay.cc) · [Docs](./docs/README.md) · [Developer Bootstrap](./docs/dx/local-bootstrap.md) · [Architecture](./docs/concepts/architecture.md) · [Security model](#security-model)
 
 **Paper:** *Slippay — Metacognitive Governance for Autonomous Agent Payments: Non-Custodial, Integrity-Gated, Proof-Carrying Settlement on Stellar.* → **[docs/paper/slippay.pdf](./docs/paper/slippay.pdf)**
 **Extended abstract for NEAR X** (Slippay as a portable governance layer for NEAR's agent economy) → **[docs/paper/slippay-nearx-abstract.pdf](./docs/paper/slippay-nearx-abstract.pdf)**

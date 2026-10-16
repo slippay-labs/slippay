@@ -25,6 +25,7 @@ yield on idle dollars is phase 2). Every money path is protected by the same
 |---|---|
 | [**Quickstart — human**](./quickstart-human.md) | Receive USDC by QR, verify a payment, pay with a passkey. |
 | [**Quickstart — agent**](./quickstart-agent.md) | Install `@slippay/mcp`, verify a cert offline, settle. |
+| [**Developer Bootstrap (DX)**](./dx/local-bootstrap.md) | From git clone to green tests: prerequisites, build order, test tiers. |
 | [**Architecture**](./concepts/architecture.md) | The full system: API, listener, contracts, packages, web. |
 
 ## Concepts

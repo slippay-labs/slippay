@@ -3,6 +3,7 @@
 * [SlipPay](README.md)
 * [Quickstart — human](quickstart-human.md)
 * [Quickstart — agent](quickstart-agent.md)
+* [Developer Bootstrap (DX)](dx/local-bootstrap.md)
 * [Merchant onboarding](MERCHANT_ONBOARDING.md)
 
 ## Concepts
