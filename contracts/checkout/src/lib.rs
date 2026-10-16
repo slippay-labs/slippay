@@ -7,6 +7,7 @@
 //! pay; the caller cannot route around them. Either both legs settle or none does.
 //!
 //! pay(from, merchant, token, amount):
+//!   Canonical fee arithmetic specification: see docs/fees.md
 //!   fee = amount * fee_bps / 10_000
 //!   transfer(from -> merchant, amount - fee)
 //!   transfer(from -> fee_to,   fee)
