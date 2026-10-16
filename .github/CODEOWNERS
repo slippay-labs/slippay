@@ -1,0 +1,34 @@
+# SlipPay Code Owners
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# These owners will be requested for review when someone opens a pull request
+# that touches the matched files and directories.
+
+# Global default: SlipPay core maintainers
+*                                               @slippay-labs/maintainers
+
+# Security-sensitive modules: cryptographic keys, credentials, tokens, IP derivation, SSRF guards
+/supabase/functions/api/lib/apikey.ts           @slippay-labs/maintainers
+/supabase/functions/api/lib/checkout-token.ts   @slippay-labs/maintainers
+/supabase/functions/api/lib/client_ip.ts        @slippay-labs/maintainers
+/apps/listener/src/ssrf.ts                      @slippay-labs/maintainers
+/apps/listener/src/crypto.ts                    @slippay-labs/maintainers
+
+# Canonical validation schemas
+/packages/shared/src/schemas/                   @slippay-labs/maintainers
+
+# Smart contract implementations
+/contracts/*/src/lib.rs                         @slippay-labs/maintainers
+
+# CI/CD pipelines & automation workflows
+/.github/workflows/                             @slippay-labs/maintainers
+
+# Build-time configuration files (execute arbitrary code during install/build)
+pnpm-lock.yaml                                  @slippay-labs/maintainers
+**/postcss.config.*                             @slippay-labs/maintainers
+**/vite.config.*                                @slippay-labs/maintainers
+**/eslint.config.js                             @slippay-labs/maintainers
+**/Cargo.toml                                   @slippay-labs/maintainers
+package.json                                    @slippay-labs/maintainers
+**/package.json                                 @slippay-labs/maintainers
+tsconfig*.json                                  @slippay-labs/maintainers
