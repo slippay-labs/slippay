@@ -14,6 +14,51 @@ export const MANDATE_PROGRAM_ID = new PublicKey(
   "CmDKY8MxCWkCN9etSeKApHKnGuTKK6vn7qzhTkAtM9Bv",
 );
 
+export const EXPECTED_MANDATE_PROGRAM_VERSION = "0.1.0";
+
+export interface MandateIdlShape {
+  address?: string;
+  version?: string;
+  programVersion?: string;
+  metadata?: {
+    name?: string;
+    version?: string;
+    spec?: string;
+  };
+}
+
+/** Validate at load that the IDL's program address and recorded version match
+ *  the configured program id and expected contract version, failing closed on a mismatch. */
+export function validateMandateIdl(
+  idl: MandateIdlShape = idlJson,
+  expectedProgramId: PublicKey = MANDATE_PROGRAM_ID,
+  expectedVersion: string = EXPECTED_MANDATE_PROGRAM_VERSION,
+): void {
+  if (!idl || typeof idl !== "object") {
+    throw new Error("Mandate IDL validation failed: IDL is null or not an object");
+  }
+  if (!idl.address) {
+    throw new Error("Mandate IDL validation failed: IDL missing 'address' field");
+  }
+  if (idl.address !== expectedProgramId.toBase58()) {
+    throw new Error(
+      `Mandate IDL program address mismatch: IDL has '${idl.address}' but configured program ID is '${expectedProgramId.toBase58()}'`,
+    );
+  }
+  const idlVersion = idl.programVersion ?? idl.version ?? idl.metadata?.version;
+  if (!idlVersion) {
+    throw new Error("Mandate IDL validation failed: IDL missing program version");
+  }
+  if (idlVersion !== expectedVersion) {
+    throw new Error(
+      `Mandate IDL program version mismatch: IDL has version '${idlVersion}' but expected '${expectedVersion}'`,
+    );
+  }
+}
+
+// Validate IDL contract and program ID at module load time (fail-closed)
+validateMandateIdl(idlJson, MANDATE_PROGRAM_ID, EXPECTED_MANDATE_PROGRAM_VERSION);
+
 const SEED = Buffer.from("mandate");
 
 type MethodBuilder = (...args: unknown[]) => { accounts(a: unknown): { rpc(): Promise<string> } };

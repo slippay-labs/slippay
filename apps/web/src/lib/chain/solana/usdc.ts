@@ -9,6 +9,10 @@ export type SolNet = "mainnet" | "devnet";
 export function solNet(): SolNet {
   return ((import.meta.env.VITE_SOLANA_NETWORK ?? "devnet").toLowerCase()) as SolNet;
 }
+export const CANONICAL_USDC_MINTS: Record<SolNet, string> = {
+  mainnet: "EPjFWaJGqicjsAE6b8V9bJU5kVJ86RHRK6Vbp4grmGp2",
+  devnet: "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU",
+};
 
 const MINTS: Record<SolNet, string> = {
   // Circle USDC, canonical. Mainnet is fixed; devnet is overridable for a
@@ -27,8 +31,30 @@ const RPCS: Record<SolNet, string> = {
 
 export const USDC_DECIMALS = 6;
 
+/** Validate that the USDC mint matches the expected address and format for the given cluster.
+ *  - Must be a valid Solana public key (base58).
+ *  - On mainnet: strictly requires canonical Circle USDC mint (never overridable).
+ */
+export function validateUsdcMint(mintAddress: string, net: SolNet = solNet()): void {
+  try {
+    new PublicKey(mintAddress);
+  } catch {
+    throw new Error(`Invalid USDC mint address format for ${net}: '${mintAddress}'`);
+  }
+
+  if (net === "mainnet") {
+    if (mintAddress !== CANONICAL_USDC_MINTS.mainnet) {
+      throw new Error(
+        `Invalid mainnet USDC mint: '${mintAddress}' does not match canonical Circle USDC '${CANONICAL_USDC_MINTS.mainnet}'`,
+      );
+    }
+  }
+}
+
 export function usdcMint(net: SolNet = solNet()): PublicKey {
-  return new PublicKey(MINTS[net]);
+  const mintStr = MINTS[net];
+  validateUsdcMint(mintStr, net);
+  return new PublicKey(mintStr);
 }
 
 export function rpcUrl(net: SolNet = solNet()): string {

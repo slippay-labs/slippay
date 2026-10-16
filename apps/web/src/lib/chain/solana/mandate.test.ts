@@ -19,8 +19,10 @@ vi.mock("@coral-xyz/anchor", () => ({
 
 import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import idlJson from "./idl/slippay_mandate.json";
 import {
   mandatePda, orderIdFromHex, MANDATE_PROGRAM_ID, SlippayMandate, BN,
+  validateMandateIdl, EXPECTED_MANDATE_PROGRAM_VERSION,
 } from "./mandate.ts";
 
 describe("orderIdFromHex", () => {
@@ -131,3 +133,44 @@ describe("SlippayMandate", () => {
     expect(accounts).toHaveBeenCalledWith({ owner, mandate: mandatePda(owner, mint) });
   });
 });
+
+describe("validateMandateIdl and IDL version contract", () => {
+  it("IDL explicitly records the program version it describes", () => {
+    expect(idlJson.version).toBe(EXPECTED_MANDATE_PROGRAM_VERSION);
+    expect(idlJson.programVersion).toBe(EXPECTED_MANDATE_PROGRAM_VERSION);
+    expect(idlJson.metadata?.version).toBe(EXPECTED_MANDATE_PROGRAM_VERSION);
+  });
+
+  it("passes validation for the checked-in IDL against configured program ID and version", () => {
+    expect(() => validateMandateIdl(idlJson, MANDATE_PROGRAM_ID, EXPECTED_MANDATE_PROGRAM_VERSION)).not.toThrow();
+  });
+
+  it("fails closed on program ID address mismatch with a clear diagnostic message", () => {
+    const wrongProgramId = Keypair.generate().publicKey;
+    expect(() => validateMandateIdl(idlJson, wrongProgramId, EXPECTED_MANDATE_PROGRAM_VERSION)).toThrow(
+      /Mandate IDL program address mismatch: IDL has '.*' but configured program ID is/,
+    );
+  });
+
+  it("fails closed on missing address field in IDL", () => {
+    const badIdl = { ...idlJson, address: "" };
+    expect(() => validateMandateIdl(badIdl, MANDATE_PROGRAM_ID, EXPECTED_MANDATE_PROGRAM_VERSION)).toThrow(
+      "Mandate IDL validation failed: IDL missing 'address' field",
+    );
+  });
+
+  it("fails closed on program version mismatch", () => {
+    const mismatchedVersionIdl = { ...idlJson, version: "0.2.0", programVersion: "0.2.0" };
+    expect(() => validateMandateIdl(mismatchedVersionIdl, MANDATE_PROGRAM_ID, EXPECTED_MANDATE_PROGRAM_VERSION)).toThrow(
+      /Mandate IDL program version mismatch: IDL has version '0.2.0' but expected '0.1.0'/,
+    );
+  });
+
+  it("fails closed on missing program version", () => {
+    const noVersionIdl = { address: MANDATE_PROGRAM_ID.toBase58() };
+    expect(() => validateMandateIdl(noVersionIdl, MANDATE_PROGRAM_ID, EXPECTED_MANDATE_PROGRAM_VERSION)).toThrow(
+      "Mandate IDL validation failed: IDL missing program version",
+    );
+  });
+});
+

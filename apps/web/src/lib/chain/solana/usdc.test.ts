@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { toBaseUnits, splitFee, USDC_DECIMALS } from "./usdc.ts";
+import {
+  toBaseUnits, splitFee, USDC_DECIMALS, validateUsdcMint, usdcMint, CANONICAL_USDC_MINTS,
+} from "./usdc.ts";
 
 describe("toBaseUnits", () => {
   it("converts whole + fractional USDC to 6-decimal base units", () => {
@@ -41,3 +43,32 @@ describe("splitFee", () => {
     expect(() => splitFee(100n, 10_001)).toThrow("invalid_fee_bp");
   });
 });
+
+describe("validateUsdcMint and usdcMint per cluster", () => {
+  it("validates canonical USDC mint on mainnet", () => {
+    expect(() => validateUsdcMint(CANONICAL_USDC_MINTS.mainnet, "mainnet")).not.toThrow();
+    expect(usdcMint("mainnet").toBase58()).toBe("EPjFWaJGqicjsAE6b8V9bJU5kVJ86RHRK6Vbp4grmGp2");
+  });
+
+  it("fails closed on non-canonical USDC mint for mainnet", () => {
+    const fakeMint = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU";
+    expect(() => validateUsdcMint(fakeMint, "mainnet")).toThrow(
+      /Invalid mainnet USDC mint.*does not match canonical Circle USDC/,
+    );
+  });
+
+  it("fails on malformed public key strings", () => {
+    expect(() => validateUsdcMint("not-a-valid-solana-key", "mainnet")).toThrow(
+      /Invalid USDC mint address format for mainnet/,
+    );
+    expect(() => validateUsdcMint("not-a-valid-solana-key", "devnet")).toThrow(
+      /Invalid USDC mint address format for devnet/,
+    );
+  });
+
+  it("validates and allows devnet USDC mint", () => {
+    expect(() => validateUsdcMint(CANONICAL_USDC_MINTS.devnet, "devnet")).not.toThrow();
+    expect(usdcMint("devnet").toBase58()).toBe("4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU");
+  });
+});
+

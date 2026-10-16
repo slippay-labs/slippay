@@ -1,5 +1,7 @@
 {
   "address": "CmDKY8MxCWkCN9etSeKApHKnGuTKK6vn7qzhTkAtM9Bv",
+  "version": "0.1.0",
+  "programVersion": "0.1.0",
   "metadata": {
     "name": "slippay_mandate",
     "version": "0.1.0",
