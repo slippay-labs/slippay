@@ -288,4 +288,27 @@ Deno.test("GET /v1/x402/:slug sets platform_fee_bp and fee_usdc on order insert"
   assertEquals(orderData.fee_usdc, "0.1485000"); // 5.0 * 297 / 10000
 });
 
+Deno.test("POST /v1/orders persists net_usdc and asserts sum identity with non-trivial amount", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const m = await createMerchant();
+  const res = await req("/v1/orders", {
+    method: "POST",
+    headers: { authorization: `Bearer ${m.api_key}`, "content-type": "application/json" },
+    body: JSON.stringify({ usd_amount: "123.4567891", external_ref: "cart_net_usdc" }),
+  });
+  assertEquals(res.status, 201);
+  const body = await res.json();
+  const order = body.order;
+  assert(order.id);
+  assert(order.net_usdc !== undefined && order.net_usdc !== null);
+  assert(order.fee_usdc !== undefined && order.fee_usdc !== null);
+  assert(order.usdc_amount !== undefined && order.usdc_amount !== null);
+
+  // Exact sum identity: net_usdc + fee_usdc = usdc_amount
+  const gross = parseFloat(order.usdc_amount);
+  const fee = parseFloat(order.fee_usdc);
+  const net = parseFloat(order.net_usdc);
+  assertEquals((net + fee).toFixed(7), order.usdc_amount);
+  assertEquals(body.fee.net_usdc, order.net_usdc);
+});
+
 

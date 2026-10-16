@@ -74,6 +74,7 @@ r.post("/", requireApiKey, async (c) => {
     expires_at: expiresAt,
     platform_fee_bp: feeBp,
     fee_usdc: feeUsdc,
+    net_usdc: netUsdc,
   });
 
   let insertRes = await sb.from("orders").insert(insertPayload(memo)).select("*").single();

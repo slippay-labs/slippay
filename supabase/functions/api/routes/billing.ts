@@ -24,7 +24,7 @@ r.get("/fees", requireApiKeyOrJwt, async (c) => {
   // Only paid orders are billable.
   const { data, error } = await sb
     .from("orders")
-    .select("usdc_amount, fee_usdc, platform_fee_bp")
+    .select("usdc_amount, fee_usdc, net_usdc, platform_fee_bp")
     .eq("merchant_id", merchant.id)
     .eq("status", "paid")
     .gte("paid_at", from)
