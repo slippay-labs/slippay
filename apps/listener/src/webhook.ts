@@ -133,11 +133,13 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
       for (const row of rows) {
         const merchant = (row as any).orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
         if (!merchant?.webhook_url) {
+          log("warn", "webhook_no_url", { id: row.id });
           await db.from("webhook_deliveries").update({ status: "dead", response_body: "no_webhook_url" }).eq("id", row.id);
           continue;
         }
         // Sync pre-flight: cheap URL-shape rejection before DNS cost.
         if (!isSafeWebhookUrl(merchant.webhook_url, allowLocal)) {
+          log("warn", "webhook_unsafe_url", { id: row.id });
           await db.from("webhook_deliveries").update({ status: "dead", response_body: "unsafe_url" }).eq("id", row.id);
           continue;
         }

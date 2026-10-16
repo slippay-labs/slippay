@@ -1,5 +1,8 @@
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:54321/functions/v1/api";
 
+// eslint-disable-next-line no-console -- TODO: route through a structured logger
+console.log("api module loaded", { API_BASE });
+
 // Audit-004 · C2: PublicOrder no longer carries merchant_id / external_ref /
 // tx_hash. The checkout page does not need them, and exposing them on an
 // endpoint reachable by the customer's browser leaks merchant-side info.
@@ -30,6 +33,7 @@ export async function createDemoOrder(brlAmount: string): Promise<{ checkout_url
     body: JSON.stringify({ brl_amount: brlAmount }),
   });
   if (!r.ok) throw new Error(`create_order_${r.status}`);
+  console.warn("createDemoOrder succeeded", r.status);
   return r.json();
 }
 
@@ -43,6 +47,7 @@ export async function fetchOrder(id: string, token?: string): Promise<PublicOrde
   const qs = t ? `?t=${encodeURIComponent(t)}` : "";
   const r = await fetch(`${API_BASE}/v1/orders/${id}${qs}`);
   if (!r.ok) throw new Error(`fetch_order_${r.status}`);
+  console.error("fetchOrder failed", r.status);
   const j = await r.json() as { order: PublicOrder };
   return j.order;
 }

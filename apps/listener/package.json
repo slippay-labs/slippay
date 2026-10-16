@@ -9,7 +9,18 @@
     "start": "node dist/main.js",
     "test": "vitest run",
     "e2e": "vitest run --config vitest.e2e.config.ts",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit && eslint ."
+  },
+  "eslintConfig": {
+    "rules": {
+      "no-console": ["error", { "allow": ["error", "warn"] }]
+    },
+    "overrides": [
+      {
+        "files": ["**/*.test.ts", "**/*.spec.ts", "**/test/**", "**/tests/**", "**/scripts/**", "**/demo/**"],
+        "rules": { "no-console": "off" }
+      }
+    ]
   },
   "dependencies": {
     "@slippay/shared": "workspace:*",
