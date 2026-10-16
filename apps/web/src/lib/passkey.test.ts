@@ -137,17 +137,65 @@ describe("getAssertion — WebAuthn assertion plumbing", () => {
     expect(Array.from(arg.publicKey.challenge)).toEqual([9, 9, 9, 9]);
   });
 
-  it("throws when the user cancels biometrics", async () => {
-    vi.stubGlobal("navigator", { credentials: { get: vi.fn().mockResolvedValue(null) } });
+  it("returns a distinct cancellation result when user cancels or dismisses prompt", async () => {
+    vi.stubGlobal("window", { PublicKeyCredential: function () {} });
+    vi.stubGlobal("navigator", {
+      credentials: {
+        get: vi.fn().mockRejectedValue(new DOMException("The user declined.", "NotAllowedError")),
+      },
+    });
 
-    await expect(getAssertion(new Uint8Array([1]))).rejects.toThrow("Biometria cancelada.");
+    const res = await getAssertion(new Uint8Array([1]));
+    expect(res).toEqual({ outcome: "cancelled", reason: "user_cancelled" });
+
+    // Also verify null credential return produces cancellation outcome
+    vi.stubGlobal("navigator", { credentials: { get: vi.fn().mockResolvedValue(null) } });
+    const resNull = await getAssertion(new Uint8Array([1]));
+    expect(resNull).toEqual({ outcome: "cancelled", reason: "user_cancelled" });
+  });
+
+  it("distinguishes a timeout outcome from a cancellation", async () => {
+    vi.stubGlobal("window", { PublicKeyCredential: function () {} });
+    vi.stubGlobal("navigator", {
+      credentials: {
+        get: vi.fn().mockRejectedValue(new DOMException("The operation timed out.", "TimeoutError")),
+      },
+    });
+
+    const res = await getAssertion(new Uint8Array([1]));
+    expect(res).toEqual({ outcome: "timeout", reason: "timeout" });
   });
 });
 
-describe("createPasskey — platform support gate", () => {
-  it("throws a clear error when the device has no WebAuthn support", async () => {
+describe("createPasskey — cancellation, timeout and platform support gates", () => {
+  it("returns a distinct cancellation result when createPasskey is cancelled", async () => {
+    vi.stubGlobal("window", { PublicKeyCredential: function () {} });
+    vi.stubGlobal("navigator", {
+      credentials: {
+        create: vi.fn().mockRejectedValue(new DOMException("User cancelled", "NotAllowedError")),
+      },
+    });
+
+    const res = await createPasskey("alice");
+    expect(res).toEqual({ outcome: "cancelled", reason: "user_cancelled" });
+  });
+
+  it("returns a distinct timeout result when createPasskey times out", async () => {
+    vi.stubGlobal("window", { PublicKeyCredential: function () {} });
+    vi.stubGlobal("navigator", {
+      credentials: {
+        create: vi.fn().mockRejectedValue(new DOMException("Timed out", "TimeoutError")),
+      },
+    });
+
+    const res = await createPasskey("alice");
+    expect(res).toEqual({ outcome: "timeout", reason: "timeout" });
+  });
+
+  it("produces an actionable message when the device has no WebAuthn support", async () => {
     vi.stubGlobal("window", {});
 
-    await expect(createPasskey("alice")).rejects.toThrow(/não suporta passkey/);
+    await expect(createPasskey("alice")).rejects.toThrow(/Este dispositivo não suporta passkey \/ Face ID/);
+    await expect(createPasskey("alice")).rejects.toThrow(/abra o app\.slippay\.cc no celular/);
   });
 });

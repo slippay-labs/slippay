@@ -80,57 +80,137 @@ export function derToRaw64(der: Uint8Array): Uint8Array {
 }
 
 export interface PasskeyHandle {
+  outcome?: "success";
   /** 65-byte uncompressed secp256r1 public key (0x04 || X || Y). */
   pubKey: Uint8Array;
   /** WebAuthn credential id. */
   credId: Uint8Array;
 }
 
+export interface AssertionBlobs {
+  outcome?: "success";
+  authenticatorData: Uint8Array;
+  clientDataJSON: Uint8Array;
+  signature: Uint8Array;
+}
+
+export interface PasskeyCancelled {
+  outcome: "cancelled";
+  reason: "user_cancelled";
+}
+
+export interface PasskeyTimeout {
+  outcome: "timeout";
+  reason: "timeout";
+}
+
+export type PasskeyCreationResult = PasskeyHandle | PasskeyCancelled | PasskeyTimeout;
+export type PasskeyAssertionResult = AssertionBlobs | PasskeyCancelled | PasskeyTimeout;
+
+export function isPasskeyCancelled(result: unknown): result is PasskeyCancelled {
+  return (result as any)?.outcome === "cancelled";
+}
+
+export function isPasskeyTimeout(result: unknown): result is PasskeyTimeout {
+  return (result as any)?.outcome === "timeout";
+}
+
+export const UNSUPPORTED_AUTHENTICATOR_MSG =
+  "Este dispositivo não suporta passkey / Face ID. O SlipPay precisa de autenticação biométrica ativa (Face ID, Touch ID ou impressão digital). Para continuar, abra o app.slippay.cc no celular.";
+
 /** Prompt the platform authenticator (Face ID / fingerprint) to MINT a new
- *  passkey. Returns the secp256r1 pubkey to bind a wallet to. */
-export async function createPasskey(userName: string): Promise<PasskeyHandle> {
-  if (!window.PublicKeyCredential) throw new Error("Este dispositivo não suporta passkey / Face ID.");
-  const cred = (await navigator.credentials.create({
-    publicKey: {
-      challenge: crypto.getRandomValues(new Uint8Array(32)),
-      rp: { name: "Slippay" },
-      user: {
-        id: crypto.getRandomValues(new Uint8Array(16)),
-        name: userName,
-        displayName: userName,
+ *  passkey. Returns the secp256r1 pubkey or a distinct cancellation/timeout outcome. */
+export async function createPasskey(userName: string): Promise<PasskeyCreationResult> {
+  if (typeof window === "undefined" || !window.PublicKeyCredential) {
+    throw new Error(UNSUPPORTED_AUTHENTICATOR_MSG);
+  }
+
+  let cred: PublicKeyCredential | null = null;
+  try {
+    cred = (await navigator.credentials.create({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rp: { name: "Slippay" },
+        user: {
+          id: crypto.getRandomValues(new Uint8Array(16)),
+          name: userName,
+          displayName: userName,
+        },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }], // ES256 / secp256r1
+        authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "preferred" },
+        timeout: 60000,
       },
-      pubKeyCredParams: [{ type: "public-key", alg: -7 }], // ES256 / secp256r1
-      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "preferred" },
-      timeout: 60000,
-    },
-  })) as PublicKeyCredential | null;
-  if (!cred) throw new Error("Biometria cancelada.");
+    })) as PublicKeyCredential | null;
+  } catch (err: any) {
+    const name = err?.name;
+    const msg = err?.message ?? String(err);
+    if (name === "TimeoutError" || /timed out|timeout/i.test(msg)) {
+      return { outcome: "timeout", reason: "timeout" };
+    }
+    if (name === "NotAllowedError" || /cancel|abort|declined/i.test(msg)) {
+      return { outcome: "cancelled", reason: "user_cancelled" };
+    }
+    if (name === "NotSupportedError") {
+      throw new Error(UNSUPPORTED_AUTHENTICATOR_MSG);
+    }
+    throw err;
+  }
+
+  if (!cred) {
+    return { outcome: "cancelled", reason: "user_cancelled" };
+  }
+
   const resp = cred.response as AuthenticatorAttestationResponse;
   // getPublicKey() returns the DER SPKI; for P-256 the uncompressed EC point
   // (0x04 || X || Y) is the trailing 65 bytes.
   const spki = new Uint8Array(resp.getPublicKey()!);
   const pubKey = spki.slice(spki.length - 65);
   if (pubKey[0] !== 0x04 || pubKey.length !== 65) throw new Error("passkey is not an uncompressed P-256 key");
-  return { pubKey, credId: new Uint8Array(cred.rawId) };
+  return { outcome: "success", pubKey, credId: new Uint8Array(cred.rawId) };
 }
 
 /** Prompt the authenticator to SIGN `challenge` (the Soroban auth payload).
- *  Returns the raw WebAuthn assertion blobs the contract verifies. */
+ *  Returns the raw WebAuthn assertion blobs or a distinct cancellation/timeout outcome. */
 export async function getAssertion(
   challenge: Uint8Array,
   credId?: Uint8Array,
-): Promise<{ authenticatorData: Uint8Array; clientDataJSON: Uint8Array; signature: Uint8Array }> {
-  const cred = (await navigator.credentials.get({
-    publicKey: {
-      challenge: challenge as BufferSource,
-      ...(credId ? { allowCredentials: [{ type: "public-key" as const, id: credId as BufferSource }] } : {}),
-      userVerification: "required",
-      timeout: 60000,
-    },
-  })) as PublicKeyCredential | null;
-  if (!cred) throw new Error("Biometria cancelada.");
+): Promise<PasskeyAssertionResult> {
+  if (typeof navigator === "undefined" || !navigator.credentials?.get) {
+    throw new Error(UNSUPPORTED_AUTHENTICATOR_MSG);
+  }
+
+  let cred: PublicKeyCredential | null = null;
+  try {
+    cred = (await navigator.credentials.get({
+      publicKey: {
+        challenge: challenge as BufferSource,
+        ...(credId ? { allowCredentials: [{ type: "public-key" as const, id: credId as BufferSource }] } : {}),
+        userVerification: "required",
+        timeout: 60000,
+      },
+    })) as PublicKeyCredential | null;
+  } catch (err: any) {
+    const name = err?.name;
+    const msg = err?.message ?? String(err);
+    if (name === "TimeoutError" || /timed out|timeout/i.test(msg)) {
+      return { outcome: "timeout", reason: "timeout" };
+    }
+    if (name === "NotAllowedError" || /cancel|abort|declined/i.test(msg)) {
+      return { outcome: "cancelled", reason: "user_cancelled" };
+    }
+    if (name === "NotSupportedError") {
+      throw new Error(UNSUPPORTED_AUTHENTICATOR_MSG);
+    }
+    throw err;
+  }
+
+  if (!cred) {
+    return { outcome: "cancelled", reason: "user_cancelled" };
+  }
+
   const resp = cred.response as AuthenticatorAssertionResponse;
   return {
+    outcome: "success",
     authenticatorData: new Uint8Array(resp.authenticatorData),
     clientDataJSON: new Uint8Array(resp.clientDataJSON),
     signature: derToRaw64(new Uint8Array(resp.signature)),
@@ -291,6 +371,8 @@ export async function payWithBiometric(opts: {
 
   // ← the only human action: Face ID / fingerprint signs the payload.
   const a = await getAssertion(payload, opts.credId);
+  if (isPasskeyCancelled(a)) throw new Error("Biometria cancelada pelo usuário.");
+  if (isPasskeyTimeout(a)) throw new Error("Operação de biometria expirou.");
 
   const walletAuth = xdr.ScVal.scvVec([
     xdr.ScVal.scvSymbol("Passkey"),
@@ -390,6 +472,8 @@ export async function payViaRelayer(opts: {
 
   // ← the only human action: Face ID / fingerprint signs the payload.
   const a = await getAssertion(payload, opts.credId);
+  if (isPasskeyCancelled(a)) throw new Error("Biometria cancelada pelo usuário.");
+  if (isPasskeyTimeout(a)) throw new Error("Operação de biometria expirou.");
 
   const walletAuth = xdr.ScVal.scvVec([
     xdr.ScVal.scvSymbol("Passkey"),
