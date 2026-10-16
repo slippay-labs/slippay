@@ -166,3 +166,135 @@ describe("recordConversionIntent — best-effort margin ledger", () => {
     await expect(quote.recordConversionIntent(q)).resolves.toBeUndefined();
   });
 });
+
+describe("midRateBRLperUSD & quoteBRLtoUSDC — in-flight request deduplication (closes #332)", () => {
+  it("concurrent callers produce a single upstream request", async () => {
+    let resolveNetwork!: (val: any) => void;
+    const networkPromise = new Promise((resolve) => {
+      resolveNetwork = resolve;
+    });
+
+    const fetchSpy = vi.fn().mockImplementation(() =>
+      networkPromise.then(() => ({
+        json: async () => ({ rates: { BRL: 5.5 } }),
+      })),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    // Concurrently trigger 10 calls within the exact same frame/tick
+    const calls = Array.from({ length: 10 }, () => quote.midRateBRLperUSD());
+
+    // Assert that immediately, exactly 1 upstream fetch was initiated
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Resolve the in-flight network response
+    resolveNetwork(true);
+
+    const results = await Promise.all(calls);
+    expect(results).toHaveLength(10);
+    for (const res of results) {
+      expect(res).toEqual({ rate: 5.5, stale: false });
+    }
+
+    // Still exactly 1 call after all 10 resolved
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("multiple quote consumers mounting simultaneously share one upstream fetch", async () => {
+    let resolveNetwork!: (val: any) => void;
+    const networkPromise = new Promise((resolve) => {
+      resolveNetwork = resolve;
+    });
+
+    const fetchSpy = vi.fn().mockImplementation(() =>
+      networkPromise.then(() => ({
+        json: async () => ({ rates: { BRL: 5.0 } }),
+      })),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    // 3 components quote different BRL amounts on initial mount
+    const p1 = quote.quoteBRLtoUSDC(100);
+    const p2 = quote.quoteBRLtoUSDC(200);
+    const p3 = quote.quoteBRLtoUSDC(500);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    resolveNetwork(true);
+    const [q1, q2, q3] = await Promise.all([p1, p2, p3]);
+
+    expect(q1.midRate).toBe(5.0);
+    expect(q2.midRate).toBe(5.0);
+    expect(q3.midRate).toBe(5.0);
+
+    // Exact expected amounts based on 5.0 mid-rate
+    expect(q1.usdcOut).toBeGreaterThan(0);
+    expect(q2.usdcOut).toBeCloseTo(q1.usdcOut * 2, 6);
+    expect(q3.usdcOut).toBeCloseTo(q1.usdcOut * 5, 6);
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("a cache miss during an in-flight request does not start a second request", async () => {
+    let resolveNetwork!: (val: any) => void;
+    const networkPromise = new Promise((resolve) => {
+      resolveNetwork = resolve;
+    });
+
+    const fetchSpy = vi.fn().mockImplementation(() =>
+      networkPromise.then(() => ({
+        json: async () => ({ rates: { BRL: 5.2 } }),
+      })),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+
+    // First request starts (cache is cold/empty)
+    const call1 = quote.midRateBRLperUSD();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // While call1 is still pending in-flight, a second consumer arrives (cache still cold)
+    const call2 = quote.midRateBRLperUSD();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    resolveNetwork(true);
+    const [res1, res2] = await Promise.all([call1, call2]);
+
+    expect(res1.rate).toBe(5.2);
+    expect(res2.rate).toBe(5.2);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("subsequent call after completion uses the resolved 60s cache", async () => {
+    const fetchSpy = okFetch(5.3);
+    vi.stubGlobal("fetch", fetchSpy);
+
+    const first = await quote.midRateBRLperUSD();
+    expect(first.rate).toBe(5.3);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    // Subsequent call within 60s hits resolved cache
+    const second = await quote.midRateBRLperUSD();
+    expect(second.rate).toBe(5.3);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("clears in-flight promise upon network failure so future attempts can retry", async () => {
+    const errorSpy = vi.fn().mockRejectedValueOnce(new Error("network blip"));
+    vi.stubGlobal("fetch", errorSpy);
+
+    // First call fails and falls back to FALLBACK_BRL_PER_USD (stale: true)
+    const failResult = await quote.midRateBRLperUSD();
+    expect(failResult.stale).toBe(true);
+    expect(failResult.rate).toBe(5.4);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+
+    // In-flight promise was cleaned up in finally block; new fetch can be attempted
+    const successSpy = okFetch(5.1);
+    vi.stubGlobal("fetch", successSpy);
+
+    const recovered = await quote.midRateBRLperUSD();
+    expect(recovered.stale).toBe(false);
+    expect(recovered.rate).toBe(5.1);
+    expect(successSpy).toHaveBeenCalledTimes(1);
+  });
+});

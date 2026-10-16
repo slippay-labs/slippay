@@ -99,6 +99,12 @@ only** and are not a roadmap.
 | [WooCommerce plugin](./guides/woocommerce.md) | Install and configure. |
 | [Handle webhooks](./guides/webhooks-handler.md) | Verify HMAC, idempotency, retries. |
 
+## Web Application & Frontend Architecture
+
+| | |
+|---|---|
+| [Locale strategy & routing](./web/locale-and-routing.md) | Supported languages (`pt`/`en`), theme palette tokens, persistence rules, and canonical vs legacy routes. |
+
 ## Integrations
 
 | | |
