@@ -6,6 +6,8 @@
   "description": "SlipPay × VTEX Payment Provider Protocol connector (maps VTEX PPP onto SlipPay's API).",
   "scripts": {
     "dev": "node src/index.mjs",
-    "start": "node src/index.mjs"
+    "start": "node src/index.mjs",
+    "lint": "node --check src/index.mjs && node --check test/vtex.test.mjs",
+    "test": "node test/vtex.test.mjs"
   }
 }

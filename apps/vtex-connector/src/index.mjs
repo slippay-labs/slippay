@@ -14,6 +14,7 @@
 
 import http from "node:http";
 import { randomUUID } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const SLIPPAY_API_BASE = process.env.SLIPPAY_API_BASE ?? "https://api.slippay.cc";
@@ -24,14 +25,14 @@ const FALLBACK_KEY = process.env.SLIPPAY_API_KEY ?? "";
 // paymentId → { slippayOrderId, callbackUrl, status }. In-memory for the
 // scaffold; production persists this (Supabase table) so callbacks survive
 // restarts.
-const payments = new Map();
+export const payments = new Map();
 
 const json = (res, code, body) => {
   res.writeHead(code, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
 };
 
-async function readBody(req) {
+export async function readBody(req) {
   const chunks = [];
   for await (const c of req) chunks.push(c);
   if (!chunks.length) return {};
@@ -39,19 +40,28 @@ async function readBody(req) {
   catch { return {}; }
 }
 
+export function formatBrlAmount(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num) || num <= 0) {
+    throw new Error("invalid payment value: must be a positive number");
+  }
+  return num.toFixed(2);
+}
+
 // VTEX → SlipPay: create an order, return its hosted checkout_url.
-async function createSlippayOrder({ apiKey, value, reference }) {
-  const r = await fetch(`${SLIPPAY_API_BASE}/api/v1/orders`, {
+export async function createSlippayOrder({ apiKey, value, reference, baseUrl = SLIPPAY_API_BASE }) {
+  const brl_amount = formatBrlAmount(value);
+  const r = await fetch(`${baseUrl}/api/v1/orders`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ brl_amount: Number(value).toFixed(2), reference }),
+    body: JSON.stringify({ brl_amount, reference }),
   });
   const data = await r.json().catch(() => ({}));
   if (r.status !== 201) throw new Error(`slippay ${r.status}: ${JSON.stringify(data)}`);
   return data; // { order: {...}, checkout_url }
 }
 
-const server = http.createServer(async (req, res) => {
+export async function handleVtexRequest(req, res) {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname;
 
@@ -131,8 +141,12 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && path === "/health") return json(res, 200, { ok: true, slippay: SLIPPAY_API_BASE });
 
   json(res, 404, { error: "not_found", path });
-});
+}
 
-server.listen(PORT, () => {
-  console.log(`SlipPay×VTEX connector on :${PORT} → ${SLIPPAY_API_BASE}`);
-});
+export const server = http.createServer(handleVtexRequest);
+
+if (process.env.VTEX_CONNECTOR_NO_LISTEN !== "1" && process.argv[1] === fileURLToPath(import.meta.url)) {
+  server.listen(PORT, () => {
+    console.log(`SlipPay×VTEX connector on :${PORT} → ${SLIPPAY_API_BASE}`);
+  });
+}
