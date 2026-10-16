@@ -24,7 +24,7 @@ const ALLOWED_PORTS = new Set([80, 443]);
 
 // IPv4 ranges we refuse to connect to, regardless of network mode. Source:
 // IANA special-purpose registries + cloud metadata IPs.
-const IPV4_BLOCKED_RANGES: Array<[ipaddr.IPv4, number]> = [
+export const IPV4_BLOCKED_RANGES: Array<[ipaddr.IPv4, number]> = [
   [ipaddr.IPv4.parse("0.0.0.0"), 8],          // "this network"
   [ipaddr.IPv4.parse("10.0.0.0"), 8],         // RFC1918
   [ipaddr.IPv4.parse("100.64.0.0"), 10],      // CGNAT
@@ -41,7 +41,12 @@ const IPV4_BLOCKED_RANGES: Array<[ipaddr.IPv4, number]> = [
   [ipaddr.IPv4.parse("240.0.0.0"), 4],        // reserved / 255.255.255.255
 ];
 
-const IPV6_BLOCKED_RANGES: Array<[ipaddr.IPv6, number]> = [
+const NAT64_WELL_KNOWN = ipaddr.IPv6.parse("64:ff9b::");
+const SIX_TO_FOUR = ipaddr.IPv6.parse("2002::");
+
+// IPv6 ranges we refuse to connect to. Sources: IANA Special-Purpose IPv6 Registry,
+// RFC 3056 (6to4), RFC 4380 (Teredo), RFC 6052 (NAT64), RFC 8215 (Local-use NAT64).
+export const IPV6_BLOCKED_RANGES: Array<[ipaddr.IPv6, number]> = [
   [ipaddr.IPv6.parse("::"), 128],             // unspecified
   [ipaddr.IPv6.parse("::1"), 128],            // loopback
   [ipaddr.IPv6.parse("fc00::"), 7],           // ULA
@@ -49,30 +54,73 @@ const IPV6_BLOCKED_RANGES: Array<[ipaddr.IPv6, number]> = [
   [ipaddr.IPv6.parse("ff00::"), 8],           // multicast
   [ipaddr.IPv6.parse("100::"), 64],           // discard-only
   [ipaddr.IPv6.parse("2001:db8::"), 32],      // documentation
+  [ipaddr.IPv6.parse("2001::"), 32],          // Teredo (RFC 4380)
+  [ipaddr.IPv6.parse("2001:20::"), 28],       // ORCHIDv2 (RFC 7343)
+  [ipaddr.IPv6.parse("2001:10::"), 28],       // Deprecated ORCHID (RFC 4843)
+  [ipaddr.IPv6.parse("64:ff9b::"), 96],       // NAT64 well-known prefix (RFC 6052)
+  [ipaddr.IPv6.parse("64:ff9b:1::"), 48],     // NAT64 local-use prefix (RFC 8215)
+  [ipaddr.IPv6.parse("2002::"), 16],          // 6to4 prefix (RFC 3056)
 ];
 
-function isBlockedIPv4(addr: ipaddr.IPv4): boolean {
+export function isBlockedIPv4(addr: ipaddr.IPv4): boolean {
   return IPV4_BLOCKED_RANGES.some(([net, prefix]) => addr.match(net, prefix));
 }
 
-function isBlockedIPv6(addr: ipaddr.IPv6): boolean {
-  if (IPV6_BLOCKED_RANGES.some(([net, prefix]) => addr.match(net, prefix))) {
-    return true;
+export interface BlockedCheckResult {
+  blocked: boolean;
+  reason?: string;
+  embeddedIp?: string;
+}
+
+export function checkBlockedIp(ip: string): BlockedCheckResult {
+  if (!ipaddr.isValid(ip)) return { blocked: true, reason: "invalid_ip" };
+  const parsed = ipaddr.parse(ip);
+  if (parsed.kind() === "ipv4") {
+    const v4 = parsed as ipaddr.IPv4;
+    return isBlockedIPv4(v4)
+      ? { blocked: true, reason: `blocked_ipv4:${v4.toString()}` }
+      : { blocked: false };
   }
-  // IPv4-mapped IPv6 (::ffff:0:0/96): unwrap and apply IPv4 rules so the
-  // mapped form can't bypass the IPv4 blocklist.
-  if (addr.isIPv4MappedAddress()) {
-    return isBlockedIPv4(addr.toIPv4Address());
+
+  const v6 = parsed as ipaddr.IPv6;
+
+  // 1. IPv4-mapped IPv6 (::ffff:0:0/96): unwrap and inspect embedded IPv4
+  if (v6.isIPv4MappedAddress()) {
+    const embedded = v6.toIPv4Address();
+    if (isBlockedIPv4(embedded)) {
+      return { blocked: true, reason: `embedded:${embedded.toString()}`, embeddedIp: embedded.toString() };
+    }
   }
-  return false;
+
+  // 2. NAT64 well-known prefix (64:ff9b::/96): extract embedded IPv4 in last 32 bits
+  if (v6.match(NAT64_WELL_KNOWN, 96)) {
+    const bytes = v6.toByteArray();
+    const embedded = new ipaddr.IPv4(bytes.slice(12, 16));
+    if (isBlockedIPv4(embedded)) {
+      return { blocked: true, reason: `embedded:${embedded.toString()}`, embeddedIp: embedded.toString() };
+    }
+  }
+
+  // 3. 6to4 prefix (2002::/16): extract embedded IPv4 in bits 16..47 (bytes 2..5)
+  if (v6.match(SIX_TO_FOUR, 16)) {
+    const bytes = v6.toByteArray();
+    const embedded = new ipaddr.IPv4(bytes.slice(2, 6));
+    if (isBlockedIPv4(embedded)) {
+      return { blocked: true, reason: `embedded:${embedded.toString()}`, embeddedIp: embedded.toString() };
+    }
+  }
+
+  // 4. Check explicit IPv6 blocked prefixes (including full transition ranges)
+  const matchedRange = IPV6_BLOCKED_RANGES.find(([net, prefix]) => v6.match(net, prefix));
+  if (matchedRange) {
+    return { blocked: true, reason: `blocked_ipv6_range:${matchedRange[0].toString()}/${matchedRange[1]}` };
+  }
+
+  return { blocked: false };
 }
 
 export function isBlockedIp(ip: string): boolean {
-  if (!ipaddr.isValid(ip)) return true;
-  const parsed = ipaddr.parse(ip);
-  return parsed.kind() === "ipv4"
-    ? isBlockedIPv4(parsed as ipaddr.IPv4)
-    : isBlockedIPv6(parsed as ipaddr.IPv6);
+  return checkBlockedIp(ip).blocked;
 }
 
 export interface ValidatedTarget {
@@ -87,6 +135,55 @@ export type ValidationResult =
   | { safe: true; target: ValidatedTarget }
   | { safe: false; reason: string };
 
+export type NormalisedHostResult =
+  | { valid: true; host: string; isIp: boolean; parsedIp?: ipaddr.IPv4 | ipaddr.IPv6 }
+  | { valid: false; reason: string };
+
+/**
+ * Normalise a host from URL or literal input (fixes #248):
+ * - Rejects zone identifiers ('%') to prevent scoped address bypasses.
+ * - Strips balanced IPv6 brackets ('[...]'). Rejects asymmetric brackets.
+ * - Normalises IP literals into canonical form.
+ */
+export function normaliseHost(rawHost: string): NormalisedHostResult {
+  if (!rawHost || typeof rawHost !== "string") {
+    return { valid: false, reason: "empty_hostname" };
+  }
+  let host = rawHost.toLowerCase().trim();
+
+  // Reject zone identifiers (RFC 6874 scoped address, e.g. fe80::1%eth0)
+  if (host.includes("%")) {
+    return { valid: false, reason: "zone_identifier_rejected" };
+  }
+
+  // Handle bracketed IPv6: must be properly paired
+  const hasLeading = host.startsWith("[");
+  const hasTrailing = host.endsWith("]");
+  if (hasLeading || hasTrailing) {
+    if (!hasLeading || !hasTrailing) {
+      return { valid: false, reason: "unbalanced_brackets" };
+    }
+    host = host.slice(1, -1);
+    if (host.includes("[") || host.includes("]")) {
+      return { valid: false, reason: "malformed_brackets" };
+    }
+  }
+
+  if (!host) {
+    return { valid: false, reason: "empty_hostname" };
+  }
+
+  if (ipaddr.isValid(host)) {
+    const parsedIp = ipaddr.parse(host);
+    const canonical = parsedIp.kind() === "ipv4"
+      ? parsedIp.toString()
+      : (parsedIp as ipaddr.IPv6).toRFC5952String();
+    return { valid: true, host: canonical, isIp: true, parsedIp };
+  }
+
+  return { valid: true, host, isIp: false };
+}
+
 /**
  * Pre-flight URL shape check (sync, cheap). Returns false on obviously bad URLs
  * so callers can mark deliveries dead without paying DNS cost.
@@ -98,16 +195,20 @@ export type ValidationResult =
  * mock servers (example.com, localhost) work in tests. Audit-003 L1.
  */
 export function isSafeWebhookUrl(url: string, allowLocal: boolean): boolean {
+  if (/https?:\/\/[^/]*%[a-zA-Z0-9_-]+/.test(url)) return false;
   let parsed: URL;
   try { parsed = new URL(url); } catch { return false; }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
   if (!allowLocal && parsed.protocol !== "https:") return false;
   if (parsed.username || parsed.password) return false; // no embedded creds
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  if (!host) return false;
+
+  const norm = normaliseHost(parsed.hostname);
+  if (!norm.valid) return false;
+  const host = norm.host;
+
   if (!allowLocal && LOCAL_HOSTNAMES.has(host)) return false;
   // Reject hostnames that are literal IPs in the blocked set (skip DNS).
-  if (!allowLocal && ipaddr.isValid(host) && isBlockedIp(host)) {
+  if (!allowLocal && norm.isIp && isBlockedIp(host)) {
     return false;
   }
   const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
@@ -125,23 +226,38 @@ export async function validateWebhookUrl(
   url: string,
   allowLocal: boolean,
 ): Promise<ValidationResult> {
+  // Reject zone identifier in URL host before URL parser throws generic invalid_url
+  if (/https?:\/\/[^/]*%[a-zA-Z0-9_-]+/.test(url)) {
+    return { safe: false, reason: "zone_identifier_rejected" };
+  }
+
   let parsed: URL;
   try { parsed = new URL(url); } catch { return { safe: false, reason: "invalid_url" }; }
-  if (!isSafeWebhookUrl(url, allowLocal)) return { safe: false, reason: "preflight_rejected" };
 
   const protocol = parsed.protocol as "http:" | "https:";
   const port = parsed.port ? Number(parsed.port) : (protocol === "https:" ? 443 : 80);
-  // URL.hostname for `[::1]` is "[::1]" — strip brackets so ipaddr can parse.
-  const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
 
-  // If host is a literal IP, no DNS step — just re-validate against blocklist.
-  if (ipaddr.isValid(host)) {
-    if (!allowLocal && isBlockedIp(host)) {
-      return { safe: false, reason: "ip_blocked" };
+  const norm = normaliseHost(parsed.hostname);
+  if (!norm.valid) return { safe: false, reason: norm.reason };
+  const host = norm.host;
+
+  // If host is a literal IP, check blocklist directly to provide specific reason
+  if (norm.isIp) {
+    if (!allowLocal) {
+      const check = checkBlockedIp(host);
+      if (check.blocked) {
+        return {
+          safe: false,
+          reason: check.embeddedIp ? `blocked_ip:embedded:${check.embeddedIp}` : "ip_blocked",
+        };
+      }
     }
-    const family = (ipaddr.parse(host).kind() === "ipv4" ? 4 : 6) as 4 | 6;
+    if (!isSafeWebhookUrl(url, allowLocal)) return { safe: false, reason: "preflight_rejected" };
+    const family = (norm.parsedIp ? norm.parsedIp.kind() === "ipv4" ? 4 : 6 : 4) as 4 | 6;
     return { safe: true, target: { hostname: host, ip: host, family, port, protocol } };
   }
+
+  if (!isSafeWebhookUrl(url, allowLocal)) return { safe: false, reason: "preflight_rejected" };
 
   // Resolve all A/AAAA records. Reject if any single address is blocked —
   // we can't choose only the "safe" ones because a future DNS refresh may
@@ -156,8 +272,12 @@ export async function validateWebhookUrl(
 
   if (!allowLocal) {
     for (const a of addrs) {
-      if (isBlockedIp(a.address)) {
-        return { safe: false, reason: `blocked_ip:${a.address}` };
+      const check = checkBlockedIp(a.address);
+      if (check.blocked) {
+        return {
+          safe: false,
+          reason: check.embeddedIp ? `blocked_ip:embedded:${check.embeddedIp}` : `blocked_ip:${a.address}`,
+        };
       }
     }
   }
