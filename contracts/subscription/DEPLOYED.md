@@ -1,5 +1,7 @@
 # Slippay Subscription Contract — deployed
 
+> 📖 **Authoritative Registry**: For full deployment records across all contracts, networks, and environments (including v0.4, v0.2, v0.1, EVM, and Solana), see [docs/deployments.md](../../docs/deployments.md).
+
 ## v0.2 · MAINNET (PRODUCTION · 2026-05-16)
 
 **Contract address**: `CBJMQ6ZYQJ2OMM46FGXPEIKKZDRHHERBXUVE54ZN64FDPKN5DJKSEVQN`

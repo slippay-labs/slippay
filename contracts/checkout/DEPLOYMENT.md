@@ -1,5 +1,7 @@
 # SlipPay Checkout — deployment & proof
 
+> 📖 **Authoritative Registry**: For full deployment records across all contracts, networks, and environments, see [docs/deployments.md](../../docs/deployments.md).
+
 The "Stripe of stablecoin" revenue primitive. One customer payment → contract
 forces an atomic 97/3 split (net to merchant, fee to SlipPay). Fee recipient +
 bps fixed at deploy (constructor) — INESCAPABLE; the merchant cannot route around it.

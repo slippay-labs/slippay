@@ -1,5 +1,7 @@
 # Slippay Smart Wallet Contract — deployed
 
+> 📖 **Authoritative Registry**: For full deployment records across all contracts, networks, and environments, see [docs/deployments.md](../../docs/deployments.md).
+
 ## v0.1 · TESTNET (M6 admin pattern · 2026-05-28)
 
 **Template wasm hash**: `a2328321a8b0811ccee92edf8555849a4310081efaf26ec89140da31d8eb470c`
