@@ -4,8 +4,9 @@ import { getPosition, getApy, buildDepositTx, buildWithdrawTx } from "../../lib/
 import { authorizeContractCall } from "../../lib/authorizeTx.ts";
 import ConfirmTxModal from "../../components/ConfirmTxModal.tsx";
 import type { TxSummary } from "../../lib/txguard.ts";
+import { getStellarNetwork } from "../../lib/chain/index.ts";
 
-const NETWORK = (import.meta.env.VITE_STELLAR_NETWORK ?? "PUBLIC").toUpperCase() as "TESTNET" | "PUBLIC";
+const NETWORK = getStellarNetwork();
 
 function vaultDisplay(): string {
   const v = import.meta.env.VITE_DEFINDEX_USDC_VAULT as string | undefined ?? "";

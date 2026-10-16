@@ -13,6 +13,7 @@
 
 import { rpc as SorobanRpc } from "@stellar/stellar-sdk";
 import { signTx } from "./wallet.ts";
+import { getStellarNetwork } from "./chain/types.ts";
 
 export interface SorobanChargeResult {
   hash: string;
@@ -39,7 +40,7 @@ export async function signAndSubmitContractCharge(
   // 2. Submit via Soroban RPC (NOT Horizon — this carries a Soroban footprint).
   const server = new SorobanRpc.Server(rpcUrl);
   const { TransactionBuilder, Networks } = await import("@stellar/stellar-sdk");
-  const network = (import.meta.env.VITE_STELLAR_NETWORK ?? "TESTNET").toUpperCase();
+  const network = getStellarNetwork();
   const passphrase = network === "PUBLIC" ? Networks.PUBLIC : Networks.TESTNET;
   const signed = TransactionBuilder.fromXDR(signedXdr, passphrase);
 
@@ -104,7 +105,7 @@ export async function approveAllowance(opts: {
   const sdk = await import("@stellar/stellar-sdk");
   const { Contract, TransactionBuilder, Networks, nativeToScVal, Address } = sdk;
   const server = new SorobanRpc.Server(opts.rpcUrl);
-  const network = (import.meta.env.VITE_STELLAR_NETWORK ?? "TESTNET").toUpperCase();
+  const network = getStellarNetwork();
   const passphrase = network === "PUBLIC" ? Networks.PUBLIC : Networks.TESTNET;
 
   const account = await server.getAccount(opts.owner);

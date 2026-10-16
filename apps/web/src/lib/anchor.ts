@@ -18,6 +18,7 @@ import {
   Memo,
   Horizon,
 } from "@stellar/stellar-sdk";
+import { getStellarNetwork } from "./chain/types.ts";
 
 // Anchor is config-driven so the SAME SEP-10 + SEP-24 on-ramp flow can point at
 // any Stellar anchor — testanchor today, MoneyGram Ramps once partner-approved.
@@ -51,7 +52,7 @@ const STORAGE_KEY = "slippay.anchor.buyer.v1";
 // via src/lib/wallet.ts) and never touch localStorage. We assert the app is on
 // testnet (same env the rest of the app reads — see wallet.ts:8) before writing.
 function assertTestnetForLocalSecret(): void {
-  const network = (import.meta.env.VITE_STELLAR_NETWORK ?? "TESTNET").toUpperCase();
+  const network = getStellarNetwork();
   if (network !== "TESTNET") {
     throw new Error(
       "anchor.ts: refusing to persist a Stellar secret to localStorage on " +

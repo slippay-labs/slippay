@@ -3,8 +3,9 @@ import { Horizon } from "@stellar/stellar-sdk";
 import { USDC_ASSET_CODE } from "@slippay/shared";
 import { useComexWallet } from "../../lib/comexPrivy.tsx";
 import { usdcIssuer } from "../../lib/stellar.ts";
+import { getStellarNetwork } from "../../lib/chain/index.ts";
 
-const NETWORK = (import.meta.env.VITE_STELLAR_NETWORK ?? "PUBLIC").toUpperCase() as "TESTNET" | "PUBLIC";
+const NETWORK = getStellarNetwork();
 
 const HORIZON_URL: Record<"TESTNET" | "PUBLIC", string> = {
   TESTNET: "https://horizon-testnet.stellar.org",

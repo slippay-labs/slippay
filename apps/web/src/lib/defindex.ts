@@ -12,6 +12,7 @@
 // float by 1e7 inline.
 
 import { DefindexSDK, SupportedNetworks } from "@defindex/sdk";
+import { getStellarNetwork } from "./chain/types.ts";
 
 const DECIMALS = 7;
 const ONE_USDC = 10_000_000;
@@ -49,7 +50,7 @@ export function stroopsToUsdc(raw: number): string {
 // ---- SDK wiring ----
 
 const NETWORK: SupportedNetworks =
-  (import.meta.env.VITE_STELLAR_NETWORK ?? "TESTNET").toUpperCase() === "PUBLIC"
+  getStellarNetwork() === "PUBLIC"
     ? SupportedNetworks.MAINNET
     : SupportedNetworks.TESTNET;
 

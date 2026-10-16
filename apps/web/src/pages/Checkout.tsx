@@ -4,7 +4,7 @@ import { fetchOrder, type PublicOrder } from "../lib/api.ts";
 import { Countdown } from "../components/Countdown.tsx";
 import { PayButton } from "../components/PayButton.tsx";
 import { Logo } from "../components/Logo.tsx";
-import { getChainAdapter } from "../lib/chain/index.ts";
+import { getChainAdapter, getStellarNetwork } from "../lib/chain/index.ts";
 import { chainId } from "../lib/chain/validate.ts";
 import {
   buildAtomicTx,
@@ -26,9 +26,7 @@ type SubmitState =
   | "paid"
   | "error";
 
-const NETWORK = (
-  (import.meta.env.VITE_STELLAR_NETWORK ?? "TESTNET").toUpperCase()
-) as "TESTNET" | "PUBLIC";
+const NETWORK = getStellarNetwork();
 
 // Network-aware explorer base. On mainnet a hardcoded /testnet/ link points at the
 // wrong network (broken link + wrong UX). Derive it from the configured network.

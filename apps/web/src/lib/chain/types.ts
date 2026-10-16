@@ -5,6 +5,27 @@
 
 export type ChainId = "stellar" | "solana";
 
+export type StellarNetwork = "TESTNET" | "PUBLIC";
+
+export const SUPPORTED_STELLAR_NETWORKS: readonly StellarNetwork[] = ["TESTNET", "PUBLIC"] as const;
+
+/**
+ * Validates and returns the active Stellar network from environment or optional override.
+ * Throws a descriptive configuration error if the value is not in SUPPORTED_STELLAR_NETWORKS.
+ * Defaults to "TESTNET" when unset.
+ */
+export function getStellarNetwork(override?: string): StellarNetwork {
+  const raw = override ?? (typeof import.meta !== "undefined" && import.meta.env?.VITE_STELLAR_NETWORK);
+  if (!raw || typeof raw !== "string" || !raw.trim()) {
+    return "TESTNET";
+  }
+  const norm = raw.trim().toUpperCase();
+  if (norm === "TESTNET" || norm === "PUBLIC") {
+    return norm;
+  }
+  throw new Error(`Unsupported Stellar network: "${raw}". Valid options are: ${SUPPORTED_STELLAR_NETWORKS.join(", ")}.`);
+}
+
 /** Onboarding guard for a merchant receive address.
  *  - validFormat:    offline strkey/pubkey check (false => hard-block the save).
  *  - accountExists:  true / false / null (null = network unknown, never assert).

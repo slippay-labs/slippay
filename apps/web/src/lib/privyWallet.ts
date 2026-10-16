@@ -1,6 +1,15 @@
 import { TransactionBuilder, FeeBumpTransaction, Networks, StrKey, xdr } from "@stellar/stellar-sdk";
+import type { StellarNetwork } from "./chain/types.ts";
 
-const PASS: Record<string, string> = { TESTNET: Networks.TESTNET, PUBLIC: Networks.PUBLIC };
+const PASS: Record<StellarNetwork, string> = { TESTNET: Networks.TESTNET, PUBLIC: Networks.PUBLIC };
+
+function getPassphrase(network: StellarNetwork): string {
+  const p = PASS[network];
+  if (!p) {
+    throw new Error(`Unsupported Stellar network: "${network}". Expected TESTNET or PUBLIC.`);
+  }
+  return p;
+}
 
 /** Stellar DecoratedSignature from a G... public key and a raw Ed25519 signature. */
 export function decoratedSignatureFor(publicKey: string, signature: Buffer): xdr.DecoratedSignature {
@@ -11,9 +20,9 @@ export function decoratedSignatureFor(publicKey: string, signature: Buffer): xdr
 
 /** Attach a raw signature to an unsigned XDR; returns the signed XDR. Fee-bump not supported. */
 export function attachSignature(
-  xdrStr: string, network: "TESTNET" | "PUBLIC", publicKey: string, signature: Buffer,
+  xdrStr: string, network: StellarNetwork, publicKey: string, signature: Buffer,
 ): string {
-  const tx = TransactionBuilder.fromXDR(xdrStr, PASS[network]!);
+  const tx = TransactionBuilder.fromXDR(xdrStr, getPassphrase(network));
   if (tx instanceof FeeBumpTransaction) {
     throw new Error("attachSignature: fee-bump transactions não são suportadas");
   }

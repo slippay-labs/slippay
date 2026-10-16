@@ -11,11 +11,12 @@ import {
 } from "../../stellar.ts";
 import { approveAllowance } from "../../soroban.ts";
 import type {
-  ChainAdapter, AddressCheck, OneTimePayArgs, ApproveArgs, PayResult,
+  ChainAdapter, AddressCheck, OneTimePayArgs, ApproveArgs, PayResult, StellarNetwork,
 } from "../types.ts";
+import { getStellarNetwork } from "../types.ts";
 
-function network(): "TESTNET" | "PUBLIC" {
-  return ((import.meta.env.VITE_STELLAR_NETWORK ?? "TESTNET").toUpperCase()) as "TESTNET" | "PUBLIC";
+function network(): StellarNetwork {
+  return getStellarNetwork();
 }
 
 // Recurring-authorization mechanics (SAC, RPC, spender contract) live here, not

@@ -4,8 +4,9 @@ import { LobstrModule } from "@creit.tech/stellar-wallets-kit/modules/lobstr";
 import { xBullModule } from "@creit.tech/stellar-wallets-kit/modules/xbull";
 import { AlbedoModule } from "@creit.tech/stellar-wallets-kit/modules/albedo";
 import { HanaModule } from "@creit.tech/stellar-wallets-kit/modules/hana";
+import { getStellarNetwork } from "./chain/types.ts";
 
-const network = (import.meta.env.VITE_STELLAR_NETWORK ?? "TESTNET").toUpperCase();
+const network = getStellarNetwork();
 export const NETWORK = network === "PUBLIC" ? Networks.PUBLIC : Networks.TESTNET;
 
 StellarWalletsKit.init({

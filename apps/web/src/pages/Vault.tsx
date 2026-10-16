@@ -3,10 +3,11 @@ import { Logo } from "../components/Logo.tsx";
 import { connectWallet, signTx } from "../lib/wallet.ts";
 import { submitSignedTx } from "../lib/stellar.ts";
 import * as vault from "../lib/defindex.ts";
+import { getStellarNetwork } from "../lib/chain/index.ts";
 
 type Mode = "deposit" | "withdraw";
 
-const NETWORK = (import.meta.env.VITE_STELLAR_NETWORK ?? "PUBLIC").toUpperCase() as "TESTNET" | "PUBLIC";
+const NETWORK = getStellarNetwork();
 const EXPLORER = NETWORK === "PUBLIC" ? "public" : "testnet";
 
 export default function Vault() {

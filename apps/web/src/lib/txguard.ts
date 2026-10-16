@@ -1,12 +1,21 @@
 import { TransactionBuilder, Networks, StrKey } from "@stellar/stellar-sdk";
+import type { StellarNetwork } from "./chain/types.ts";
 
-const PASS: Record<string, string> = { TESTNET: Networks.TESTNET, PUBLIC: Networks.PUBLIC };
+const PASS: Record<StellarNetwork, string> = { TESTNET: Networks.TESTNET, PUBLIC: Networks.PUBLIC };
+
+function getPassphrase(network: StellarNetwork): string {
+  const p = PASS[network];
+  if (!p) {
+    throw new Error(`Unsupported Stellar network: "${network}". Expected TESTNET or PUBLIC.`);
+  }
+  return p;
+}
 
 export interface OpSummary { type: string; destination?: string; amount?: string; assetCode?: string }
 export interface TxSummary { source: string; fee: string; memo?: string; operations: OpSummary[] }
 
-export function decodeTx(xdr: string, network: "TESTNET" | "PUBLIC"): TxSummary {
-  const tx = TransactionBuilder.fromXDR(xdr, PASS[network]!) as any;
+export function decodeTx(xdr: string, network: StellarNetwork): TxSummary {
+  const tx = TransactionBuilder.fromXDR(xdr, getPassphrase(network)) as any;
   const ops: OpSummary[] = (tx.operations ?? []).map((op: any) => {
     if (op.type === "payment") {
       return { type: "payment", destination: op.destination, amount: op.amount,
@@ -22,8 +31,8 @@ export function decodeTx(xdr: string, network: "TESTNET" | "PUBLIC"): TxSummary 
   };
 }
 
-export function localHash(xdr: string, network: "TESTNET" | "PUBLIC"): Buffer {
-  return TransactionBuilder.fromXDR(xdr, PASS[network]!).hash();
+export function localHash(xdr: string, network: StellarNetwork): Buffer {
+  return TransactionBuilder.fromXDR(xdr, getPassphrase(network)).hash();
 }
 
 export function isValidStellarAddress(address: string): boolean {

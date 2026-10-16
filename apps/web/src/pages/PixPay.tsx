@@ -5,10 +5,11 @@ import { buildUsdcPaymentTx, fetchSequence, submitSignedTx } from "../lib/stella
 import * as pag from "../lib/pagfinance.ts";
 import { decodeTx, assertPaymentMatches, isValidStellarAddress, type TxSummary } from "../lib/txguard.ts";
 import ConfirmTxModal from "../components/ConfirmTxModal.tsx";
+import { getStellarNetwork } from "../lib/chain/index.ts";
 
 type Step = "input" | "validated" | "quoted" | "paying" | "done" | "error";
 
-const NETWORK = (import.meta.env.VITE_STELLAR_NETWORK ?? "PUBLIC").toUpperCase() as "TESTNET" | "PUBLIC";
+const NETWORK = getStellarNetwork();
 const EXPLORER = NETWORK === "PUBLIC" ? "public" : "testnet";
 
 export default function PixPay() {

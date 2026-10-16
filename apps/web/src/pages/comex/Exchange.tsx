@@ -6,8 +6,9 @@ import { requiresApproval, approvalLimitUsd, logAction } from "../../lib/comexGu
 import * as pag from "../../lib/pagfinance.ts";
 import ConfirmTxModal from "../../components/ConfirmTxModal.tsx";
 import type { TxSummary } from "../../lib/txguard.ts";
+import { getStellarNetwork } from "../../lib/chain/index.ts";
 
-const NETWORK = (import.meta.env.VITE_STELLAR_NETWORK ?? "PUBLIC").toUpperCase() as "TESTNET" | "PUBLIC";
+const NETWORK = getStellarNetwork();
 
 type Phase = "idle" | "quoting" | "quoted" | "pix_waiting" | "signing" | "partner_pending" | "done" | "error";
 

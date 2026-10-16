@@ -9,8 +9,9 @@ import { authorizePayment } from "../../lib/authorizeTx.ts";
 import { requiresApproval, approvalLimitUsd, logAction } from "../../lib/comexGuards.ts";
 import ConfirmTxModal from "../../components/ConfirmTxModal.tsx";
 import type { TxSummary } from "../../lib/txguard.ts";
+import { getStellarNetwork } from "../../lib/chain/index.ts";
 
-const NETWORK = (import.meta.env.VITE_STELLAR_NETWORK ?? "PUBLIC").toUpperCase() as "TESTNET" | "PUBLIC";
+const NETWORK = getStellarNetwork();
 const EXPLORER = NETWORK === "PUBLIC" ? "public" : "testnet";
 
 export default function Send() {

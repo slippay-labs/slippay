@@ -24,9 +24,9 @@ import { PayButton } from "../components/PayButton.tsx";
 // charge whose unsigned XDR is built by the API — there is no Solana backend for
 // that path yet, so abstracting it would be theater.
 import { requestOnchainCharge, signAndSubmitContractCharge } from "../lib/soroban.ts";
-import { getChainAdapter } from "../lib/chain/index.ts";
+import { getChainAdapter, getStellarNetwork } from "../lib/chain/index.ts";
 
-const IS_PUBLIC = (import.meta.env.VITE_STELLAR_NETWORK ?? "TESTNET").toUpperCase() === "PUBLIC";
+const IS_PUBLIC = getStellarNetwork() === "PUBLIC";
 const EXPLORER_BASE = IS_PUBLIC
   ? "https://stellar.expert/explorer/public/tx"
   : "https://stellar.expert/explorer/testnet/tx";
