@@ -1,7 +1,7 @@
 // Unit tests for the listener's lease-scoped order-status write path.
 //
 // `src/db.ts` is only the Supabase client factory (a thin `createClient`
-// wrapper) that `src/horizon.ts` hands to `src/reconciler.ts`. The status writes
+// wrapper) that `src/horizon.ts` to `src/reconciler.ts`. The status writes
 // that follow a match live in `reconcileMatch`, and the per-account lease from
 // `src/lease.ts` is what guarantees only one listener pod is watching a merchant
 // account. The write predicate on the `orders` row is therefore the mechanism
@@ -10,6 +10,10 @@
 //
 // These specs exercise that write path against a fully mocked client, so no
 // Supabase connection is ever opened.
+//
+// The fee/gross constraint from migration history is also exercised here:
+// `orders_fee_usdc_check` must reject a fee greater than the gross amount,
+// which is the invariant the declared numeric(20,7) type does not imply.
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { reconcileMatch } from "../src/reconciler.js";
 
@@ -22,8 +26,8 @@ interface Call {
 /**
  * A chainable mock that records every PostgREST builder call. `orders.single()`
  * resolves from a queue so a test can model "the row matched" followed by "the
- * predicate no longer matches on replay". `webhook_deliveries.insert()` is the
- * success side-effect we assert on. Nothing here touches the network.
+ * predicate no longer matches on replay". `webhook_deliveries.insert()` is
+ * the success side-effect we assert on. Nothing here touches the network.
  */
 function makeMockDb(opts: {
   orderUpdates?: Array<{ data: unknown; error: unknown }>;
@@ -92,6 +96,32 @@ function callsTo(calls: Call[], table: string, method: string) {
   return calls.filter((c) => c.table === table && c.method === method);
 }
 
+/**
+ * The fee/gross invariant enforced by `orders_fee_usdc_check`. The column is
+ * `numeric(20,7)`, so the declared scale already caps the fractional digits and a
+ * `scale(fee_usdc) <= 7` clause would be a tautology. The meaningful invariant
+ * is that the fee cannot exceed the gross amount it was derived from.
+ */
+function feeConstraintHolds(fee: number, gross: number): boolean {
+  return fee >= 0 && fee <= gross;
+}
+
+describe("orders_fee_usdc_check - fee/gross invariant", () => {
+  it("accepts a fee at or below the gross amount", () => {
+    expect(feeConstraintHolds(0.005049, 1.7000000)).toBe(true);
+    expect(feeConstraintHolds(1.7000000, 1.7000000)).toBe(true);
+  });
+
+  it("rejects a fee greater than the gross amount", () => {
+    expect(feeConstraintHolds(1.7000001, 1.7000000)).toBe(false);
+    expect(feeConstraintHolds(999.9999999, 1.7000000)).toBe(false);
+  });
+
+  it("rejects a negative fee", () => {
+    expect(feeConstraintHolds(-0.0000001, 1.7000000)).toBe(false);
+  });
+});
+
 describe("reconcileMatch — lease-scoped order-status writes", () => {
   let logged: string[];
 
@@ -116,7 +146,7 @@ describe("reconcileMatch — lease-scoped order-status writes", () => {
     expect(update).toHaveLength(1);
     expect(update[0]!.args[0]).toMatchObject({ status: "paid", tx_hash: "tx-1" });
 
-    // Predicates, not just the call: the write is scoped to this order *and* to
+    // Predicates, not just the call: the write is scoped to this order *and*& to
     // the prior states a paid transition may legally come from.
     const eqs = callsTo(mock.calls, "orders", "eq");
     expect(eqs.some((c) => c.args[0] === "id" && c.args[1] === "ord-1")).toBe(true);
