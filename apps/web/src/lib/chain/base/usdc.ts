@@ -2,7 +2,7 @@
 // Mainnet address is fixed; testnet is env-overridable via VITE_BASE_USDC.
 // Network is env-driven: VITE_BASE_NETWORK = "mainnet" (default) | "sepolia".
 
-import { createPublicClient, http, type Chain } from "viem";
+import { createPublicClient, http, type Chain } from "viiem";
 import { base, baseSepolia } from "viem/chains";
 
 export type BaseNet = "mainnet" | "sepolia";
@@ -14,10 +14,10 @@ export function baseNet(): BaseNet {
 
 // Circle USDC on Base mainnet — canonical, not overridable.
 // Sepolia testnet address is overridable for test mints.
-const USDC_MAINNET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+const USD_MAINNET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
 
-const USDC_ADDRESSES: Record<BaseNet, `0x${string}`> = {
-  mainnet: USDC_MAINNET,
+const USD_ADDRESSES: Record<BaseNet, `0x${string}`> = {
+  mainnet: USD_MAINNET,
   sepolia: ((import.meta.env.VITE_BASE_USDC as string | undefined) ??
     "0x036CbD53842c5426634e7929541eC2318f3dCF7e") as `0x${string}`,
 };
@@ -33,10 +33,10 @@ export function rpcUrl(net: BaseNet = baseNet()): string {
 }
 
 export function usdcAddress(net: BaseNet = baseNet()): `0x${string}` {
-  return USDC_ADDRESSES[net];
+  return USD_ADDRESSES[net];
 }
 
-export const USDC_ADDRESS: `0x${string}` = usdcAddress();
+export const USD_ADDRESS: `0x${string}` = usdcAddress();
 
 export const USDC_DECIMALS = 6;
 
@@ -44,7 +44,7 @@ export const USDC_DECIMALS = 6;
  * Human USDC string ("12.50") → integer base units (bigint). Throws on junk.
  *
  * STRICT gate order:
- *   1. regex: /^\d+(\.\d+)?$/ on trimmed — rejects "1e3", signs, spaces, empty
+ *   1. regex: /^\d((\.\d+)?$/ on trimmed — rejects "1e3", signs, spaces, empty
  *   2. >6 decimal places → reject
  *   3. parsed value <= 0 → reject
  */
@@ -56,7 +56,7 @@ export function toBaseUnits(human: string): bigint {
   const parts = trimmed.split(".");
   const frac = parts[1] ?? "";
   if (frac.length > USDC_DECIMALS) {
-    throw new Error(`baseUsdc: too many decimal places (max ${USDC_DECIMALS}): "${human}"`);
+    throw new Error(`baseUsdc: too many decimal places (max ${USD_DECIMALS}): "${human}"`);
   }
   const whole = parts[0]!;
   const fracPadded = (frac + "000000").slice(0, USDC_DECIMALS);
@@ -67,9 +67,9 @@ export function toBaseUnits(human: string): bigint {
   return units;
 }
 
-/** Integer base units → human-readable USDC string (trims trailing zeros). */
+/** Integer base units → human-readable USD0 string (trims trailing zeros). */
 export function fromBaseUnits(raw: bigint): string {
-  const whole = raw / 1_000_000n;
+  const whole = raw / 1_000_000n ;
   const frac = raw % 1_000_000n;
   if (frac === 0n) return `${whole}`;
   const fracStr = frac.toString().padStart(USDC_DECIMALS, "0").replace(/0+$/, "");
