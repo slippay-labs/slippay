@@ -5,6 +5,11 @@ import {
   UsdcAmountSchema,
   OrderStatusSchema,
   LimitQuerySchema,
+  OrderExpiryMinutesSchema,
+  ORDER_DEFAULT_EXPIRY_MINUTES,
+  ORDER_MIN_EXPIRY_MINUTES,
+  ORDER_MAX_EXPIRY_MINUTES,
+  resolveOrderExpiry,
 } from "../src/index.ts";
 
 describe("CreateMerchantInputSchema", () => {
@@ -130,5 +135,55 @@ describe("LimitQuerySchema", () => {
   it("rejects floating point decimals", () => {
     expect(() => LimitQuerySchema.parse("10.5")).toThrow();
     expect(() => LimitQuerySchema.parse("50.0")).toThrow();
+  });
+});
+
+describe("OrderExpiryMinutesSchema & resolveOrderExpiry", () => {
+  it("co-locates constants and bounds in the order schema module", () => {
+    expect(ORDER_MIN_EXPIRY_MINUTES).toBe(5);
+    expect(ORDER_DEFAULT_EXPIRY_MINUTES).toBe(30);
+    expect(ORDER_MAX_EXPIRY_MINUTES).toBe(1440);
+    expect(ORDER_DEFAULT_EXPIRY_MINUTES).toBeGreaterThanOrEqual(ORDER_MIN_EXPIRY_MINUTES);
+    expect(ORDER_DEFAULT_EXPIRY_MINUTES).toBeLessThanOrEqual(ORDER_MAX_EXPIRY_MINUTES);
+  });
+
+  it("validates valid expiry values within [5, 1440]", () => {
+    expect(OrderExpiryMinutesSchema.parse(5)).toBe(5);
+    expect(OrderExpiryMinutesSchema.parse(30)).toBe(30);
+    expect(OrderExpiryMinutesSchema.parse(1440)).toBe(1440);
+  });
+
+  it("rejects out-of-range, non-integer, negative, or zero expiry minutes", () => {
+    expect(() => OrderExpiryMinutesSchema.parse(4)).toThrow();
+    expect(() => OrderExpiryMinutesSchema.parse(1441)).toThrow();
+    expect(() => OrderExpiryMinutesSchema.parse(0)).toThrow();
+    expect(() => OrderExpiryMinutesSchema.parse(-10)).toThrow();
+    expect(() => OrderExpiryMinutesSchema.parse(30.5)).toThrow();
+    expect(() => OrderExpiryMinutesSchema.parse("30")).toThrow();
+  });
+
+  it("resolves default expiry when undefined or null", () => {
+    const fixedNow = 1_700_000_000_000;
+    const resUndefined = resolveOrderExpiry(undefined, fixedNow);
+    expect(resUndefined.minutes).toBe(ORDER_DEFAULT_EXPIRY_MINUTES);
+    expect(new Date(resUndefined.expiresAt).getTime()).toBe(fixedNow + ORDER_DEFAULT_EXPIRY_MINUTES * 60_000);
+
+    const resNull = resolveOrderExpiry(null, fixedNow);
+    expect(resNull.minutes).toBe(ORDER_DEFAULT_EXPIRY_MINUTES);
+    expect(new Date(resNull.expiresAt).getTime()).toBe(fixedNow + ORDER_DEFAULT_EXPIRY_MINUTES * 60_000);
+  });
+
+  it("asserts an out-of-range default is rejected, not silently applied", () => {
+    // If someone calls resolveOrderExpiry with an out-of-bound minutes, it throws
+    expect(() => resolveOrderExpiry(4)).toThrow();
+    expect(() => resolveOrderExpiry(1441)).toThrow();
+  });
+
+  it("ensures the persisted expires_at is always in the future and within the documented maximum", () => {
+    const now = Date.now();
+    const res = resolveOrderExpiry(undefined, now);
+    const expiresAtMs = new Date(res.expiresAt).getTime();
+    expect(expiresAtMs).toBeGreaterThan(now);
+    expect(expiresAtMs).toBeLessThanOrEqual(now + ORDER_MAX_EXPIRY_MINUTES * 60_000);
   });
 });

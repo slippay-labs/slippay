@@ -288,4 +288,38 @@ Deno.test("GET /v1/x402/:slug sets platform_fee_bp and fee_usdc on order insert"
   assertEquals(orderData.fee_usdc, "0.1485000"); // 5.0 * 297 / 10000
 });
 
+Deno.test("POST /v1/orders rejects out-of-range expires_in_minutes (< 5 or > 1440)", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const m = await createMerchant();
+  // Too small (< 5)
+  const resLow = await req("/v1/orders", {
+    method: "POST",
+    headers: { authorization: `Bearer ${m.api_key}`, "content-type": "application/json" },
+    body: JSON.stringify({ usd_amount: "10.00", expires_in_minutes: 4 }),
+  });
+  assertEquals(resLow.status, 400);
+
+  // Too large (> 1440)
+  const resHigh = await req("/v1/orders", {
+    method: "POST",
+    headers: { authorization: `Bearer ${m.api_key}`, "content-type": "application/json" },
+    body: JSON.stringify({ usd_amount: "10.00", expires_in_minutes: 1441 }),
+  });
+  assertEquals(resHigh.status, 400);
+});
+
+Deno.test("POST /v1/orders sets expires_at strictly in the future within max window", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const m = await createMerchant();
+  const before = Date.now();
+  const res = await req("/v1/orders", {
+    method: "POST",
+    headers: { authorization: `Bearer ${m.api_key}`, "content-type": "application/json" },
+    body: JSON.stringify({ usd_amount: "10.00", expires_in_minutes: 60 }),
+  });
+  assertEquals(res.status, 201);
+  const body = await res.json();
+  const expiresAtMs = new Date(body.order.expires_at).getTime();
+  assert(expiresAtMs > before);
+  assert(expiresAtMs <= before + 60 * 60_000 + 5000);
+});
+
 

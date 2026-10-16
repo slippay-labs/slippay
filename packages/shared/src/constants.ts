@@ -33,6 +33,10 @@ export const USDC_ASSET_CODE = ASSET_CODES.USDC;
 export const STELLAR_ADDRESS_LENGTH = 56;
 export const MEMO_HASH_HEX_LENGTH = 64; // 32 bytes
 export const DEFAULT_PLATFORM_FEE_BP = 297; // 2.97%
-export const ORDER_DEFAULT_EXPIRY_MINUTES = 30;
+export {
+  ORDER_DEFAULT_EXPIRY_MINUTES,
+  ORDER_MIN_EXPIRY_MINUTES,
+  ORDER_MAX_EXPIRY_MINUTES,
+} from "./schemas/order.ts";
 export const API_KEY_PREFIX = "sk_live_";
 export const API_KEY_BYTES = 32;

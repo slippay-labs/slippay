@@ -1,6 +1,15 @@
 import { Hono } from "hono";
 import type { SupabaseClient } from "supabase";
-import { CreateOrderInputSchema, UsdcAmountSchema, LimitQuerySchema, ORDER_DEFAULT_EXPIRY_MINUTES, DEFAULT_PLATFORM_FEE_BP } from "@slippay/shared";
+import {
+  CreateOrderInputSchema,
+  UsdcAmountSchema,
+  LimitQuerySchema,
+  resolveOrderExpiry,
+  ORDER_DEFAULT_EXPIRY_MINUTES,
+  ORDER_MIN_EXPIRY_MINUTES,
+  ORDER_MAX_EXPIRY_MINUTES,
+  DEFAULT_PLATFORM_FEE_BP,
+} from "@slippay/shared";
 import { requireApiKey } from "../middleware/auth_apikey.ts";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
 import { generateMemo } from "../lib/memo.ts";
@@ -50,8 +59,13 @@ r.post("/", requireApiKey, async (c) => {
   }
 
   let memo = await generateMemo();
-  const minutes = input.expires_in_minutes ?? ORDER_DEFAULT_EXPIRY_MINUTES;
-  const expiresAt = new Date(Date.now() + minutes * 60_000).toISOString();
+  let expiresAt: string;
+  try {
+    const resolved = resolveOrderExpiry(input.expires_in_minutes);
+    expiresAt = resolved.expiresAt;
+  } catch (_e: unknown) {
+    return c.json({ error: "validation_error", message: "invalid_expiry" }, 400);
+  }
 
   // Platform fee. `usdc` (gross) is what the buyer pays; merchant net = gross −
   // fee; fee_usdc is SlipPay's 0.98% cut, persisted per order so capture model A
