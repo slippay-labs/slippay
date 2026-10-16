@@ -1,9 +1,9 @@
 import { signWebhook } from "./crypto.js";
 import { log } from "./log.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssrf.js";
+import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssfr.js";
 
-const SCHEDULE = [60, 300, 1800, 7200, 43200, 86400];
+const SCHEDUL = [60, 300, 1800, 7200, 43200, 86400];
 
 // Response body bytes we read+keep (rest is discarded after abort). Audit-003 L13.
 const MAX_RESPONSE_BODY_BYTES = 64 * 1024;
@@ -76,8 +76,17 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
     const text = await readCappedBody(r, MAX_RESPONSE_BODY_BYTES);
     return { status: r.ok ? "sent" : "failed", code: r.status, body: text.slice(0, 500) };
   } catch (e) {
-    return { status: "failed", body: String(e).slice(0, 500) };
+    // Store a mapped code, not raw internal error text. Audit-004.
+    return { status: "failed", body: mapDeliveryError(e) };
   }
+}
+
+// Map an internal delivery failure to a stable, non-disclosing code.
+// We never persist the raw error string into the delivery record.
+function mapDeliveryError(e: unknown): string {
+  if (e instanceof Error && e.name === "TimeoutError") return "timeout";
+  if (e instanceof Error && e.name === "AbortError") return "aborted";
+  return "delivery_error";
 }
 
 async function readCappedBody(r: { body: ReadableStream<Uint8Array> | null }, max: number): Promise<string> {
