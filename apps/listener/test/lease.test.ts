@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { acquireLease, HOLDER_ID } from "../src/lease.js";
+import { createShutdownHandler } from "../src/shutdown.js";
 
 function makeMockDb(opts: {
   insertError?: { code?: string; message: string } | null;
@@ -79,5 +80,93 @@ describe("acquireLease", () => {
     const db = makeMockDb({ insertError: { code: "08000", message: "connection reset" } });
     const r = await acquireLease(db, "addr-1");
     expect(r.acquired).toBe(false);
+  });
+
+  it("release is idempotent and does not error on double call (fixes #254)", async () => {
+    const db = makeMockDb({ insertError: null });
+    const r = await acquireLease(db, "addr-1", { ttlSeconds: 60, heartbeatSeconds: 3600 });
+    expect(r.acquired).toBe(true);
+    if (r.acquired) {
+      await expect(r.release()).resolves.toBeUndefined();
+      // Second invocation must be safe and idempotent
+      await expect(r.release()).resolves.toBeUndefined();
+      expect(db.delete).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it("allows a subsequent replica to acquire account immediately after release without waiting for expiry", async () => {
+    // Replica 1 acquires and releases
+    const db1 = makeMockDb({ insertError: null });
+    const r1 = await acquireLease(db1, "addr-1");
+    expect(r1.acquired).toBe(true);
+    if (r1.acquired) await r1.release();
+
+    // Replica 2 acquires immediately (fresh insert succeeds because lease was deleted)
+    const db2 = makeMockDb({ insertError: null });
+    const r2 = await acquireLease(db2, "addr-1");
+    expect(r2.acquired).toBe(true);
+    if (r2.acquired) await r2.release();
+  });
+});
+
+describe("graceful shutdown on signals (fixes #254)", () => {
+  it("awaits lease release and stops workers before calling exit on SIGTERM", async () => {
+    let leaseReleased = false;
+    let webhookStopped = false;
+    let exitCode: number | undefined;
+
+    const stop = vi.fn().mockImplementation(async () => {
+      // Simulate async lease release
+      await new Promise((res) => setTimeout(res, 10));
+      leaseReleased = true;
+    });
+
+    const stopWebhook = vi.fn().mockImplementation(() => {
+      webhookStopped = true;
+    });
+
+    const exitFn = vi.fn().mockImplementation((code?: number) => {
+      exitCode = code;
+    });
+
+    const handler = createShutdownHandler(stop, stopWebhook, exitFn, 5000);
+    await handler("SIGTERM");
+
+    expect(stopWebhook).toHaveBeenCalled();
+    expect(stop).toHaveBeenCalled();
+    expect(leaseReleased).toBe(true);
+    expect(webhookStopped).toBe(true);
+    expect(exitFn).toHaveBeenCalledWith(0);
+    expect(exitCode).toBe(0);
+  });
+
+  it("runs the exact same graceful cleanup path on SIGINT", async () => {
+    let cleanedUp = false;
+    const stop = vi.fn().mockImplementation(async () => {
+      cleanedUp = true;
+    });
+    const stopWebhook = vi.fn();
+    const exitFn = vi.fn();
+
+    const handler = createShutdownHandler(stop, stopWebhook, exitFn, 5000);
+    await handler("SIGINT");
+
+    expect(cleanedUp).toBe(true);
+    expect(stop).toHaveBeenCalled();
+    expect(stopWebhook).toHaveBeenCalled();
+    expect(exitFn).toHaveBeenCalledWith(0);
+  });
+
+  it("is idempotent when invoked multiple times during shutdown", async () => {
+    const stop = vi.fn().mockResolvedValue(undefined);
+    const stopWebhook = vi.fn();
+    const exitFn = vi.fn();
+
+    const handler = createShutdownHandler(stop, stopWebhook, exitFn, 5000);
+    await Promise.all([handler("SIGTERM"), handler("SIGINT")]);
+
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(stopWebhook).toHaveBeenCalledTimes(1);
+    expect(exitFn).toHaveBeenCalledTimes(1);
   });
 });

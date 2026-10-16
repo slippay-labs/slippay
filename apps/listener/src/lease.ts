@@ -90,14 +90,21 @@ export async function acquireLease(
   // Prevent the heartbeat timer from keeping the process alive after shutdown.
   if (typeof heartbeat.unref === "function") heartbeat.unref();
 
+  let released = false;
   const release = async () => {
+    if (released) return;
+    released = true;
     stopped = true;
     clearInterval(heartbeat);
     const r = await db.from("listener_leases")
       .delete()
       .eq("account_id", accountId)
       .eq("holder_id", HOLDER_ID);
-    if (r.error) log("warn", "lease_release_failed", { account_id: accountId, error: r.error.message });
+    if (r.error) {
+      log("warn", "lease_release_failed", { account_id: accountId, error: r.error.message });
+    } else {
+      log("info", "lease_released", { account_id: accountId, holder_id: HOLDER_ID, reason: "graceful_shutdown" });
+    }
   };
 
   log("info", "lease_acquired", { account_id: accountId, holder_id: HOLDER_ID, ttl_s: ttl });
