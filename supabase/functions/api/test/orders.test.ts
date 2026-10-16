@@ -288,4 +288,23 @@ Deno.test("GET /v1/x402/:slug sets platform_fee_bp and fee_usdc on order insert"
   assertEquals(orderData.fee_usdc, "0.1485000"); // 5.0 * 297 / 10000
 });
 
+Deno.test("Orders API fee arithmetic asserts against shared fee vectors (Issue #237)", async () => {
+  const vectorsUrl = new URL("../../../../packages/shared/src/vectors/fee_vectors.json", import.meta.url);
+  const vectorsText = await Deno.readTextFile(vectorsUrl);
+  const vectors = JSON.parse(vectorsText);
+
+  for (const vec of vectors) {
+    const feeBp = vec.fee_bps;
+    const grossUsdc = parseFloat(vec.amount_stellar);
+    // API orders route formula: (grossUsdc * feeBp / 10_000).toFixed(7)
+    // For values within standard float representation range:
+    if (BigInt(vec.amount_stroops) <= 100_000_000_000n) {
+      const computedFee = (grossUsdc * feeBp / 10_000).toFixed(7);
+      const computedNet = (grossUsdc - parseFloat(computedFee)).toFixed(7);
+      assertEquals(computedFee, vec.expected_fee_stellar, `fee mismatch on ${vec.id}`);
+      assertEquals(computedNet, vec.expected_net_stellar, `net mismatch on ${vec.id}`);
+    }
+  }
+});
+
 

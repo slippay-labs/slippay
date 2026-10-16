@@ -64,9 +64,11 @@ export function matchPaymentToOrder(
   ) {
     return { outcome: "ignore", reason: "fee_bp_invalid" };
   }
-  // Floor division here is conservative: integer division truncates toward
-  // zero, so the merchant receives at most the mathematically correct amount.
-  const expectedStroops = (totalStroops * BigInt(10_000 - order.platform_fee_bp)) / 10_000n;
+  // Canonical platform fee split: integer floor division applies to the fee,
+  // with remainder retained by the merchant (net + fee === totalStroops).
+  // Matches contracts/checkout and @slippay/shared reference implementation (Issue #237).
+  const feeStroops = (totalStroops * BigInt(order.platform_fee_bp)) / 10_000n;
+  const expectedStroops = totalStroops - feeStroops;
   const expectedMerchantShare = stroopsToStellar(expectedStroops);
   if (receivedStroops >= expectedStroops) return { outcome: "paid" };
   return { outcome: "underpaid", expected: expectedMerchantShare, received: ev.amount };
