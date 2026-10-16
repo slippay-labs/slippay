@@ -59,7 +59,7 @@ export function ensureSweepTimer() {
     try {
       if (typeof (sweepTimer as any)?.unref === "function") {
         (sweepTimer as any).unref();
-      } else if (typeof (globalThis as any).Deno?.unrefTimer === "function") {
+      } else if (typeof (globalThis as any).Deno.unrefTimer === "function") {
         (globalThis as any).Deno.unrefTimer(sweepTimer);
       }
     } catch {
@@ -83,6 +83,22 @@ function defaultKey(c: Context): string {
 
 export function rateLimit(cfg: LimiterConfig) {
   const { capacity, refillPerSec } = cfg;
+  // Audit-006 · C6 — validate configuration at construction time so a bad
+// config fails at startup rather than per request. A non-positive or non-finite
+// refill rate would otherwise yield an `Infinity` `retry-after` header.
+  if (!cfg || typeof cfg !== "object") {
+    throw new TypeError("rateLimit: configuration object is required");
+  }
+  if (!Number.isFinite(capacity) || capacity < 1) {
+    throw new RangeError(
+      `rateLimit: capacity must be a finite number >= 1 (got ${String(capacity)})`,
+    );
+  }
+  if (!Number.isFinite(refillPerSec) || refillPerSec <= 0) {
+    throw new RangeError(
+      `rateLimit: refillPerSec must be a finite number > 0 (got ${String(refillPerSec)})`,
+    );
+  }
   const keyFn = cfg.key ?? defaultKey;
   const scope = cfg.scope ?? "default";
 
@@ -129,7 +145,10 @@ export function rateLimit(cfg: LimiterConfig) {
     bucket.lastRefill = now;
 
     if (bucket.tokens < 1) {
-      const retrySec = Math.ceil((1 - bucket.tokens) / refillPerSec);
+      // `refillPerSec` is validated at construction time to be finite and >0,
+      // so this division cannot yield Infinity/NaN. Clamp to at least 1 sec.
+      const rawRetrySec = Math.ceil((1 - bucket.tokens) / refillPerSec);
+      const retrySec = Number.isFinite(rawRetrySec) ? Math.max(1, rawRetrySec) : 1;
       buckets.set(id, bucket);
       return c.json(
         { error: "rate_limited", scope, retry_after_sec: retrySec },
