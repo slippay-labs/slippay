@@ -12,7 +12,7 @@ import metrics from "./routes/metrics.ts";
 import relayer from "./routes/relayer.ts";
 import ramp from "./routes/ramp.ts";
 import offramp from "./routes/offramp.ts";
-import { ALLOWED_ORIGINS_SET } from "@slippay/shared";
+import { ALLOWED_ORIGINS_SET, resolveSafeStaticPath } from "@slippay/shared";
 import fourp from "./routes/fourp.ts";
 
 const api = new Hono().basePath("/api");
@@ -136,20 +136,32 @@ app.get("*", async (c) => {
   }
 
   // app.slippay.cc (and any other host alias) — serve static + SPA fallback.
+  // Prevent directory traversal (issue #186): resolve path safely within WEB_DIST
+  // and assert strict containment and extension allowlisting.
+  const safePath = resolveSafeStaticPath(WEB_DIST, path);
+  if (safePath) {
+    try {
+      const file = await Deno.readFile(safePath);
+      return new Response(file, {
+        headers: {
+          "content-type": MIME[ext] ?? MIME.html,
+          "cache-control": ext === "html" ? "no-cache" : "public, max-age=31536000",
+        },
+      });
+    } catch {
+      // file not found on disk, fall through to SPA fallback
+    }
+  }
+
+  // SPA fallback — serve index.html for client-side routes or any unresolvable/traversal requests
   try {
-    const file = await Deno.readFile(`${WEB_DIST}${path}`);
-    return new Response(file, {
-      headers: {
-        "content-type": MIME[ext] ?? "application/octet-stream",
-        "cache-control": ext === "html" ? "no-cache" : "public, max-age=31536000",
-      },
-    });
-  } catch {
-    // SPA fallback — serve index.html for client-side routes
-    const file = await Deno.readFile(`${WEB_DIST}/index.html`);
+    const fallbackPath = resolveSafeStaticPath(WEB_DIST, "/index.html") ?? `${WEB_DIST}/index.html`;
+    const file = await Deno.readFile(fallbackPath);
     return new Response(file, {
       headers: { "content-type": MIME.html, "cache-control": "no-cache" },
     });
+  } catch {
+    return new Response("Not Found", { status: 404 });
   }
 });
 
