@@ -127,12 +127,13 @@ export default function LandingV3() {
             </defs>
             {[0, 1, 2].map((g) => (
               <g key={g} className={`v3-ribbon-g${g + 1}`} filter="url(#v3warp)">
+                {/* Purely decorative SVG ribbon paths; static by construction */}
                 {Array.from({ length: 8 }).map((_, i) => {
                   const k = g * 8 + i;
                   const off = (k - 11.5) * 5;
                   const op = (0.3 + 0.45 * (1 - Math.abs(k - 11.5) / 11.5)).toFixed(2);
                   return (
-                    <path key={i} d={`M-200 ${300 + off} C 160 ${180 + off} 360 ${420 + off} 720 ${300 + off} S 1280 ${180 + off} 1640 ${300 + off}`}
+                    <path key={`v3-ribbon-${k}`} d={`M-200 ${300 + off} C 160 ${180 + off} 360 ${420 + off} 720 ${300 + off} S 1280 ${180 + off} 1640 ${300 + off}`}
                       fill="none" stroke="url(#v3rg)" strokeWidth="3.6" strokeLinecap="round" opacity={op} />
                   );
                 })}

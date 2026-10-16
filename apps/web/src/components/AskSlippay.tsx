@@ -23,9 +23,16 @@ interface Citation {
 }
 
 interface Turn {
+  id: string;
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
+}
+
+let turnSeq = 0;
+function nextTurnId(role: "user" | "assistant"): string {
+  turnSeq += 1;
+  return `turn-${role}-${Date.now()}-${turnSeq}`;
 }
 
 const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
@@ -106,8 +113,8 @@ export function AskSlippay() {
 
     const newTurns: Turn[] = [
       ...turns,
-      { role: "user", content: q },
-      { role: "assistant", content: "", citations: [] },
+      { id: nextTurnId("user"), role: "user", content: q },
+      { id: nextTurnId("assistant"), role: "assistant", content: "", citations: [] },
     ];
     setTurns(newTurns);
 
@@ -247,7 +254,7 @@ export function AskSlippay() {
                 style={{ height: "calc(min(64vh, 560px) - 44px)" }}
               >
                 {turns.map((t, i) => (
-                  <div key={i} className={`flex ${t.role === "user" ? "justify-end" : "justify-start"}`}>
+                  <div key={t.id} className={`flex ${t.role === "user" ? "justify-end" : "justify-start"}`}>
                     {t.role === "user" ? (
                       <div
                         className="max-w-[80%] px-4 py-2.5 rounded-2xl rounded-tr-sm text-[13px] leading-relaxed"
@@ -282,7 +289,7 @@ export function AskSlippay() {
                               <div className="mt-1 flex flex-col gap-1 pl-1">
                                 {dedupeCitations(t.citations).slice(0, 5).map((c, j) => (
                                   <a
-                                    key={j}
+                                    key={c.doc_path ? `${c.doc_path}-${c.start_char_index ?? j}` : `c-${j}`}
                                     href={`${GITHUB_DOCS}/${c.doc_path}`}
                                     target="_blank"
                                     rel="noopener noreferrer"

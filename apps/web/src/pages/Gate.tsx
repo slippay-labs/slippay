@@ -90,7 +90,7 @@ export default function Gate() {
         <h2 className="mt-24 text-2xl md:text-4xl font-semibold tracking-[-0.03em] max-w-[24ch]" style={display}>{t.propsTitle}</h2>
         <div className="mt-12 flex flex-col gap-10">
           {t.props.map(([h, b], i) => (
-            <div key={i} className="flex gap-5 md:gap-7 items-baseline border-t border-[#0a0a0a]/12 pt-8">
+            <div key={h} className="flex gap-5 md:gap-7 items-baseline border-t border-[#0a0a0a]/12 pt-8">
               <span className="font-mono text-[13px] text-[#6f6862] shrink-0 w-8">{String(i + 1).padStart(2, "0")}</span>
               <div>
                 <div className="text-2xl md:text-3xl font-semibold tracking-[-0.02em]" style={display}>{h}</div>

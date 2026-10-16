@@ -141,10 +141,10 @@ export function PayFlowDemo() {
                     <span aria-hidden className="absolute inset-0 rounded-full border-2 border-transparent border-t-[#FDDA24] border-r-[#FDDA24]"
                       style={{ animation: "pf-spin 0.95s linear infinite" }} />
                   )}
-                  {/* faint dot mesh over the face */}
+                  {/* faint dot mesh over the face — purely decorative static array fixed by construction */}
                   <div aria-hidden className="absolute inset-3 grid grid-cols-6 gap-[7px] opacity-40">
                     {Array.from({ length: 36 }).map((_, i) => (
-                      <span key={i} className="w-[3px] h-[3px] rounded-full bg-[#FDDA24]/70" />
+                      <span key={`mesh-dot-${i}`} className="w-[3px] h-[3px] rounded-full bg-[#FDDA24]/70" />
                     ))}
                   </div>
                   {/* face glyph */}

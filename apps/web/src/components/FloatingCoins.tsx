@@ -35,9 +35,10 @@ export function FloatingCoins({ className = "" }: { className?: string }) {
   const reduce = useReducedMotion();
   return (
     <div className={className} aria-hidden>
+      {/* COINS is a purely decorative static list fixed by construction */}
       {COINS.map((c, i) => (
         <motion.div
-          key={i}
+          key={`coin-${i}`}
           style={{ position: "absolute", left: c.x, top: c.y, transformStyle: "preserve-3d" }}
           animate={reduce ? undefined : { y: [0, -24, 0], x: [0, 12, 0], rotateY: [0, 360] }}
           transition={reduce ? undefined : { duration: c.dur, delay: c.delay, repeat: Infinity, ease: "easeInOut" }}

@@ -148,7 +148,7 @@ const { order } = await r.json();
                 {logs.length === 0
                   ? <div className="text-[#f1eee7]/40">// no events yet · open checkout to start</div>
                   : logs.map((l, i) => (
-                    <div key={i} className="border-b border-[#f1eee7]/10 pb-2 mb-2">
+                    <div key={`${l.ts}:${l.type}:${i}`} className="border-b border-[#f1eee7]/10 pb-2 mb-2">
                       <span className="text-[#f1eee7]/55">{l.ts}</span>
                       <span className={`ml-3 ${l.type.includes("paid") ? "text-[#FDDA24]" : l.type.includes("error") ? "text-red-400" : "text-[#f1eee7]"}`}>{l.type}</span>
                       {l.payload != null && <pre className="mt-1 text-[#f1eee7]/70 text-[11px]">{JSON.stringify(l.payload, null, 2)}</pre>}

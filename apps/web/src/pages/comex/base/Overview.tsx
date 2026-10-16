@@ -100,7 +100,8 @@ export default function BaseOverview() {
             <defs><linearGradient id="vg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stopColor="#b5e853" stopOpacity="0.5" /><stop offset="1" stopColor="#b5e853" stopOpacity="0" /></linearGradient></defs>
             {area && <path d={area} fill="url(#vg)" />}
             {dPath && <path d={dPath} fill="none" stroke="#0a0a0a" strokeWidth="2.2" />}
-            {series.map((v, i) => <circle key={i} cx={x(i)} cy={y(v)} r="3.5" fill="#0a0a0a" />)}
+            {/* Fixed-length numerical chart sampling series fixed by construction */}
+            {series.map((v, i) => <circle key={`chart-dot-${i}`} cx={x(i)} cy={y(v)} r="3.5" fill="#0a0a0a" />)}
           </svg>
         </div>
         <div className={card}>

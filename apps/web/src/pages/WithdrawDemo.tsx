@@ -292,8 +292,8 @@ export default function WithdrawDemo() {
                 <div className="text-sm text-[#0a0a0a]/55">unfunded · deposit first</div>
               ) : (
                 <ul className="space-y-1 text-sm font-mono">
-                  {balances.map((b, i) => (
-                    <li key={i} className="flex justify-between border-b border-[#0a0a0a]/8 py-1">
+                  {balances.map((b) => (
+                    <li key={`${b.asset_code}:${b.asset_issuer ?? 'native'}`} className="flex justify-between border-b border-[#0a0a0a]/8 py-1">
                       <span>
                         {b.asset_code}
                         {b.asset_issuer && (

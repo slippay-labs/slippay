@@ -116,7 +116,7 @@ export default function Builders() {
             ["The usual answer", "Off-chain allowlists and rate limits. They live in a database the agent's own runtime controls. Compromise the runtime, bypass the rule."],
             ["Slippay", "The bound is enforced where the money moves: on-chain, in the contract, and attested by an independent signer. The agent literally cannot execute outside it."],
           ].map(([h, b], i) => (
-            <div key={i}>
+            <div key={h}>
               <div className="font-mono text-[11px] text-[#2563eb] bg-[#0a0a0a] inline-block px-2 py-0.5 rounded">{`0${i + 1}`}</div>
               <div className="mt-3 font-bold text-lg" style={display}>{h}</div>
               <p className="mt-2 text-[#0a0a0a]/65 leading-relaxed">{b}</p>
@@ -220,8 +220,8 @@ revoke(id)`}</pre>
             ["Independent", "The limit is verified by a signer the agent's runtime can't reach. Owning the agent doesn't lift it."],
             ["Replay-proof", "Every authorization is bound to a sequence and an expiry. A stale one is dead on arrival."],
             ["Self-revocable", "You kill it instantly, on-chain. No ticket, no waiting."],
-          ].map(([h, b], i) => (
-            <div key={i} className="rounded-xl border border-[#0a0a0a]/12 px-5 py-4">
+          ].map(([h, b]) => (
+            <div key={h} className="rounded-xl border border-[#0a0a0a]/12 px-5 py-4">
               <div className="font-bold text-lg" style={display}>{h}</div>
               <p className="mt-1.5 text-[14px] text-[#0a0a0a]/60 leading-relaxed">{b}</p>
             </div>
@@ -266,8 +266,8 @@ revoke(id)`}</pre>
             ["Pre-auth v0.2 (autocharge)", "testnet", "Deployed + tested. Mainnet pending an outside audit."],
             ["USDC ↔ Pix ramp", "integrated", "Built against a BCB-licensed partner; activates on key."],
             ["Attestation-as-compliance", "roadmap", "Proof + reporting as a paid tier."],
-          ].map(([h, tag, b], i) => (
-            <div key={i} className="rounded-xl border border-[#0a0a0a]/12 px-4 py-4">
+          ].map(([h, tag, b]) => (
+            <div key={h} className="rounded-xl border border-[#0a0a0a]/12 px-4 py-4">
               <div className="flex items-center justify-between gap-3">
                 <div className="font-bold" style={display}>{h}</div>
                 <span className={`font-mono text-[9px] uppercase tracking-[0.14em] px-2 py-1 rounded ${tag === "mainnet" || tag === "live" ? "bg-[#0a0a0a] text-[#2563eb]" : "bg-[#0a0a0a]/[0.06] text-[#0a0a0a]/55"}`}>{tag}</span>
@@ -299,7 +299,7 @@ revoke(id)`}</pre>
               ["Replay / stale attestation", "The signed message binds charges_done + not_after. A replayed attestation is already expired or out of sequence."],
               ["Full runtime compromise", "The cap isn't in the agent's database — it's on-chain and in an independent attester. Owning the agent doesn't lift its own limit."],
             ].map(([a, d], i) => (
-              <div key={i} className="contents">
+              <div key={a} className="contents">
                 <div className={`px-4 py-4 text-[14px] sm:text-[15px] flex items-center ${i % 2 ? "bg-[#0a0a0a]/[0.02]" : ""}`} style={display}>{a}</div>
                 <div className={`px-4 py-4 text-[13px] sm:text-[14px] text-[#0a0a0a]/65 leading-relaxed flex items-center ${i % 2 ? "bg-[#0a0a0a]/[0.02]" : ""}`}>{d}</div>
               </div>

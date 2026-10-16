@@ -107,8 +107,8 @@ export default function Security() {
         {/* plain words first — everyone understands why it's safe */}
         <h2 className="mt-20 font-bold tracking-[-0.03em] text-[clamp(1.75rem,5vw,3rem)]" style={display}>{t.simpleTitle}</h2>
         <div className="mt-10 flex flex-col gap-7 max-w-[640px]">
-          {t.simple.map(([, text], i) => (
-            <div key={i} className="flex gap-4 items-start">
+          {t.simple.map(([, text]) => (
+            <div key={text.slice(0, 32)} className="flex gap-4 items-start">
               <span className="w-1.5 h-1.5 rounded-full bg-[#2563eb] shrink-0 mt-2.5" />
               <p className="text-lg md:text-xl leading-relaxed text-[#0a0a0a]/75">{text}</p>
             </div>
@@ -119,7 +119,7 @@ export default function Security() {
         <h2 className="mt-24 font-mono text-[12px] uppercase tracking-[0.24em]" style={{ color: "#6f6862" }}>{t.techTitle}</h2>
         <div className="mt-8 flex flex-col gap-9">
           {t.props.map(([h, b], i) => (
-            <div key={i} className="flex gap-5 md:gap-7 items-baseline border-t border-[#0a0a0a]/12 pt-7">
+            <div key={h} className="flex gap-5 md:gap-7 items-baseline border-t border-[#0a0a0a]/12 pt-7">
               <span className="font-mono text-[13px] text-[#6f6862] shrink-0 w-8">{String(i + 1).padStart(2, "0")}</span>
               <div>
                 <div className="text-2xl md:text-3xl font-semibold tracking-[-0.02em]" style={display}>{h}</div>

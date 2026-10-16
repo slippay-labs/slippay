@@ -94,8 +94,8 @@ export default function Verify() {
             </div>
 
             <div className="mt-6 space-y-2">
-              {res.checks.map((c, i) => (
-                <div key={i} className="flex items-start gap-3 text-sm">
+              {res.checks.map((c) => (
+                <div key={c.label} className="flex items-start gap-3 text-sm">
                   <span className="font-mono mt-0.5" style={{ color: c.ok ? "#3f7d20" : "#a11" }}>{c.ok ? "✓" : "✗"}</span>
                   <div>
                     <span className="font-medium">{c.label}</span>
@@ -116,8 +116,8 @@ export default function Verify() {
                   z3 (next). “unsat” on the inductive step = the bound is sound for every reachable state.
                 </p>
                 <div className="space-y-3">
-                  {res.obligations.map((o, i) => (
-                    <details key={i} className="border border-[#0a0a0a]/15">
+                  {res.obligations.map((o) => (
+                    <details key={o.name} className="border border-[#0a0a0a]/15">
                       <summary className="cursor-pointer px-4 py-3 text-sm font-medium flex items-center justify-between">
                         <span>{o.name}</span>
                         <span className="font-mono text-[10px] uppercase tracking-[0.18em] text-[#FDDA24] bg-[#0a0a0a] px-2 py-1">expect {o.expect}</span>

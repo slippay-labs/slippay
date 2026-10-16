@@ -63,7 +63,7 @@ export default function Manifesto() {
 
       <main className="max-w-[1000px] mx-auto px-6 md:px-12 pt-16 md:pt-28 pb-24">
         {t.blocks.map((blk, i) => (
-          <section key={i} className={i === 0 ? "" : "mt-28 md:mt-44 pt-16 md:pt-24 border-t border-[#0a0a0a]/10"}>
+          <section key={blk.h} className={i === 0 ? "" : "mt-28 md:mt-44 pt-16 md:pt-24 border-t border-[#0a0a0a]/10"}>
             <div className="font-mono text-[11px] uppercase tracking-[0.3em] text-[#6f6862] mb-8">{String(i + 1).padStart(3, "0")}</div>
             <h2 className="font-bold uppercase tracking-[-0.05em] leading-[0.88] text-[clamp(2.25rem,6.5vw,5rem)] max-w-[20ch]" style={display}>
               {"accent" in blk && blk.accent
@@ -71,7 +71,7 @@ export default function Manifesto() {
                 : blk.h}
             </h2>
             <div className="mt-10 flex flex-col gap-5 max-w-[58ch]">
-              {blk.p.map((para, j) => <p key={j} className="text-xl md:text-2xl leading-relaxed text-[#0a0a0a]/65">{para}</p>)}
+              {blk.p.map((para) => <p key={para.slice(0, 32)} className="text-xl md:text-2xl leading-relaxed text-[#0a0a0a]/65">{para}</p>)}
               {"welcome" in blk && blk.welcome && <p className="text-2xl md:text-3xl font-semibold tracking-[-0.02em] text-[#6f6862] mt-4" style={display}>{blk.welcome}</p>}
             </div>
           </section>

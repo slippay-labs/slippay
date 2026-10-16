@@ -306,7 +306,7 @@ export default function PolicySubscribe() {
             {chargeLog.length > 0 && (
               <div className="mt-5 space-y-3">
                 {chargeLog.map((entry, i) => (
-                  <div key={i} className="border-l-2 border-[#0a0a0a]/20 pl-4">
+                  <div key={`${entry.tx_url ?? entry.timing_ms}:${entry.status}:${i}`} className="border-l-2 border-[#0a0a0a]/20 pl-4">
                     <div className="flex items-center gap-2 mb-1">
                       <span
                         className={`inline-block w-2 h-2 ${

@@ -40,7 +40,10 @@ export default function ConfirmTxModal({ summary, intent, onConfirm, onCancel }:
           )}
 
           {payments.map((op, i) => (
-            <PaymentRow key={i} op={op} />
+            <PaymentRow
+              key={`${op.destination ?? "nodest"}:${op.amount ?? "0"}:${op.assetCode ?? "XLM"}:${i}`}
+              op={op}
+            />
           ))}
         </div>
 

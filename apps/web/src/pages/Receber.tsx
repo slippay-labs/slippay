@@ -206,7 +206,7 @@ export default function Receber() {
         <h2 className={`mt-10 ${h2} text-[clamp(2.25rem,8vw,5rem)]`} style={display}>{t.how.h}</h2>
         <div className="mt-14 grid md:grid-cols-3 gap-px bg-[#0d1322]/12 border border-white/10 rounded-2xl overflow-hidden">
           {t.how.steps.map(([h, b], i) => (
-            <div key={i} className="bg-[#0a0e1a] p-7 md:p-9">
+            <div key={h} className="bg-[#0a0e1a] p-7 md:p-9">
               <span className="font-mono text-[12px]" style={{ color: GRAY }}>{String(i + 1).padStart(2, "0")}</span>
               <div className="mt-4 text-2xl md:text-3xl font-bold tracking-[-0.02em]" style={display}>{h}</div>
               <p className="mt-2 text-[15px] text-[#f3f5fb]/60">{b}</p>
@@ -238,8 +238,8 @@ export default function Receber() {
         <Stamp label={t.fee.stamp} />
         <h2 className={`mt-10 ${h2} text-[clamp(2.25rem,7vw,4.75rem)] max-w-[16ch]`} style={display}>{t.fee.h}</h2>
         <div className="mt-12 max-w-[640px] flex flex-col">
-          {t.fee.rows.map(([who, rate, hot], i) => (
-            <div key={i} className={"flex items-center justify-between py-5 border-t " + (hot ? "border-white/15" : "border-white/10")}>
+          {t.fee.rows.map(([who, rate, hot]) => (
+            <div key={who} className={"flex items-center justify-between py-5 border-t " + (hot ? "border-white/15" : "border-white/10")}>
               <span className={"text-lg md:text-2xl tracking-[-0.01em] " + (hot ? "font-bold" : "text-[#f3f5fb]/60")} style={display}>{who}</span>
               <span className={"font-mono text-xl md:text-3xl tabular-nums " + (hot ? "font-black" : "text-[#f3f5fb]/55")} style={hot ? { background: ACCENT, padding: "2px 10px", borderRadius: "8px" } : undefined}>{rate}</span>
             </div>
