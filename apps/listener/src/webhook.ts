@@ -5,8 +5,14 @@ import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssrf.j
 
 const SCHEDULE = [60, 300, 1800, 7200, 43200, 86400];
 
+// Storage ceiling on webhook response text stored in database delivery row.
+export const MAX_STORED_BODY_CHARS = 500;
+
 // Response body bytes we read+keep (rest is discarded after abort). Audit-003 L13.
-const MAX_RESPONSE_BODY_BYTES = 64 * 1024;
+// We cap bytes read at the storage limit (500) rather than 64 KB, since any excess
+// would immediately be sliced away, wasting I/O and heap memory.
+export const MAX_RESPONSE_BODY_BYTES = MAX_STORED_BODY_CHARS;
+
 // Hard ceiling on a single delivery attempt (per-call timeout).
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -74,13 +80,32 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
     // Read body with a hard size cap so a slow/malicious endpoint can't stall
     // or OOM the worker (audit-003 L13). Discard remainder.
     const text = await readCappedBody(r, MAX_RESPONSE_BODY_BYTES);
-    return { status: r.ok ? "sent" : "failed", code: r.status, body: text.slice(0, 500) };
+    return { status: r.ok ? "sent" : "failed", code: r.status, body: text };
   } catch (e) {
-    return { status: "failed", body: String(e).slice(0, 500) };
+    return { status: "failed", body: String(e).slice(0, MAX_STORED_BODY_CHARS) };
   }
 }
 
-async function readCappedBody(r: { body: ReadableStream<Uint8Array> | null }, max: number): Promise<string> {
+/**
+ * Read up to `max` bytes from a response stream, cancelling the reader and
+ * discarding all remaining bytes once `max` is exceeded.
+ *
+ * Design note (fixes #246):
+ * Capped at the storage limit (default 500 bytes) so we never buffer or decode
+ * excess bytes that would simply be discarded. Slicing happens on the raw byte
+ * chunks before UTF-8 decoding to prevent materializing large string allocations
+ * in memory. Note that truncating raw bytes may split a multi-byte UTF-8 sequence
+ * at the boundary; TextDecoder safely replaces any incomplete terminal byte with
+ * the standard Unicode replacement character (U+FFFD).
+ *
+ * @param r   Response-like object exposing a ReadableStream body
+ * @param max Maximum number of raw bytes to retain (default MAX_RESPONSE_BODY_BYTES)
+ * @returns   Decoded string guaranteed to represent no more than `max` bytes
+ */
+export async function readCappedBody(
+  r: { body: ReadableStream<Uint8Array> | null },
+  max: number = MAX_RESPONSE_BODY_BYTES,
+): Promise<string> {
   if (!r.body) return "";
   const reader = r.body.getReader();
   const chunks: Uint8Array[] = [];
@@ -95,7 +120,9 @@ async function readCappedBody(r: { body: ReadableStream<Uint8Array> | null }, ma
         // discard remainder; abort the stream
         try { await reader.cancel(); } catch { /* noop */ }
         const take = max - (total - value.byteLength);
-        chunks.push(value.subarray(0, Math.max(0, take)));
+        if (take > 0) {
+          chunks.push(value.subarray(0, take));
+        }
         break;
       }
       chunks.push(value);
@@ -103,6 +130,7 @@ async function readCappedBody(r: { body: ReadableStream<Uint8Array> | null }, ma
   } catch { /* swallow stream errors; return what we have */ }
   return new TextDecoder().decode(concat(chunks));
 }
+
 
 function concat(chunks: Uint8Array[]): Uint8Array {
   let n = 0;
