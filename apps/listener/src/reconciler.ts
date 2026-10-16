@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MatchOutcome, OrderForMatch } from "./matcher.js";
+import { feeBpsSchema } from "@slippay/shared";
 import { log } from "./log.js";
 
 export async function reconcileMatch(
@@ -11,6 +12,13 @@ export async function reconcileMatch(
   if (outcome.outcome === "ignore") return;
 
   const newStatus = outcome.outcome === "paid" ? "paid" : "underpaid";
+
+  // Validate the merchant fee basis points at the boundary before any
+  // arithmetic uses it. Fail closed if the stored value is out of range.
+  const feeBpsRaw = (order as { fee_bps?: unknown }).fee_bps;
+  if (feeBpsRaw != null) {
+    feeBpsSchema.parse(feeBpsRaw);
+  }
 
   // Allow underpaid → paid transition (audit-003 L3). Without this, a partial
   // payment followed by a top-up leaves the order stuck in underpaid forever
@@ -32,6 +40,13 @@ export async function reconcileMatch(
   }
 
   const subscriptionId: string | null = data.subscription_id ?? null;
+
+  // The merchant row is another entry point for fee basis points; validate it
+  // through the same bounded schema before it can reach arithmetic.
+  const rowFeeBps = (data as { fee_bps?: unknown }).fee_bps;
+  if (rowFeeBps != null) {
+    feeBpsSchema.parse(rowFeeBps);
+  }
 
   // If this order was generated from a subscription and was successfully paid,
   // bump charges_done. If it hits max_periods, expire the subscription.
