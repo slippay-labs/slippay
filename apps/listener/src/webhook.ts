@@ -113,13 +113,137 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
+export const TERMINAL_NEXT_ATTEMPT_AT = "9999-12-31T23:59:59.999Z";
+export const MAX_DELIVERY_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+/**
+ * Classifies whether an HTTP response status represents a permanent failure
+ * that should dead-letter immediately rather than consuming the backoff schedule.
+ * 4xx codes (Client Errors) are considered permanent, EXCEPT 429 Too Many Requests,
+ * which should be retried per standard backoff.
+ */
+export function isPermanentFailure(code?: number): boolean {
+  if (typeof code !== "number") return false;
+  return code >= 400 && code < 500 && code !== 429;
+}
+
+/**
+ * Checks if a delivery row exceeds the maximum permissible delivery age
+ * based on order expiration or row creation.
+ */
+export function isDeliveryExpired(
+  order?: { expires_at?: string; created_at?: string },
+  nowMs = Date.now(),
+  maxAgeMs = MAX_DELIVERY_AGE_MS
+): boolean {
+  if (!order) return false;
+  if (order.expires_at) {
+    const expiresMs = new Date(order.expires_at).getTime();
+    if (!isNaN(expiresMs) && nowMs > expiresMs + maxAgeMs) {
+      return true;
+    }
+  }
+  if (order.created_at) {
+    const createdMs = new Date(order.created_at).getTime();
+    if (!isNaN(createdMs) && nowMs > createdMs + maxAgeMs) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export async function processDeliveryRow(db: SupabaseClient, row: any, allowLocal: boolean) {
+  const order = (row as any).orders as { expires_at?: string; created_at?: string; merchants?: { webhook_url?: string; webhook_secret?: string; network?: string } };
+  
+  if (isDeliveryExpired(order)) {
+    await db.from("webhook_deliveries").update({
+      status: "dead",
+      response_body: "delivery_expired_max_age",
+      next_attempt_at: TERMINAL_NEXT_ATTEMPT_AT,
+      last_attempt_at: new Date().toISOString(),
+    }).eq("id", row.id);
+    log("warn", "webhook_dead_lettered", { id: row.id, reason: "delivery_expired_max_age" });
+    return;
+  }
+
+  const merchant = order?.merchants;
+  if (!merchant?.webhook_url) {
+    await db.from("webhook_deliveries").update({
+      status: "dead",
+      response_body: "no_webhook_url",
+      next_attempt_at: TERMINAL_NEXT_ATTEMPT_AT,
+      last_attempt_at: new Date().toISOString(),
+    }).eq("id", row.id);
+    return;
+  }
+
+  // Sync pre-flight: cheap URL-shape rejection before DNS cost.
+  if (!isSafeWebhookUrl(merchant.webhook_url, allowLocal)) {
+    await db.from("webhook_deliveries").update({
+      status: "dead",
+      response_body: "unsafe_url",
+      next_attempt_at: TERMINAL_NEXT_ATTEMPT_AT,
+      last_attempt_at: new Date().toISOString(),
+    }).eq("id", row.id);
+    return;
+  }
+
+  const result = await deliverOnce({
+    url: merchant.webhook_url,
+    secret: merchant.webhook_secret!,
+    deliveryId: row.id as string,
+    payload: row.payload,
+    allowLocal,
+  });
+
+  const newAttempt = (row.attempt_n as number) + 1;
+  if (result.status === "sent") {
+    await db.from("webhook_deliveries").update({
+      status: "sent",
+      response_code: result.code,
+      response_body: result.body,
+      attempt_n: newAttempt,
+      last_attempt_at: new Date().toISOString(),
+    }).eq("id", row.id);
+    log("info", "webhook_sent", { id: row.id, code: result.code });
+  } else {
+    // Classify failure:
+    // 1. Permanent failure (4xx other than 429) -> dead-letter immediately!
+    // 2. Retryable failure (5xx, 429, transport errors) -> schedule next backoff
+    const permanent = isPermanentFailure(result.code);
+    const backoff = permanent ? null : nextBackoff(newAttempt - 1);
+    const isDead = permanent || backoff === null;
+
+    const terminalReason = permanent
+      ? `permanent_client_error_${result.code}`
+      : (backoff === null ? "attempts_exhausted" : undefined);
+
+    await db.from("webhook_deliveries").update({
+      status: isDead ? "dead" : "failed",
+      response_code: result.code,
+      response_body: terminalReason ? `${terminalReason}: ${result.body ?? ""}`.slice(0, 500) : result.body,
+      attempt_n: newAttempt,
+      last_attempt_at: new Date().toISOString(),
+      next_attempt_at: isDead
+        ? TERMINAL_NEXT_ATTEMPT_AT
+        : new Date(Date.now() + (backoff ?? 0) * 1000).toISOString(),
+    }).eq("id", row.id);
+
+    if (isDead) {
+      log("warn", "webhook_dead_lettered", { id: row.id, attempt: newAttempt, code: result.code, reason: terminalReason });
+    } else {
+      log("warn", "webhook_failed", { id: row.id, attempt: newAttempt, code: result.code, backoff });
+    }
+  }
+}
+
 export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
   let stopped = false;
 
   async function tick() {
     while (!stopped) {
       const { data: rows } = await db.from("webhook_deliveries")
-        .select("id, order_id, payload, attempt_n, status, orders ( merchants ( webhook_url, webhook_secret, network ) )")
+        .select("id, order_id, payload, attempt_n, status, orders ( expires_at, created_at, merchants ( webhook_url, webhook_secret, network ) )")
         .in("status", ["queued", "failed"])
         .lte("next_attempt_at", new Date().toISOString())
         .order("next_attempt_at", { ascending: true })
@@ -131,49 +255,7 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
       }
 
       for (const row of rows) {
-        const merchant = (row as any).orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
-        if (!merchant?.webhook_url) {
-          await db.from("webhook_deliveries").update({ status: "dead", response_body: "no_webhook_url" }).eq("id", row.id);
-          continue;
-        }
-        // Sync pre-flight: cheap URL-shape rejection before DNS cost.
-        if (!isSafeWebhookUrl(merchant.webhook_url, allowLocal)) {
-          await db.from("webhook_deliveries").update({ status: "dead", response_body: "unsafe_url" }).eq("id", row.id);
-          continue;
-        }
-
-        const result = await deliverOnce({
-          url: merchant.webhook_url,
-          secret: merchant.webhook_secret!,
-          deliveryId: row.id as string,
-          payload: row.payload,
-          allowLocal,
-        });
-
-        const newAttempt = (row.attempt_n as number) + 1;
-        if (result.status === "sent") {
-          await db.from("webhook_deliveries").update({
-            status: "sent",
-            response_code: result.code,
-            response_body: result.body,
-            attempt_n: newAttempt,
-            last_attempt_at: new Date().toISOString(),
-          }).eq("id", row.id);
-          log("info", "webhook_sent", { id: row.id, code: result.code });
-        } else {
-          const backoff = nextBackoff(newAttempt - 1);
-          await db.from("webhook_deliveries").update({
-            status: backoff === null ? "dead" : "failed",
-            response_code: result.code,
-            response_body: result.body,
-            attempt_n: newAttempt,
-            last_attempt_at: new Date().toISOString(),
-            next_attempt_at: backoff === null
-              ? new Date().toISOString()
-              : new Date(Date.now() + backoff * 1000).toISOString(),
-          }).eq("id", row.id);
-          log("warn", "webhook_failed", { id: row.id, attempt: newAttempt, backoff });
-        }
+        await processDeliveryRow(db, row, allowLocal);
       }
     }
   }
