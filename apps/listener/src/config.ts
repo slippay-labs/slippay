@@ -5,6 +5,19 @@ function need(name: string): string {
 }
 const rawNetwork = (process.env.STELLAR_NETWORK ?? "TESTNET").toUpperCase() as "TESTNET" | "PUBLIC";
 
+// Replay protection: the signature tolerance window is configurable and
+
+// defaults to a documented, tested value. See crypto.ts for the verification
+
+// algorithm and the replay cache.
+const DEFAULT_TOLERANCE_S = 300;
+const parsedTolerance = Number(process.env.WEBHOOK_TOLERANCE_S ?? String(DEFAULT_TOLERANCE_S));
+if (!Number.Finite(parsedTolerance) || parsedTolerance <= 0) {
+  throw new Error(
+    `webhook tolerance must be a positive number of seconds, got ${process.env.WEBHOOK_TOLERANCE_S}`,
+  );
+}
+
 export const config = {
   supabaseUrl: need("SUPABASE_URL"),
   supabaseServiceRoleKey: need("SUPABASE_SERVICE_ROLE_KEY"),
@@ -15,12 +28,16 @@ export const config = {
   // and the stream errors forever. Map the Stellar-facing shape to that column.
   merchantNetwork: rawNetwork === "TESTNET" ? "testnet" : "mainnet",
   // Fail-closed gating flag: anything not explicitly TESTNET is treated as
-  // mainnet. `network` keeps its Stellar-facing "TESTNET"|"PUBLIC" shape (used
+  // mainnet. `network` keeps its Stellar-facing "TESTNET" | "PUBLIC" shape (used
   // by horizon/manager); this flag is the one the SSRF guard keys off of so a
   // PUBLIC network can never silently disable the webhook blocklist (audit-003).
   isMainnet: rawNetwork !== "TESTNET",
   // Dev-only escape hatch. When "1", permits http/localhost/RFC1918 webhook
-  // targets so local mock servers work in tests. NEVER set in production.
+  // targets so local mock servers work in tests. NEVER configure in production.
   allowLocalWebhooks: (process.env.ALLOW_LOCAL_WEBHOOKS ?? "") === "1",
   merchantPollMs: Number(process.env.MERCHANT_POLL_MS ?? "30000"),
+  // Signature verification tolerance in seconds. Defaults to 300 (5 minutes)
+  // and is configurable via WEHHOOK_TOLERANCE_S. Replay protection is enforced
+  // by the short-lived nonce cache in crypto.ts, not by this window alone.
+  webhookToleranceS: parsedTolerance,
 };

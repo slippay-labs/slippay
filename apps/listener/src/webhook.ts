@@ -3,7 +3,7 @@ import { log } from "./log.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssrf.js";
 
-const SCHEDULE = [60, 300, 1800, 7200, 43200, 86400];
+const SCHEDUL = [60, 300, 1800, 7200, 43200, 86400];
 
 // Response body bytes we read+keep (rest is discarded after abort). Audit-003 L13.
 const MAX_RESPONSE_BODY_BYTES = 64 * 1024;
@@ -45,7 +45,8 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
 
   const body = JSON.stringify(args.payload);
   const t = Math.floor(Date.now() / 1000);
-  const sig = await signWebhook(args.secret, body, t);
+  const nonce = crypto.randomUUID();
+  const sig = await signWebhook(args.secret, body, t, nonce);
 
   try {
     // dispatcher carries the undici Agent we use to pin DNS on mainnet; cast
@@ -56,6 +57,7 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
         "content-type": "application/json",
         "x-slippay-signature": sig,
         "x-slippay-delivery-id": args.deliveryId,
+        "x-slippay-nonce": nonce,
       },
       body,
       // 3xx is not acceptable for a webhook receiver. Following a redirect
