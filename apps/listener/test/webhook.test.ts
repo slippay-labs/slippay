@@ -9,7 +9,7 @@ vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(),
 }));
 
-import { nextBackoff, deliverOnce } from "../src/webhook.js";
+import { nextBackoff, deliverOnce, startWebhookWorker } from "../src/webhook.js";
 
 const mockLookup = lookup as unknown as ReturnType<typeof vi.fn>;
 
@@ -73,3 +73,112 @@ describe("deliverOnce", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("startWebhookWorker anti-spin & circuit breaker (Issue #242)", () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    mockLookup.mockReset();
+    mockLookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+  });
+
+  it("yields minimum interval even when rows are found, bounding query rate", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("ok", { status: 200 })));
+
+    let selectCount = 0;
+    const db: any = {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          in: vi.fn().mockReturnValue({
+            lte: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockImplementation(async () => {
+                  selectCount++;
+                  return {
+                    data: [
+                      {
+                        id: `del-spin-${selectCount}`,
+                        attempt_n: 0,
+                        payload: {},
+                        orders: {
+                          merchants: {
+                            webhook_url: "https://example.com/wh",
+                            webhook_secret: "s",
+                          },
+                        },
+                      },
+                    ],
+                  };
+                }),
+              }),
+            }),
+          }),
+        }),
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        }),
+      }),
+    };
+
+    // Run with a 30ms minIntervalMs for 100ms
+    const stop = startWebhookWorker(db, true, { minIntervalMs: 30, idleIntervalMs: 50 });
+    await new Promise((r) => setTimeout(r, 110));
+    stop();
+
+    // In 110ms with 30ms sleep, selectCount should be bounded (around 3 to 4 times, strictly < 6)
+    expect(selectCount).toBeGreaterThan(1);
+    expect(selectCount).toBeLessThan(6);
+  });
+
+  it("dead-letters repeatedly stuck delivery with circuit breaker alert", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("ok", { status: 200 })));
+
+    let updatePayload: any = null;
+    const stuckRow = {
+      id: "del-stuck-123",
+      attempt_n: 0,
+      payload: {},
+      orders: {
+        merchants: {
+          webhook_url: "https://example.com/wh",
+          webhook_secret: "s",
+        },
+      },
+    };
+
+    const db: any = {
+      from: vi.fn().mockReturnValue({
+        select: vi.fn().mockReturnValue({
+          in: vi.fn().mockReturnValue({
+            lte: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockImplementation(async () => {
+                  if (updatePayload?.status === "dead") {
+                    return { data: [] };
+                  }
+                  return { data: [stuckRow] };
+                }),
+              }),
+            }),
+          }),
+        }),
+        update: vi.fn().mockImplementation((payload) => {
+          updatePayload = payload;
+          return {
+            eq: vi.fn().mockResolvedValue({ error: null }),
+          };
+        }),
+      }),
+    };
+
+    // stuckThreshold = 3, minIntervalMs = 5
+    const stop = startWebhookWorker(db, true, { minIntervalMs: 5, idleIntervalMs: 10, stuckThreshold: 3 });
+    await new Promise((r) => setTimeout(r, 60));
+    stop();
+
+    expect(updatePayload).toBeDefined();
+    expect(updatePayload.status).toBe("dead");
+    expect(updatePayload.response_body).toBe("circuit_breaker_stuck_threshold_exceeded");
+    expect(updatePayload.next_attempt_at).toBe("9999-12-31T23:59:59.999Z");
+  });
+});
+

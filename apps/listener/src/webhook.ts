@@ -113,32 +113,95 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
-export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
+export interface WebhookWorkerOptions {
+  minIntervalMs?: number;
+  idleIntervalMs?: number;
+  stuckThreshold?: number;
+}
+
+export function startWebhookWorker(
+  db: SupabaseClient,
+  allowLocal: boolean,
+  options: WebhookWorkerOptions = {}
+) {
+  const minIntervalMs = options.minIntervalMs ?? 1000;
+  const idleIntervalMs = options.idleIntervalMs ?? 5000;
+  const stuckThreshold = options.stuckThreshold ?? 5;
+
   let stopped = false;
+  const stuckCounts = new Map<string, number>();
 
   async function tick() {
     while (!stopped) {
-      const { data: rows } = await db.from("webhook_deliveries")
+      const { data: rows, error: selectErr } = await db.from("webhook_deliveries")
         .select("id, order_id, payload, attempt_n, status, orders ( merchants ( webhook_url, webhook_secret, network ) )")
         .in("status", ["queued", "failed"])
         .lte("next_attempt_at", new Date().toISOString())
         .order("next_attempt_at", { ascending: true })
         .limit(50);
 
-      if (!rows || rows.length === 0) {
-        await new Promise(r => setTimeout(r, 5000));
+      if (selectErr || !rows || rows.length === 0) {
+        if (selectErr) {
+          log("error", "webhook_select_failed", { error: selectErr.message });
+        }
+        await new Promise(r => setTimeout(r, idleIntervalMs));
         continue;
       }
 
+      let stateChanges = 0;
+      const currentSelectedIds = new Set(rows.map(r => r.id as string));
+      // Evict deliveries that have transitioned out of the polling set
+      for (const id of stuckCounts.keys()) {
+        if (!currentSelectedIds.has(id)) {
+          stuckCounts.delete(id);
+        }
+      }
+
       for (const row of rows) {
-        const merchant = (row as any).orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
-        if (!merchant?.webhook_url) {
-          await db.from("webhook_deliveries").update({ status: "dead", response_body: "no_webhook_url" }).eq("id", row.id);
+        if (stopped) break;
+        const currentCount = (stuckCounts.get(row.id) ?? 0) + 1;
+        stuckCounts.set(row.id, currentCount);
+
+        // Circuit breaker: if the same delivery ID is selected stuckThreshold times
+        // without an exiting state transition, dead-letter it loudly.
+        if (currentCount >= stuckThreshold) {
+          log("error", "webhook_circuit_breaker_triggered", {
+            id: row.id,
+            stuck_iterations: currentCount,
+            reason: "exceeded_stuck_threshold_without_transition",
+          });
+          await db.from("webhook_deliveries").update({
+            status: "dead",
+            response_body: "circuit_breaker_stuck_threshold_exceeded",
+            next_attempt_at: "9999-12-31T23:59:59.999Z",
+            last_attempt_at: new Date().toISOString(),
+          }).eq("id", row.id);
+          stuckCounts.delete(row.id);
+          stateChanges++;
           continue;
         }
+
+        const merchant = (row as any).orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
+        if (!merchant?.webhook_url) {
+          await db.from("webhook_deliveries").update({
+            status: "dead",
+            response_body: "no_webhook_url",
+            next_attempt_at: "9999-12-31T23:59:59.999Z",
+            last_attempt_at: new Date().toISOString(),
+          }).eq("id", row.id);
+          stateChanges++;
+          continue;
+        }
+
         // Sync pre-flight: cheap URL-shape rejection before DNS cost.
         if (!isSafeWebhookUrl(merchant.webhook_url, allowLocal)) {
-          await db.from("webhook_deliveries").update({ status: "dead", response_body: "unsafe_url" }).eq("id", row.id);
+          await db.from("webhook_deliveries").update({
+            status: "dead",
+            response_body: "unsafe_url",
+            next_attempt_at: "9999-12-31T23:59:59.999Z",
+            last_attempt_at: new Date().toISOString(),
+          }).eq("id", row.id);
+          stateChanges++;
           continue;
         }
 
@@ -160,6 +223,7 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
             last_attempt_at: new Date().toISOString(),
           }).eq("id", row.id);
           log("info", "webhook_sent", { id: row.id, code: result.code });
+          stateChanges++;
         } else {
           const backoff = nextBackoff(newAttempt - 1);
           await db.from("webhook_deliveries").update({
@@ -169,12 +233,19 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
             attempt_n: newAttempt,
             last_attempt_at: new Date().toISOString(),
             next_attempt_at: backoff === null
-              ? new Date().toISOString()
+              ? "9999-12-31T23:59:59.999Z"
               : new Date(Date.now() + backoff * 1000).toISOString(),
           }).eq("id", row.id);
           log("warn", "webhook_failed", { id: row.id, attempt: newAttempt, backoff });
+          stateChanges++;
         }
       }
+
+      // Always yield after processing a batch:
+      // If a batch produced no state changes, back off with idleIntervalMs.
+      // Otherwise yield the minimum interval to prevent tight-loop spinning.
+      const sleepDuration = stateChanges === 0 ? idleIntervalMs : minIntervalMs;
+      await new Promise(r => setTimeout(r, sleepDuration));
     }
   }
 
