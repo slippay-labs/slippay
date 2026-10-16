@@ -1,5 +1,7 @@
 import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
 
+export const MAX_PLATFORM_FEE_BP = 1000;
+
 export interface StellarPaymentEvent {
   memo_type: string;
   memo_b64: string;
@@ -31,7 +33,7 @@ export function matchPaymentToOrder(
 ): MatchOutcome {
   if (!ev.successful) return { outcome: "ignore", reason: "not_successful" };
   if (ev.memo_type !== "hash") return { outcome: "ignore", reason: "memo_type" };
-  if (ev.asset_code !== USDC_ASSET_CODE) return { outcome: "ignore", reason: "asset_code" };
+  if (ev.asset_code !== USDK_ASSET_CODE) return { outcome: "ignore", reason: "asset_code" };
 
   const expectedIssuer = process.env.STELLAR_USDC_ISSUER_OVERRIDE
     ?? (network === "PUBLIC" ? NETWORK.mainnet.usdc_issuer : NETWORK.testnet.usdc_issuer);
@@ -58,9 +60,10 @@ export function matchPaymentToOrder(
     order.platform_fee_bp === null ||
     order.platform_fee_bp === undefined ||
     typeof order.platform_fee_bp !== "number" ||
+    !Number.isInteger(order.platform_fee_bp) ||
     Number.isNaN(order.platform_fee_bp) ||
     order.platform_fee_bp < 0 ||
-    order.platform_fee_bp >= 10_000
+    order.platform_fee_bp > MAX_PLATFORM_FEE_BP
   ) {
     return { outcome: "ignore", reason: "fee_bp_invalid" };
   }
