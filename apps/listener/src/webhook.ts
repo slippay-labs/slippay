@@ -113,71 +113,196 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
-export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
-  let stopped = false;
+const DEFAULT_CONCURRENCY = 5;
+const DEFAULT_PER_HOST_CONCURRENCY = 2;
 
-  async function tick() {
-    while (!stopped) {
-      const { data: rows } = await db.from("webhook_deliveries")
-        .select("id, order_id, payload, attempt_n, status, orders ( merchants ( webhook_url, webhook_secret, network ) )")
-        .in("status", ["queued", "failed"])
-        .lte("next_attempt_at", new Date().toISOString())
-        .order("next_attempt_at", { ascending: true })
-        .limit(50);
+export interface WebhookWorkerOpts {
+  concurrency?: number;
+  perHostConcurrency?: number;
+  pollIntervalMs?: number;
+}
 
-      if (!rows || rows.length === 0) {
-        await new Promise(r => setTimeout(r, 5000));
-        continue;
+function getHost(urlStr: string): string {
+  try {
+    return new URL(urlStr).hostname.toLowerCase();
+  } catch {
+    return "unknown";
+  }
+}
+
+async function processSingleDelivery(row: any, allowLocal: boolean, db: SupabaseClient): Promise<void> {
+  const merchant = (row as any).orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
+  if (!merchant?.webhook_url) {
+    await db.from("webhook_deliveries").update({
+      status: "dead",
+      response_body: "no_webhook_url",
+      duration_ms: 0,
+    }).eq("id", row.id);
+    return;
+  }
+
+  // Sync pre-flight: cheap URL-shape rejection before DNS cost.
+  if (!isSafeWebhookUrl(merchant.webhook_url, allowLocal)) {
+    await db.from("webhook_deliveries").update({
+      status: "dead",
+      response_body: "unsafe_url",
+      duration_ms: 0,
+    }).eq("id", row.id);
+    return;
+  }
+
+  const startMs = Date.now();
+  const result = await deliverOnce({
+    url: merchant.webhook_url,
+    secret: merchant.webhook_secret!,
+    deliveryId: row.id as string,
+    payload: row.payload,
+    allowLocal,
+  });
+  const durationMs = Date.now() - startMs;
+
+  const newAttempt = (row.attempt_n as number) + 1;
+  if (result.status === "sent") {
+    await db.from("webhook_deliveries").update({
+      status: "sent",
+      response_code: result.code,
+      response_body: result.body,
+      attempt_n: newAttempt,
+      duration_ms: durationMs,
+      last_attempt_at: new Date().toISOString(),
+    }).eq("id", row.id);
+    log("info", "webhook_sent", { id: row.id, code: result.code, duration_ms: durationMs });
+  } else {
+    const backoff = nextBackoff(newAttempt - 1);
+    await db.from("webhook_deliveries").update({
+      status: backoff === null ? "dead" : "failed",
+      response_code: result.code,
+      response_body: result.body,
+      attempt_n: newAttempt,
+      duration_ms: durationMs,
+      last_attempt_at: new Date().toISOString(),
+      next_attempt_at: backoff === null
+        ? new Date().toISOString()
+        : new Date(Date.now() + backoff * 1000).toISOString(),
+    }).eq("id", row.id);
+    log("warn", "webhook_failed", { id: row.id, attempt: newAttempt, backoff, duration_ms: durationMs });
+  }
+}
+
+export async function deliverBatchWithConcurrency(
+  rows: any[],
+  allowLocal: boolean,
+  db: SupabaseClient,
+  opts: { concurrency?: number; perHostConcurrency?: number } = {},
+): Promise<void> {
+  const maxConcurrency = opts.concurrency ?? DEFAULT_CONCURRENCY;
+  const maxPerHost = opts.perHostConcurrency ?? DEFAULT_PER_HOST_CONCURRENCY;
+
+  const inFlightPerHost = new Map<string, number>();
+  let inFlightTotal = 0;
+  const pending = [...rows];
+
+  return new Promise<void>((resolve) => {
+    if (pending.length === 0) {
+      resolve();
+      return;
+    }
+
+    function tryDispatchNext() {
+      if (pending.length === 0 && inFlightTotal === 0) {
+        resolve();
+        return;
       }
 
-      for (const row of rows) {
-        const merchant = (row as any).orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
-        if (!merchant?.webhook_url) {
-          await db.from("webhook_deliveries").update({ status: "dead", response_body: "no_webhook_url" }).eq("id", row.id);
-          continue;
+      for (let i = 0; i < pending.length; i++) {
+        if (inFlightTotal >= maxConcurrency) {
+          break; // Global concurrency limit reached
         }
-        // Sync pre-flight: cheap URL-shape rejection before DNS cost.
-        if (!isSafeWebhookUrl(merchant.webhook_url, allowLocal)) {
-          await db.from("webhook_deliveries").update({ status: "dead", response_body: "unsafe_url" }).eq("id", row.id);
+
+        const candidate = pending[i];
+        const merchant = candidate.orders?.merchants as { webhook_url?: string } | undefined;
+        const host = merchant?.webhook_url ? getHost(merchant.webhook_url) : "unknown";
+        const currentHostCount = inFlightPerHost.get(host) ?? 0;
+
+        if (currentHostCount >= maxPerHost) {
+          // Per-host concurrency cap reached for this host; skip to next candidate
           continue;
         }
 
-        const result = await deliverOnce({
-          url: merchant.webhook_url,
-          secret: merchant.webhook_secret!,
-          deliveryId: row.id as string,
-          payload: row.payload,
-          allowLocal,
-        });
+        // Dispatch candidate i
+        pending.splice(i, 1);
+        i--;
 
-        const newAttempt = (row.attempt_n as number) + 1;
-        if (result.status === "sent") {
-          await db.from("webhook_deliveries").update({
-            status: "sent",
-            response_code: result.code,
-            response_body: result.body,
-            attempt_n: newAttempt,
-            last_attempt_at: new Date().toISOString(),
-          }).eq("id", row.id);
-          log("info", "webhook_sent", { id: row.id, code: result.code });
-        } else {
-          const backoff = nextBackoff(newAttempt - 1);
-          await db.from("webhook_deliveries").update({
-            status: backoff === null ? "dead" : "failed",
-            response_code: result.code,
-            response_body: result.body,
-            attempt_n: newAttempt,
-            last_attempt_at: new Date().toISOString(),
-            next_attempt_at: backoff === null
-              ? new Date().toISOString()
-              : new Date(Date.now() + backoff * 1000).toISOString(),
-          }).eq("id", row.id);
-          log("warn", "webhook_failed", { id: row.id, attempt: newAttempt, backoff });
-        }
+        inFlightTotal++;
+        inFlightPerHost.set(host, currentHostCount + 1);
+
+        processSingleDelivery(candidate, allowLocal, db)
+          .catch((err) => {
+            log("error", "webhook_delivery_unhandled_error", { id: candidate.id, error: String(err) });
+          })
+          .finally(() => {
+            inFlightTotal--;
+            const count = inFlightPerHost.get(host) ?? 1;
+            if (count <= 1) {
+              inFlightPerHost.delete(host);
+            } else {
+              inFlightPerHost.set(host, count - 1);
+            }
+            tryDispatchNext();
+          });
+      }
+    }
+
+    tryDispatchNext();
+  });
+}
+
+export async function processWebhookBatch(
+  db: SupabaseClient,
+  allowLocal: boolean,
+  opts: WebhookWorkerOpts = {},
+): Promise<number> {
+  const { data: rows } = await db.from("webhook_deliveries")
+    .select("id, order_id, payload, attempt_n, status, orders ( merchants ( webhook_url, webhook_secret, network ) )")
+    .in("status", ["queued", "failed"])
+    .lte("next_attempt_at", new Date().toISOString())
+    .order("next_attempt_at", { ascending: true })
+    .limit(50);
+
+  if (!rows || rows.length === 0) {
+    return 0;
+  }
+
+  await deliverBatchWithConcurrency(rows, allowLocal, db, opts);
+  return rows.length;
+}
+
+export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean, opts: WebhookWorkerOpts = {}) {
+  const pollIntervalMs = opts.pollIntervalMs ?? 5000;
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+
+  async function loop() {
+    if (stopped) return;
+    try {
+      await processWebhookBatch(db, allowLocal, opts);
+    } catch (e) {
+      log("error", "webhook_worker_error", { error: String(e) });
+    }
+    if (!stopped) {
+      timer = setTimeout(loop, pollIntervalMs);
+      if (typeof timer.unref === "function") {
+        timer.unref();
       }
     }
   }
 
-  tick();
-  return () => { stopped = true; };
+  loop();
+  return () => {
+    stopped = true;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+  };
 }
