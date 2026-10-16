@@ -9,6 +9,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "test": "pnpm -r test",
+    "test:coverage": "pnpm -r --if-present test:coverage",
+    "check:coverage": "node scripts/check-coverage-ratchet.mjs",
     "lint": "pnpm -r lint",
     "supabase:start": "supabase start",
     "supabase:stop": "supabase stop",
@@ -17,9 +19,11 @@
     "policy-checkout:spike": "NODE_PATH=apps/web/node_modules node scripts/policy-checkout-spike-server.mjs"
   },
   "devDependencies": {
+    "@vitest/coverage-v8": "^2.1.8",
     "eslint-plugin-jsx-a11y": "^6.10.0",
     "globals": "^15.14.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.8"
   },
   "pnpm": {
     "overrides": {

@@ -29,8 +29,20 @@ jobs:
       run: pnpm --filter @slippay/shared build
     - name: Lint
       run: pnpm -r lint
-    - name: Workspace tests (shared, web, listener)
-      run: pnpm -r test
+    - name: Workspace tests with coverage
+      run: pnpm test:coverage
+    - name: Verify coverage ratchet
+      run: pnpm check:coverage
+    - name: Upload coverage artifacts
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-reports
+        path: |
+          packages/shared/coverage
+          apps/listener/coverage
+          apps/web/coverage
+        retention-days: 14
     - name: Start local Supabase stack
       run: supabase start
     - name: API edge function tests (deno)

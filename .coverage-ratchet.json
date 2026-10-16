@@ -1,0 +1,68 @@
+{
+  "@slippay/shared": {
+    "lines": {
+      "pct": 97.26,
+      "covered": 213,
+      "total": 219
+    },
+    "statements": {
+      "pct": 97.26,
+      "covered": 213,
+      "total": 219
+    },
+    "functions": {
+      "pct": 100,
+      "covered": 9,
+      "total": 9
+    },
+    "branches": {
+      "pct": 84.61,
+      "covered": 44,
+      "total": 52
+    }
+  },
+  "@slippay/listener": {
+    "lines": {
+      "pct": 33.62,
+      "covered": 496,
+      "total": 1475
+    },
+    "statements": {
+      "pct": 33.62,
+      "covered": 496,
+      "total": 1475
+    },
+    "functions": {
+      "pct": 67.56,
+      "covered": 25,
+      "total": 37
+    },
+    "branches": {
+      "pct": 76.68,
+      "covered": 171,
+      "total": 223
+    }
+  },
+  "@slippay/web": {
+    "lines": {
+      "pct": 5.13,
+      "covered": 1088,
+      "total": 21187
+    },
+    "statements": {
+      "pct": 5.13,
+      "covered": 1088,
+      "total": 21187
+    },
+    "functions": {
+      "pct": 40.96,
+      "covered": 102,
+      "total": 249
+    },
+    "branches": {
+      "pct": 65.68,
+      "covered": 333,
+      "total": 507
+    }
+  }
+}

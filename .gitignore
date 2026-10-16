@@ -7,6 +7,8 @@ supabase/.temp
 .vercel
 .fly
 *.tsbuildinfo
+coverage/
+**/coverage/
 
 # Env files — NEVER commit (audit L4). VITE_-prefixed values get inlined into
 # the world-readable bundle, and server .env holds secrets. Ignore all .env*
