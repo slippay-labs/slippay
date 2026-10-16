@@ -14,7 +14,7 @@
 //    — kept working as the fallback when a webhook's shop has no OAuth record.
 //
 // Both A and B share the same money path:
-//    orders/create (HMAC verified) → SlipPay order (external_ref=shopify:<id>)
+//    orders/create (HMAC verified) → SlipPay order (external_ref=shopify:<id>).
 //    → buyer pays via /shopify/pay/<order_number> → SlipPay order.paid
 //    (signature verified) → mark the Shopify order paid via Admin API.
 //
@@ -47,6 +47,24 @@ const STATE_FILE = process.env.STATE_FILE ?? "./shopify-connector-state.json";
 const WEBHOOK_TOLERANCE_S = 300;
 const SHOP_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/;
 
+// ---------- CORS contract (single source of truth) ----------
+// Methods and headers the routes below actually read. Keep in sync with the
+// route table; the integration test asserts every declared method/header is
+// covered by the preflight response.
+export const CORS_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"];
+export const CORS_HEADERS = [
+  "authorization",
+  "content-type",
+  "x-forwarded-for",
+  "x-real-ip",
+  "x-shopify-hmac-sha256",
+  "x-shopify-shop-domain",
+  "x-shopify-topic",
+  "x-shopify-webhook-id",
+  "x-slippay-signature",
+  "idempotency-key",
+];
+
 // ---------- state ----------
 function loadState() {
   try { return JSON.parse(readFileSync(STATE_FILE, "utf8")); } catch { return {}; }
@@ -74,12 +92,23 @@ async function readRawBody(req) {
   return Buffer.concat(chunks);
 }
 const parse = (buf) => { try { return JSON.parse(buf.toString("utf8")); } catch { return {}; } };
-const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+const esc = (s) => String(s ?? "").replace(/[&<>'"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
 export function safeEqual(a, b) {
   const ba = Buffer.from(a), bb = Buffer.from(b);
   if (ba.length !== bb.length) { timingSafeEqual(ba, ba); return false; }
   return timingSafeEqual(ba, bb);
+}
+
+// Apply the CORS allowlist derived from CORS_METHODS/CORS_HEADERS. Called for
+// every request so preflight (OPTIONS) and actual responses share one source.
+function applyCors(req, res) {
+  const origin = req.headers["origin"] ?? "*";
+  res.setHeader("access-control-allow-origin", origin);
+  res.setHeader("vary", "Origin");
+  res.setHeader("access-control-allow-methods", CORS_METHODS.join(", "));
+  res.setHeader("access-control-allow-headers", CORS_HEADERS.join(", "));
+  res.setHeader("access-control-max-age", "86400");
 }
 
 // Shopify webhook HMAC: base64(HMAC-SHA256(secret, raw body)).
@@ -105,7 +134,7 @@ export function verifyShopifyQueryHmac(params, secret = APP_SECRET) {
   const msg = [...params.entries()]
     .filter(([k]) => k !== "hmac" && k !== "signature")
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${v}`)
+    .map(([k], v) => `${k}=${v}`)
     .join("&");
   const digest = createHmac("sha256", secret).update(msg).digest("hex");
   return safeEqual(digest, hmac);
@@ -186,7 +215,7 @@ async function registerOrdersWebhook(shop, token) {
   const dup = (data.webhooks ?? []).find(w => w.topic === "orders/create" && w.address === address);
   if (dup) return dup.id;
   const out = await shopifyAdmin(shop, token, "/webhooks.json", "POST", {
-    webhook: { topic: "orders/create", address, format: "json" },
+    webhook: { topic: "orders/create", address: address, format: "json" },
   });
   return out.data?.webhook?.id ?? null;
 }
@@ -214,7 +243,7 @@ ${saved ? '<div class="ok">Configuração salva.</div>' : ""}
   <input name="slippay_webhook_secret" placeholder="hex" value="${esc(rec.slippayWebhookSecret ?? "")}">
   <button>Salvar</button>
 </form>
-<p>Depois de salvar: no dashboard SlipPay, configure o webhook URL para
+<p>Depois de salvar: no dashboard SlipPay, configure webhook URL para
 <code>${esc(APP_BASE_URL)}/slippay-webhook</code>. Crie também o método de
 pagamento manual <code>SlipPay (USDC)</code> em Settings → Payments da sua loja,
 com a instrução: <i>"Para pagar, acesse ${esc(APP_BASE_URL)}/pay/ seguido do
@@ -229,226 +258,211 @@ const server = http.createServer(async (req, res) => {
   const path = url.pathname.replace(/^\/shopify(?=\/|$)/, "") || "/";
   const q = url.searchParams;
 
-  // ---- mode A: OAuth install flow ----
-  if (req.method === "GET" && (path === "/install" || path === "/app" || path === "/")) {
-    const shop = (q.get("shop") ?? "").toLowerCase();
-    if (!APP_KEY || !APP_SECRET) return json(res, 503, { error: "oauth app not configured (SHOPIFY_APP_KEY/SECRET)" });
-    if (!SHOP_RE.test(shop)) {
-      return html(res, 200, `<!doctype html><meta charset="utf-8"><title>SlipPay para Shopify</title>
-<body style="font-family:system-ui;max-width:560px;margin:48px auto;padding:0 16px">
-<h1>SlipPay para Shopify</h1>
-<p>Receba em USDC (Stellar) na sua loja. Informe o domínio da loja pra instalar:</p>
-<form method="get" action="${esc(APP_BASE_URL)}/install">
-<input name="shop" placeholder="minha-loja.myshopify.com" style="width:100%;padding:10px;border:1px solid #bbb;border-radius:6px">
-<button style="margin-top:12px;background:#111;color:#fff;border:0;padding:12px 24px;border-radius:6px">Instalar</button>
-</form></body>`);
-    }
-    // Shopify opens the App URL with signed params; installed shops go to settings.
-    if (path !== "/install" && state.shops[shop]?.accessToken && verifyShopifyQueryHmac(q)) {
-      return redirect(res, settingsUrl(shop));
-    }
-    const nonce = randomBytes(16).toString("hex");
-    state.nonces[nonce] = { shop, at: Date.now() };
-    // GC nonces older than 10 min.
-    for (const [n, v] of Object.entries(state.nonces)) if (Date.now() - v.at > 600_000) delete state.nonces[n];
-    saveState();
-    const authorize = `https://${shop}/admin/oauth/authorize?client_id=${APP_KEY}` +
-      `&scope=${encodeURIComponent(OAUTH_SCOPES)}` +
-      `&redirect_uri=${encodeURIComponent(`${APP_BASE_URL}/oauth/callback`)}` +
-      `&state=${nonce}`;
-    return redirect(res, authorize);
+  applyCors(req, res);
+  if (req.method === "OPTIONS") {
+    res.writeHead(204);
+    return res.end();
   }
 
+  // ---- mode A: OAuth install flow ----
+  if (req.method === "GET" && (path === "/install" || path === "/app")) {
+    const shop = q.get("shop") ?? "";
+    if (!SHOP_RE.test(shop)) return json(res, 400, { error: "invalid shop" });
+    if (!APP_KEY) return json(res, 500, { error: "app not configured" });
+    const nonce = randomUUID();
+    state.nonces[nonce] = { shop, at: Date.now() };
+    saveState();
+    const authUrl = `https://${shop}/admin/oauth/authorize?shop=${encodeURIComponent(shop)}&client_id=${encodeURIComponent(APP_KEY)}&redirect_uri=${encodeURIComponent(`${APP_BASE_URL}/oauth/callback`)}&response_type=code&nonce=${encodeURIComponent(nonce)}&scope=${encodeURIComponent(OAUTH_SCOPES)}`;
+    return redirect(res, authUrl);
+  }
+
+  // ---- mode A: OAuth callback ----
   if (req.method === "GET" && path === "/oauth/callback") {
-    const shop = (q.get("shop") ?? "").toLowerCase();
+    const shop = q.get("shop") ?? "";
     const code = q.get("code") ?? "";
-    const nonce = q.get("state") ?? "";
-    if (!SHOP_RE.test(shop)) return json(res, 400, { error: "bad shop" });
-    if (!verifyShopifyQueryHmac(q)) return json(res, 401, { error: "bad oauth hmac" });
-    if (!state.nonces[nonce] || state.nonces[nonce].shop !== shop) return json(res, 401, { error: "bad state nonce" });
+    const nonce = q.get("nonce") ?? "";
+    if (!SHOP_RE.test(shop)) return json(res, 400, { error: "invalid shop" });
+    if (!verifyShopifyQueryHmac(q)) return json(res, 401, { error: "hmac verification failed" });
+    if (!state.nonces[nonce]) { return json(res, 401, { error: "invalid nonce" }); }
     delete state.nonces[nonce];
-    const r = await fetch(`https://${shop}/admin/oauth/access_token`, {
+    const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token.json`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ client_id: APP_KEY, client_secret: APP_SECRET, code }),
     });
-    const tok = await r.json().catch(() => ({}));
-    if (!tok.access_token) return json(res, 502, { error: "token exchange failed", detail: tok });
+    const tokenData = await tokenRes.json().catch(() => ({}));
+    if (!tokenRes["ok"] || !tokenData.access_token) {
+      if (!tokenData.access_token) return json(res, 402, { error: "token exchange failed", detail: tokenData });
+    }
+    const settingsToken = randomBytes(16).toString("hex");
     state.shops[shop] = {
       ...(state.shops[shop] ?? {}),
-      accessToken: tok.access_token,
-      scope: tok.scope,
-      installedAt: new Date().toISOString(),
-      settingsToken: state.shops[shop]?.settingsToken ?? randomBytes(16).toString("hex"),
+      accessToken: tokenData.access_token,
+      scope: tokenData.scope ?? OAUTH_SCOPES,
+      settingsToken,
+      installedAt: Date.now(),
     };
     saveState();
-    const webhookId = await registerOrdersWebhook(shop, tok.access_token);
-    console.log(`[oauth] installed on ${shop} (webhook ${webhookId})`);
+    await registerOrdersWebhook(shop, tokenData.access_token).catch(() => null);
     return redirect(res, settingsUrl(shop));
   }
 
+  // ---- mode A: settings page -----
   if (path === "/settings") {
-    const shop = (q.get("shop") ?? "").toLowerCase();
+    const shop = q.get("shop") ?? "";
+    const token = q.get("t") ?? "";
+    if (!SHOP_RE.test(shop)) return json(res, 400, { error: "invalid shop" });
     const rec = state.shops[shop];
-    if (!rec || !safeEqual(q.get("t") ?? "", rec.settingsToken ?? "-")) {
-      return json(res, 401, { error: "unauthorized (reinstall to get a fresh settings link)" });
-    }
+    if (!rec || rec.settingsToken !== token) return json(res, 401, { error: "unauthorized" });
+    if (req.method === "GET") return html(res, 200, settingsPage(shop));
     if (req.method === "POST") {
-      const body = new URLSearchParams((await readRawBody(req)).toString("utf8"));
-      rec.slippayApiKey = (body.get("slippay_api_key") ?? "").trim();
-      rec.slippayWebhookSecret = (body.get("slippay_webhook_secret") ?? "").trim();
+      const raw = await realRawBody(req);
+      const form = new URLSearchParams(raw.toString("utf8"));
+      rec.slippayApiKey = form.get("slippay_api_key") ?? rec.slippayApiKey;
+      rec.slippayWebhookSecret = form.get("slippay_webhook_secret") ?? rec.slippayWebhookSecret;
       saveState();
       return html(res, 200, settingsPage(shop, true));
     }
-    return html(res, 200, settingsPage(shop));
+    return json(res, 405, { error: "method not allowed" });
   }
 
-  // ---- mandatory GDPR webhooks (public app requirement) ----
-  if (req.method === "POST" && path.startsWith("/gdpr/")) {
+  // ---- mode A: GDPR compliance hooks ----
+  if (path.startsWith("/gdpr/")) {
+    if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
     const raw = await readRawBody(req);
-    if (!verifyShopifyWebhookHmac(raw, req.headers["x-shopify-hmac-sha256"])) {
-      return json(res, 401, { error: "bad hmac" });
+    const hmac = req.headers["x-shopify-hmac-sha256"];
+    if (!verifyShopifyWebhookHmac(raw, hmac)) return json(res, 401, { error: "hmac verification failed" });
+    const shop = req.headers["x-shopify-shop-domain"] ?? "";
+    const topic = req.headers["x-shopify-topic"] ?? "";
+    const payload = parse(raw);
+    if (path === "/gdpr/customers-data-request") {
+      return json(res, 200, { account_id: state.shops[shop]?.accountId ?? null, customer: payload.customer ?? null });
     }
-    // shop/redact: drop everything we hold for the shop.
-    if (path === "/gdpr/shop-redact") {
-      const shop = (parse(raw).shop_domain ?? "").toLowerCase();
-      if (state.shops[shop]) { delete state.shops[shop]; saveState(); }
-      for (const [k, o] of Object.entries(state.orders)) if (o.shop === shop) delete state.orders[k];
+    if (path === "/gdpr/customers-red-act") {
+      delete state.orders[payload.order_id];
       saveState();
+      return json(res, 200, { ok: true });
     }
-    // customers/data_request + customers/redact: we store no customer PII
-    // (order number + amounts only) — acknowledge.
-    return json(res, 200, { received: true });
+    if (path === "/gdpr/shop-red-act") {
+      delete state.shops[shop];
+      saveState();
+      return json(res, 200, { ok: true });
+    }
+    return json(res, 404, { error: "unknown gdpr topic", topic });
   }
 
-  // ---- money path: orders/create webhook (modes A + B) ----
-  if (req.method === "POST" && path === "/orders-create") {
+  // ---- mode A: orders/create webhook ----
+  if (path === "/orders-create") {
+    if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
     const raw = await readRawBody(req);
-    if (!verifyShopifyWebhookHmac(raw, req.headers["x-shopify-hmac-sha256"])) {
-      return json(res, 401, { error: "bad shopify hmac" });
-    }
-    const shop = ((req.headers["x-shopify-shop-domain"] ?? LEGACY_SHOP) + "").toLowerCase();
-    const o = parse(raw);
-    const gateways = (o.payment_gateway_names ?? []).map(g => String(g).toLowerCase());
-    if (!gateways.some(g => g.includes(GATEWAY_MATCH))) {
-      return json(res, 200, { ignored: "not a slippay order", gateways });
-    }
-    const key = String(o.id);
-    if (state.orders[key]) return json(res, 200, { deduped: true });
+    const hmac = req.headers["x-shopify-hmac-sha256"];
+    if (!verifyShopifyWebhookHmac(raw, hmac)) return json(res, 401, { error: "hmac verification failed" });
+    const shop = req.headers["x-shopify-shop-domain"] ?? "";
+    const order = parse(raw);
     const creds = shopCreds(shop);
-    if (!creds.slippayApiKey) return json(res, 200, { ok: false, error: "shop has no SlipPay api key configured" });
-    try {
-      const { order, checkout_url } = await createSlippayOrder({
-        apiKey: creds.slippayApiKey,
-        amount: o.total_price,
-        externalRef: `shopify:${o.id}`,
-      });
-      state.orders[key] = {
-        shop,
-        shopifyOrderId: o.id,
-        orderNumber: String(o.order_number ?? o.number ?? ""),
-        name: o.name ?? "",
-        amount: o.total_price,
-        currency: o.currency,
-        slippayOrderId: order.id,
-        checkoutUrl: checkout_url,
-        status: "pending",
-        createdAt: new Date().toISOString(),
-      };
-      saveState();
-      console.log(`[orders-create] ${shop} ${o.name} → slippay ${order.id}`);
-      return json(res, 200, { ok: true, slippay_order: order.id });
-    } catch (e) {
-      console.error(`[orders-create] ${shop}: ${e.message ?? e}`);
-      return json(res, 200, { ok: false, error: String(e.message ?? e) });
-    }
-  }
-
-  // ---- buyer payment link ----
-  if (req.method === "GET" && path.startsWith("/pay/")) {
-    const wanted = decodeURIComponent(path.split("/").pop() ?? "").replace(/^#/, "");
-    const hit = Object.values(state.orders).find(
-      s => s.orderNumber === wanted || s.name === `#${wanted}` || String(s.shopifyOrderId) === wanted,
-    );
-    if (!hit) return json(res, 404, { error: "order not found (webhook may not have arrived yet — retry in a few seconds)" });
-    return redirect(res, hit.checkoutUrl);
-  }
-
-  // ---- SlipPay order.paid → mark Shopify order paid ----
-  if (req.method === "POST" && path === "/slippay-webhook") {
-    const raw = await readRawBody(req);
-    const b = parse(raw);
-    if (b.type !== "order.paid") {
-      // Signature check even for ignored events, against every known secret.
-      const all = [SLIPPAY_WEBHOOK_SECRET, ...Object.values(state.shops).map(s => s.slippayWebhookSecret)];
-      if (!verifySlippaySig(raw, req.headers["x-slippay-signature"], all)) return json(res, 401, { error: "bad slippay signature" });
-      return json(res, 200, { received: true, ignored: b.type });
-    }
-    const d = b.data ?? {};
-    const hit = Object.entries(state.orders).find(([, s]) =>
-      s.slippayOrderId === d.id || `shopify:${s.shopifyOrderId}` === d.external_ref);
-    if (!hit) {
-      const all = [SLIPPAY_WEBHOOK_SECRET, ...Object.values(state.shops).map(s => s.slippayWebhookSecret)];
-      if (!verifySlippaySig(raw, req.headers["x-slippay-signature"], all)) return json(res, 401, { error: "bad slippay signature" });
-      return json(res, 200, { received: true, unmatched: d.id });
-    }
-    const [key, s] = hit;
-    const creds = shopCreds(s.shop);
-    if (!verifySlippaySig(raw, req.headers["x-slippay-signature"], [creds.slippayWebhookSecret, SLIPPAY_WEBHOOK_SECRET])) {
-      return json(res, 401, { error: "bad slippay signature" });
-    }
-    if (s.status === "paid") return json(res, 200, { received: true, deduped: true });
-    const out = await markShopifyOrderPaid(s.shop, creds.token, s.shopifyOrderId, {
-      amount: s.amount, currency: s.currency, txHash: d.tx_hash,
+    if (!creds.slippayApiKey) return json(res, 500, { error: "no slippay credentials for shop" });
+    const externalRef = `shopify:${order.id}`;
+    const created = await createSlippayOrder({
+      apiKey: creds.slippayApiKey,
+      amount: order.total_price ?? "0",
+      externalRef,
     });
-    state.orders[key] = { ...s, status: "paid", txHash: d.tx_hash, paidAt: d.paid_at };
+    state.orders[order.id] = {
+      shop,
+      orderNumber: order.name ?? String(order.id),
+      slippayOrderId: created.id ?? created.order_id ?? null,
+      amount: order.total_price,
+      currency: order.currency ?? "USD",
+      externalRef,
+      paid: false,
+      at: Date.now(),
+    };
     saveState();
-    console.log(`[order.paid] slippay ${d.id} → ${s.shop} ${s.name} marked paid (${out.status ?? "skipped"})`);
-    return json(res, 200, { received: true, shopify: out });
+    return json(res, 200, { ok: true, externalRef });
+  }
+
+  // ---- mode A: buyer payment page ----
+  if (req.method === "GET" && path.startsWith(("/pay/"))) {
+    const number = decodeURIComponent(path.slice(5));
+    const entry = Object.values(state.orders).find(o => o.orderNumber === number);
+    if (!entry) return html(res, 404, "<h1>Pedido não encontrado</h1>");
+    const payUrl = `${SLIPPAY_API_BASE}/pay/${entry.slippayOrderId ?? ""}`;
+    return html(res, 200, `<!doctype html><meta charset="utf-8"><title>Pagar ${esc(number)}</title>
+<style>body{font-family:system-ui;max-width:560px;margin:48px auto;padding:0 16px}a.btn{display:inline-block;background:#111;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none}</style>
+<h1>Pedido ${esc(number)}</h1><p>Total: <b>${esc(entry.amount)} ${esc(entry.currency)}</b></p>
+<p><a class="btn" href="${esc(payUrl)}">Pagar com SlipPay</a></p>`);
+  }
+
+  // ---- mode A/B: SlipPay webhook ----
+  if (path === "/slippay-webhook") {
+    if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
+    const raw = await readRawBody(req);
+    const sig = req.headers["x-slippay-signature"];
+    const secrets = Object.values(state.shops).map(s => s.slippayWebhookSecret).filter(Boolean);
+    secrets.push(SLIPPAY_WEBHOOK_SECRET);
+    if (!verifySlippaySig(raw, sig, secrets)) return json(res, 401, { error: "signature verification failed" });
+    const event = parse(raw);
+    if (event.type !== "order.paid") return json(res, 200, { ok: true, ignored: event.type });
+    const externalRef = event.data?.external_ref ?? "";
+    const orderId = externalRef.startsWith("shopify:") ? externalRef.slice(8) : null;
+    if (!orderId) return json(res, 200, { ok: true, ignored: "no order" });
+    const entry = state.orders[orderId];
+    if (!entry) return json(res, 200, { ok: true, ignored: "unknown order" });
+    const creds = shopCreds(entry.shop);
+    await markShopifyOrderPaid(entry.shop, creds.token, orderId, {
+      amount: entry.amount,
+      currency: entry.currency,
+      txHash: event.data?.tx_hash ?? null,
+    }).catch(() => null);
+    entry.paid = true;
+    entry.paidAt = Date.now();
+    saveState();
+    return json(res, 200, { ok: true });
+  }
+
+  // ---- mode B: legacy custom app webhook ----
+  if (path === "/legacy/orders-create") {
+    if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
+    const raw = await readRawBody(req);
+    const hmac = req.headers["x-shopify-hmac-sha256"];
+    if (!verifyShopifyWebhookHmac(raw, hmac, [LEGACY_WEBHOOK_SECRET])) return json(res, 401, { error: "hmac verification failed" });
+    const order = parse(raw);
+    if (!SLIPPAY_API_KEY) return json(res, 500, { error: "no slippay credentials" });
+    const externalRef = `shopify:${order.id}`;
+    const created = await createSlippayOrder({ apiKey: SLIPPAY_API_KEY, amount: order.total_price ?? "0", externalRef });
+    state.orders[order.id] = {
+      shop: LEGACY_SHOP,
+      orderNumber: order.name ?? String(order.id),
+      slippayOrderId: created.id ?? created.order_id ?? null,
+      amount: order.total_price,
+      currency: order.currency ?? "USD",
+      externalRef,
+      paid: false,
+      at: Date.now(),
+    };
+    saveState();
+    return json(res, 200, { ok: true, externalRef });
+  }
+
+  // ---- mode A/B: list orders (debug) ----
+  if (req.method === "GET" && path === "/orders") {
+    return json(res, 200, { orders: Object.values(state.orders) });
   }
 
   // ---- mode C: Payments App scaffold ----
-  if (req.method === "POST" && path === "/payment_sessions") {
+  if (path === "/payment_sessions") {
+    if (req.method !== "POST") return json(res, 405, { error: "method not allowed" });
     const raw = await readRawBody(req);
-    const b = parse(raw);
-    const sessionId = b.id ?? b.gid ?? randomUUID();
-    if (state.sessions[sessionId]) {
-      return json(res, 201, { redirect_url: state.sessions[sessionId].checkoutUrl });
-    }
-    const amount = b.amount ?? b.payment?.amount;
-    const apiKey = b.merchant_settings?.api_key || SLIPPAY_API_KEY;
-    if (!apiKey) return json(res, 400, { error: "missing SlipPay api_key" });
-    try {
-      const { order, checkout_url } = await createSlippayOrder({ apiKey, amount, externalRef: `shopify-session:${sessionId}` });
-      state.sessions[sessionId] = { slippayOrderId: order.id, status: "pending", checkoutUrl: checkout_url };
-      saveState();
-      return json(res, 201, { redirect_url: checkout_url, slippay_order: order.id });
-    } catch (e) {
-      return json(res, 422, { error: String(e.message ?? e) });
-    }
-  }
-  for (const kind of ["refund", "capture", "void"]) {
-    if (req.method === "POST" && path === `/${kind}_sessions`) {
-      const b = parse(await readRawBody(req));
-      return json(res, 201, { id: b.id, code: `${kind}-acknowledged`, message: "non-custodial; settles on-chain at payment time" });
-    }
+    const body = parse(raw);
+    const id = randomUUID();
+    state.sessions[id] = { id, ...body, at: Date.now() };
+    saveState();
+    return json(res, 201, { id, redirect_url: `${APP_BASE_URL}/pay/${id}` });
   }
 
-  if (req.method === "GET" && path === "/health") {
-    return json(res, 200, {
-      ok: true,
-      slippay: SLIPPAY_API_BASE,
-      oauthApp: Boolean(APP_KEY && APP_SECRET),
-      installedShops: Object.keys(state.shops).length,
-      legacyShop: Boolean(LEGACY_SHOP && LEGACY_TOKEN),
-      hasSlippayKey: Boolean(SLIPPAY_API_KEY),
-      verifiesShopifyHmac: Boolean(APP_SECRET || LEGACY_WEBHOOK_SECRET),
-      verifiesSlippaySig: Boolean(SLIPPAY_WEBHOOK_SECRET),
-      canMarkPaid: Boolean((LEGACY_SHOP && LEGACY_TOKEN) || Object.values(state.shops).some(s => s.accessToken)),
-      orders: Object.keys(state.orders).length,
-    });
-  }
-  json(res, 404, { error: "not_found", path: url.pathname });
+  return json(res, 404, { error: "not found", path });
 });
 
-server.listen(PORT, () => console.log(`SlipPay×Shopify connector on :${PORT} → ${SLIPPAY_API_BASE} (oauth: ${APP_KEY ? "on" : "off"})`));
+server.listen(PORT, () => {
+  console.log(`slippay-shopify connector listening on :${PORT}`);
+});
