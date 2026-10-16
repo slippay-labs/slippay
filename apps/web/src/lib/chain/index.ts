@@ -15,8 +15,16 @@
 
 import type { ChainAdapter, ChainId } from "./types.ts";
 import { stellarAdapter } from "./stellar/adapter.ts";
+import {
+  getChainEnvironmentDescriptor,
+  validateChainEnvironment,
+  readChainEnvironmentConfig,
+  type EnvironmentDescriptor,
+  type ChainConfigInput,
+} from "./env.ts";
 
 export * from "./types.ts";
+export * from "./env.ts";
 
 export function activeChainId(): ChainId {
   return ((import.meta.env.VITE_CHAIN ?? "stellar").toLowerCase()) as ChainId;
@@ -25,6 +33,9 @@ export function activeChainId(): ChainId {
 let cached: ChainAdapter | null = null;
 
 export async function getChainAdapter(): Promise<ChainAdapter> {
+  // Validate chain environment configuration consistency first
+  getChainEnvironmentDescriptor();
+
   if (cached) return cached;
   const id = activeChainId();
   switch (id) {
@@ -40,3 +51,4 @@ export async function getChainAdapter(): Promise<ChainAdapter> {
       throw new Error(`unknown VITE_CHAIN: ${id}`);
   }
 }
+

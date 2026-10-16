@@ -60,6 +60,20 @@ describe("matchPaymentToOrder", () => {
     expect(matchPaymentToOrder(validEvent, order, "TESTNET").outcome).toBe("ignore");
   });
 
+  it("throws when STELLAR_USDC_ISSUER_OVERRIDE is the testnet issuer on PUBLIC network", () => {
+    process.env.STELLAR_USDC_ISSUER_OVERRIDE = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+    expect(() => matchPaymentToOrder(validEvent, order, "PUBLIC")).toThrowError(
+      /STELLAR_USDC_ISSUER_OVERRIDE .* is the testnet issuer, but network is PUBLIC/
+    );
+  });
+
+  it("throws when STELLAR_USDC_ISSUER_OVERRIDE is the mainnet issuer on TESTNET network", () => {
+    process.env.STELLAR_USDC_ISSUER_OVERRIDE = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
+    expect(() => matchPaymentToOrder(validEvent, order, "TESTNET")).toThrowError(
+      /STELLAR_USDC_ISSUER_OVERRIDE .* is the mainnet issuer, but network is TESTNET/
+    );
+  });
+
   it("BigInt path: 1 stroop short is underpaid (FP would round to paid)", () => {
     const o = { ...order, usdc_amount: "1.0000001", platform_fee_bp: 25 };
     // expected = 10000001 * 9975 / 10000 = 9975000 (truncated). Send 1 stroop less.

@@ -1,4 +1,4 @@
-import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
+import { NETWORK, USDC_ASSET_CODE, validateIssuerOverride } from "@slippay/shared";
 
 export interface StellarPaymentEvent {
   memo_type: string;
@@ -33,8 +33,10 @@ export function matchPaymentToOrder(
   if (ev.memo_type !== "hash") return { outcome: "ignore", reason: "memo_type" };
   if (ev.asset_code !== USDC_ASSET_CODE) return { outcome: "ignore", reason: "asset_code" };
 
-  const expectedIssuer = process.env.STELLAR_USDC_ISSUER_OVERRIDE
-    ?? (network === "PUBLIC" ? NETWORK.mainnet.usdc_issuer : NETWORK.testnet.usdc_issuer);
+  const expectedIssuer = validateIssuerOverride(
+    network,
+    process.env.STELLAR_USDC_ISSUER_OVERRIDE,
+  );
   if (ev.asset_issuer !== expectedIssuer) return { outcome: "ignore", reason: "asset_issuer" };
 
   if (ev.to !== order.merchant_stellar_address) return { outcome: "ignore", reason: "destination" };
