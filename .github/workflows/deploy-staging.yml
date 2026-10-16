@@ -18,7 +18,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 1.200.0
 
       - name: Link project
         env:
