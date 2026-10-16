@@ -15,10 +15,14 @@ import { bindSolanaWallet } from "../../lib/chain/solana/wallet.ts";
 function Binder() {
   const w = useWallet();
   const addr = w.smartWalletPubkey?.toBase58() ?? null;
+  const isConnected = w.isConnected;
+  const smartWalletPubkey = w.smartWalletPubkey;
+  const signAndSendTransaction = w.signAndSendTransaction;
+
   useEffect(() => {
-    if (w.isConnected && w.smartWalletPubkey) {
+    if (isConnected && smartWalletPubkey) {
       bindSolanaWallet({
-        address: w.smartWalletPubkey.toBase58(),
+        address: smartWalletPubkey.toBase58(),
         execute: async (ixs) => {
           // LazorKit's hook executes ONE CPI per call. Single-instruction flows
           // (the recurring SPL approve) work today. Multi-instruction atomic
@@ -31,14 +35,14 @@ function Binder() {
               "instruction flows (recurring authorize) work.",
             );
           }
-          return w.signAndSendTransaction(ixs[0]!);
+          return signAndSendTransaction(ixs[0]!);
         },
       });
     } else {
       bindSolanaWallet(null);
     }
     return () => bindSolanaWallet(null);
-  }, [w.isConnected, addr]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [isConnected, smartWalletPubkey, signAndSendTransaction]);
 
   // Mobile-friendly: surface the FULL smart-wallet address on screen (selectable)
   // so it can be copied from a phone — no devtools console needed. DEV aid.

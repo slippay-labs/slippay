@@ -324,7 +324,7 @@ function SellPanel({ address, signTransaction }: {
       })
       .finally(() => { if (on) setQuoteBusy(false); });
     return () => { on = false; };
-  }, [usdc]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [usdc, usdcValid, usdcNum]);
 
   // Poll order status
   useEffect(() => {

@@ -44,7 +44,7 @@ export default function Yield() {
   function handleConfirm() { setModalSummary(null); setModalIntent(undefined); resolveConfirmRef.current?.(true); resolveConfirmRef.current = null; }
   function handleCancel() { setModalSummary(null); setModalIntent(undefined); resolveConfirmRef.current?.(false); resolveConfirmRef.current = null; }
 
-  async function loadPosition() {
+  const loadPosition = useCallback(async () => {
     if (!address) return;
     setLoadingPosition(true);
     try {
@@ -56,12 +56,11 @@ export default function Yield() {
     } finally {
       setLoadingPosition(false);
     }
-  }
+  }, [address]);
 
   useEffect(() => {
     if (address) loadPosition();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [address]);
+  }, [address, loadPosition]);
 
   async function doAplicar() {
     if (!address || !signHash) return;

@@ -470,7 +470,7 @@ function SellPanel({ address, email: initialEmail, sendTransaction }: {
       })
       .finally(() => { if (on) setQuoteBusy(false); });
     return () => { on = false; };
-  }, [usdc]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [usdc, usdcValid, usdcNum]);
 
   // Poll order status after on-chain send (self-sustaining interval).
   // The USDC already left the wallet on-chain; if 4P hasn't confirmed the Pix
