@@ -12,12 +12,41 @@ export type Account = {
 
 const KEY = "slippay.account.v1";
 
+function getStorage(): Storage | null {
+  try {
+    if (typeof localStorage !== "undefined") return localStorage;
+  } catch {
+    /* ignore restricted environments */
+  }
+  return null;
+}
+
 export function loadAccount(): Account | null {
-  try { return JSON.parse(localStorage.getItem(KEY) || "null"); } catch { return null; }
+  try {
+    const storage = getStorage();
+    if (!storage) return null;
+    return JSON.parse(storage.getItem(KEY) || "null");
+  } catch {
+    return null;
+  }
 }
+
 export function saveAccount(a: Account): void {
-  try { localStorage.setItem(KEY, JSON.stringify(a)); } catch { /* private mode */ }
+  try {
+    const storage = getStorage();
+    if (!storage) return;
+    storage.setItem(KEY, JSON.stringify(a));
+  } catch {
+    /* private mode / quota exceeded */
+  }
 }
+
 export function clearAccount(): void {
-  try { localStorage.removeItem(KEY); } catch { /* ignore */ }
+  try {
+    const storage = getStorage();
+    if (!storage) return;
+    storage.removeItem(KEY);
+  } catch {
+    /* ignore */
+  }
 }
