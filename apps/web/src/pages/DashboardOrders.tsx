@@ -22,7 +22,7 @@ const STATUS_DOT: Record<string, string> = {
   pending: "bg-amber-500",
   paid: "bg-[#FDDA24]",
   underpaid: "bg-orange-500",
-  expired: "bg-[#0a0a0a]/25",
+  expired: "bg-[0a0a0a]/25",
   cancelled: "bg-[#0a0a0a]/25",
   dead: "bg-red-500",
 };
@@ -90,7 +90,7 @@ export default function DashboardOrders() {
               <span className="font-mono text-[11px] text-[#0a0a0a]/45 tabular-nums">{new Date(o.created_at).toLocaleDateString()}</span>
               <span className="font-mono text-[11px] text-right md:text-left">
                 {o.tx_hash
-                  ? <a href={`${EXPLORER_BASE}/${o.tx_hash}`} target="_blank" rel="noreferrer" className="text-[#6f6862] hover:underline underline-offset-4">{o.tx_hash.slice(0, 8)} ↗</a>
+                  ? <a href={`${EXPLORER_BASE}/${o.tx_hash}`} target="_blank" rel="noreferrer" className="text-[#6f6862] hover:underline underline-offset-4">{o.tx_hash.slice(0, 8)} ↖</a>
                   : <span className="text-[#0a0a0a]/25">—</span>}
               </span>
             </div>
