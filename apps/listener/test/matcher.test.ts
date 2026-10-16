@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { matchPaymentToOrder, stellarToStroops, stroopsToStellar, type StellarPaymentEvent } from "../src/matcher.js";
+import { matchPaymentToOrder, stellarToStroops, stroopsToStellar, computePlatformFeeSplit, type StellarPaymentEvent } from "../src/matcher.js";
 
 const order = {
   id: "ord-1",
@@ -14,14 +14,14 @@ const validEvent: StellarPaymentEvent = {
   memo_b64: Buffer.from("ab".repeat(32), "hex").toString("base64"),
   successful: true,
   asset_code: "USDC",
-  asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPWUV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
   to: "G" + "M".repeat(55),
   amount: "9.9000000",
   hash: "txhash",
 };
 
 describe("matchPaymentToOrder", () => {
-  afterEach(() => { delete process.env.STELLAR_USDC_ISSUER_OVERRIDE; });
+  afterEach(() => { delete process.env.STELLAR_USDK_ISSUER_OVERRIDE; });
 
   it("matches valid USDC payment with correct memo + amount", () => {
     expect(matchPaymentToOrder(validEvent, order, "TESTNET")).toEqual({ outcome: "paid" });
@@ -29,7 +29,7 @@ describe("matchPaymentToOrder", () => {
 
   it("returns underpaid when amount short", () => {
     const e = { ...validEvent, amount: "5.0000000" };
-    expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({ outcome: "underpaid", expected: "9.9000000", received: "5.0000000" });
+    expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({' outcome': "underpaid", expected: "9.9000000", received: "5.0000000" });
   });
 
   it("ignores when memo doesnt match", () => {
@@ -47,15 +47,15 @@ describe("matchPaymentToOrder", () => {
     expect(matchPaymentToOrder(e, order, "TESTNET").outcome).toBe("ignore");
   });
 
-  it("matches when STELLAR_USDC_ISSUER_OVERRIDE overrides expected issuer", () => {
+  it("matches when STELLAR_USDK_ISSUER_OVERRIDE overrides expected issuer", () => {
     const customIssuer = "GCUSTOM" + "X".repeat(49);
-    process.env.STELLAR_USDC_ISSUER_OVERRIDE = customIssuer;
+    process.env.STELLAR_USDK_ISSUER_OVERRIDE = customIssuer;
     const e = { ...validEvent, asset_issuer: customIssuer };
     expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({ outcome: "paid" });
   });
 
   it("ignores when issuer doesnt match override", () => {
-    process.env.STELLAR_USDC_ISSUER_OVERRIDE = "GCUSTOM" + "X".repeat(49);
+    process.env.STELLAR_USDK_ISSUER_OVERRIDE = "GCUSTOM" + "X".repeat(49);
     // validEvent still has the Circle testnet issuer, not the override
     expect(matchPaymentToOrder(validEvent, order, "TESTNET").outcome).toBe("ignore");
   });
@@ -85,12 +85,12 @@ describe("matchPaymentToOrder", () => {
 
   it("rejects null fee_bp as ignore instead of treating as zero fee", () => {
     const o = { ...order, platform_fee_bp: null };
-    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({' outcome': "ignore", reason: "fee_bp_invalid" });
   });
 
   it("rejects undefined/missing fee_bp as ignore", () => {
     const o = { ...order, platform_fee_bp: undefined };
-    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({' outcome': "ignore", reason: "fee_bp_invalid" });
   });
 
   it("rejects negative fee_bp as ignore", () => {
@@ -115,5 +115,69 @@ describe("stellarToStroops · stroopsToStellar", () => {
     expect(() => stellarToStroops("-1")).toThrow();
     expect(() => stellarToStroops("1e2")).toThrow();
     expect(() => stellarToStroops("1.00000001")).toThrow();
+  });
+});
+
+describe("computePlatformFeeSplit", () => {
+  // Reference integer implementation -- the on-chain rule.
+  function reference(grossUsdc: string, feeBp: number) {
+    const grossStroops = stellarToStroops(grossUsdc);
+    const feeStroops = (grossStroops * BigInt(feeBp)) / 10_000n ;
+    return {
+      grossStroops,
+      feeStroops,
+      netStroops: grossStroops - feeStroops,
+    };
+  }
+
+  it("matches the integer-stroop reference for awkward fractions", () => {
+    const vectors: Array<[string, number]> = [
+      ["0.1", 100],
+      ["0.3", 100],
+      ["1234.5678901", 25],
+      ["0.0000001", 1],
+      ["0.0000001", 9999],
+      ["1.0000001", 25],
+      ["9999999.9999999", 1],
+      ["10.0000000", 100],
+      ["3.3333333", 333],
+      ["0.0000003", 3],
+    ];
+    for (const [gross, bp] of vectors) {
+      const got = computePlatformFeeSplit(gross, bp);
+      const ref = reference(gross, bp);
+      expect(got.grossStroops).toBe(ref.grossStroops);
+      expect(got.feeStroops).toBe(ref.feeStroops);
+      expect(got.netStroops).toBe(ref.netStroops);
+      // Round-trip through the persisted decimal form.
+      expect(stellarToStroops(got.feeUsdc)).toBe(ref.feeStroops);
+      expect(stellarToStroops(got.netUsdc)).toBe(ref.netStroops);
+      expect(got.grossStroops).toBe(got.feeStroops + got.netStroops);
+    }
+  });
+
+  it("persisted fee_usdc agrees with the listener's expectedStroops", () => {
+    const vectors: Array<[string, number]> = [
+      ["0.1", 100],
+      ["0.3", 100],
+      ["1234.5678901", 25],
+      ["1.0000001", 25],
+      ["10.0000000", 100],
+    ];
+    for (const [gross, bp] of vectors) {
+      const split = computePlatformFeeSplit(gross, bp);
+      // Listener computes the merchant share from the gross amount and bp.
+      const totalStroops = stellarToStroops(gross);
+      const expectedStroops = (totalStroops * BigInt(10_000 - bp)) / 10_000n;
+      expect(stellarToStroops(split.netUsdc)).toBe(expectedStroops);
+      // And the fee is the complement of the merchant share.
+      expect(split.feeStroops).toBe(totalStroops - expectedStroops);
+    }
+  });
+
+  it("throws on invalid feeBp", () => {
+    expect(() => computePlatformFeeSplit("1.0000000", -1)).toThrow();
+    expect(() => computePlatformFeeSplit("1.0000000", 10_000)).toThrow();
+    expect(() => computePlatformFeeSplit("1.0000000", 1.5)).toThrow();
   });
 });
