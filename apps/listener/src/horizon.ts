@@ -3,7 +3,29 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { matchPaymentToOrder, type StellarPaymentEvent } from "./matcher.js";
 import { reconcileMatch } from "./reconciler.js";
 import { log } from "./log.js";
-import { NETWORK } from "@slippay/shared";
+import { NETWORK, DEFAULT_PLATFORM_FEE_BP } from "@slippay/shared";
+
+/**
+ * Resolves the fee rate in basis points for an order.
+ * Replaces dangerous 0 fallback with canonical DEFAULT_PLATFORM_FEE_BP and logs an alert
+ * if the fee is null/undefined upstream. (Issue #231)
+ */
+export function resolveOrderFeeBp(
+  order: { id?: string; merchant_id?: string; platform_fee_bp?: number | null },
+  merchant?: { platform_fee_bp?: number | null }
+): number {
+  const rawFeeBp = order.platform_fee_bp ?? merchant?.platform_fee_bp;
+  if (rawFeeBp == null || isNaN(Number(rawFeeBp))) {
+    log("alert", "order_missing_fee_basis_point", {
+      order_id: order.id ?? null,
+      merchant_id: order.merchant_id ?? null,
+      fallback_fee_bp: DEFAULT_PLATFORM_FEE_BP,
+      message: "Order or merchant is missing platform_fee_bp; falling back to DEFAULT_PLATFORM_FEE_BP rather than zero to prevent underpaid rejections",
+    });
+    return DEFAULT_PLATFORM_FEE_BP;
+  }
+  return Number(rawFeeBp);
+}
 
 const HORIZON: Record<"TESTNET" | "PUBLIC", string> = {
   TESTNET: NETWORK.testnet.horizon,
@@ -78,7 +100,7 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
         // needs a string (it .split()s) — coerce or it throws -> "amount_parse".
         usdc_amount: String(order.usdc_amount),
         merchant_stellar_address: merchant?.stellar_address as string,
-        platform_fee_bp: ((order as any).platform_fee_bp ?? merchant?.platform_fee_bp ?? 0) as number,
+        platform_fee_bp: resolveOrderFeeBp(order as any, merchant),
       };
       const outcome = matchPaymentToOrder(ev, orderForMatch, network);
       await reconcileMatch(db, orderForMatch, outcome, ev.hash);
