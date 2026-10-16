@@ -45,6 +45,17 @@ describe("isSafeWebhookUrl", () => {
     expect(isSafeWebhookUrl("https://user:pass@example.com/wh", false)).toBe(false);
   });
 
+  it("rejects URLs with embedded credentials even when allowLocal is true (Issue #249)", () => {
+    expect(isSafeWebhookUrl("http://user:pass@localhost:8080/wh", true)).toBe(false);
+    expect(isSafeWebhookUrl("https://admin:secret@127.0.0.1:3000/wh", true)).toBe(false);
+  });
+
+  it("rejects non-http/https protocols even when allowLocal is true (Issue #249)", () => {
+    expect(isSafeWebhookUrl("ftp://localhost:8080/wh", true)).toBe(false);
+    expect(isSafeWebhookUrl("file:///etc/passwd", true)).toBe(false);
+    expect(isSafeWebhookUrl("javascript:alert(1)", true)).toBe(false);
+  });
+
   it("rejects non-standard ports when allowLocal is false", () => {
     expect(isSafeWebhookUrl("https://example.com:8080/wh", false)).toBe(false);
     expect(isSafeWebhookUrl("https://example.com:443/wh", false)).toBe(true);
@@ -135,6 +146,16 @@ describe("validateWebhookUrl · DNS rebinding defense", () => {
   it("rejects literal IP in URL that's in blocklist (no DNS path)", async () => {
     const r = await validateWebhookUrl("https://169.254.169.254/latest/meta-data/", false);
     expect(r.safe).toBe(false);
+  });
+
+  it("rejects embedded credentials and invalid schemes via validateWebhookUrl when allowLocal is true (Issue #249)", async () => {
+    const credRes = await validateWebhookUrl("http://user:secret@localhost:8080/hook", true);
+    expect(credRes.safe).toBe(false);
+    expect(credRes.reason).toBe("preflight_rejected");
+
+    const ftpRes = await validateWebhookUrl("ftp://localhost:8080/hook", true);
+    expect(ftpRes.safe).toBe(false);
+    expect(ftpRes.reason).toBe("preflight_rejected");
   });
 });
 

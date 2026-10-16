@@ -10,6 +10,7 @@ const ENV_KEYS = [
   "ALLOW_LOCAL_WEBHOOKS",
   "MERCHANT_POLL_MS",
   "STELLAR_USDC_ISSUER_OVERRIDE",
+  "NODE_ENV",
 ] as const;
 
 const ORIGINAL: Record<string, string | undefined> = {};
@@ -97,3 +98,29 @@ describe("config · webhook escape hatch and poll interval", () => {
     expect((await loadConfig({ ...REQUIRED, MERCHANT_POLL_MS: "5000" })).merchantPollMs).toBe(5_000);
   });
 });
+
+describe("config · webhook escape hatch production interlock (Issue #249)", () => {
+  it("rejects ALLOW_LOCAL_WEBHOOKS=1 in production environment (NODE_ENV=production)", async () => {
+    await expect(
+      loadConfig({ ...REQUIRED, NODE_ENV: "production", ALLOW_LOCAL_WEBHOOKS: "1" })
+    ).rejects.toThrow("ALLOW_LOCAL_WEBHOOKS cannot be enabled in production environments");
+  });
+
+  it("rejects ALLOW_LOCAL_WEBHOOKS=1 on PUBLIC network even if NODE_ENV is development", async () => {
+    await expect(
+      loadConfig({ ...REQUIRED, NODE_ENV: "development", STELLAR_NETWORK: "PUBLIC", ALLOW_LOCAL_WEBHOOKS: "1" })
+    ).rejects.toThrow("ALLOW_LOCAL_WEBHOOKS cannot be enabled in production environments (STELLAR_NETWORK=PUBLIC)");
+  });
+
+  it("rejects ALLOW_LOCAL_WEBHOOKS=1 on non-TESTNET network (fail-closed)", async () => {
+    await expect(
+      loadConfig({ ...REQUIRED, STELLAR_NETWORK: "devnet", ALLOW_LOCAL_WEBHOOKS: "1" })
+    ).rejects.toThrow("ALLOW_LOCAL_WEBHOOKS cannot be enabled in production environments (STELLAR_NETWORK=DEVNET)");
+  });
+
+  it("permits ALLOW_LOCAL_WEBHOOKS=1 in non-production TESTNET environments", async () => {
+    const c = await loadConfig({ ...REQUIRED, NODE_ENV: "development", STELLAR_NETWORK: "TESTNET", ALLOW_LOCAL_WEBHOOKS: "1" });
+    expect(c.allowLocalWebhooks).toBe(true);
+  });
+});
+
