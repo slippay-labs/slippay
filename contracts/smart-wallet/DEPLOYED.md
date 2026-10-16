@@ -7,7 +7,7 @@
 **Stellar.expert**: https://stellar.expert/explorer/testnet/contract/CBG62CSWG6FYX6CTH5246V6DLQTIR3GKJEIZEQN3AH4W46E7ES6UNASO
 **Deployer / v0.1 admin**: `GDYKSPEDSST4YSSMNW6LMK27XN6YMM4SEN4RAKCCFT3N74GWPGXAJPQT`
 **Soroban SDK**: 26 · **Stellar protocol**: 26 · **Build target**: `wasm32v1-none`
-**Unit tests**: 13/13 passing (`cargo test --release`)
+**Unit tests**: 62/62 passing (`cargo test` / `cargo test --release`) covering full authorization boundaries, limit triples (per_tx_cap, window_cap, max_per_charge), expiration and replay defense
 
 ### Live e2e proof on testnet (M6)
 
@@ -82,7 +82,7 @@ closing this gap.
 - Unknown-merchant transfers → no policy match (correct fall-through)
 
 These properties are enforced by Soroban host execution semantics, not by
-Slippay backend code. 13 unit tests cover them deterministically.
+Slippay backend code. 62 unit tests cover them deterministically, including full authorization boundaries and limit triples.
 
 ## Composition with `slippay-subscription` v0.2
 

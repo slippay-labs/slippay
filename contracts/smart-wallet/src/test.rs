@@ -1424,7 +1424,6 @@ fn pull_policy_authorizes_propagates_policy_violation_err() {
 #[test]
 fn webauthn_assertion_verifies_and_binds_to_payload() {
     use p256::ecdsa::{signature::Signer, Signature, SigningKey};
-    use p256::elliptic_curve::sec1::ToEncodedPoint;
     use sha2::{Digest, Sha256};
 
     let env = Env::default();
@@ -1737,3 +1736,225 @@ fn conformance_exhaustive_small_domain_grid() {
     }
     assert_eq!(covered, 16 * (per_tx as usize + 1) * dts.len(), "dense grid must cover every cell");
 }
+
+// ──────────────────────────────────────────────────────────────────────
+// Issue #311: Authorization Boundaries, Negative Paths & Limit Triples
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn unauthorized_caller_rejected_on_all_state_changing_entry_points() {
+    let env = Env::default();
+    let admin = Address::generate(&env);
+    let (_id, wallet) = deploy_with_admin(&env, &admin);
+    let merchant = Address::generate(&env);
+    let token = Address::generate(&env);
+
+    // Clear all mocked auths: caller is unauthorized
+    env.set_auths(&[]);
+
+    // 1. install_policy without admin auth must revert
+    let res_install_policy = wallet.try_install_policy(
+        &merchant,
+        &token,
+        &10_000_000,
+        &3600,
+        &12,
+        &0,
+    );
+    assert!(res_install_policy.is_err(), "install_policy without admin auth must reject");
+
+    // 2. revoke_policy without admin auth must revert
+    let res_revoke_policy = wallet.try_revoke_policy(&merchant);
+    assert!(res_revoke_policy.is_err(), "revoke_policy without admin auth must reject");
+
+    // 3. install_agent_session without admin auth must revert
+    let pk = agent_pk(&env);
+    let allowlist = vec![&env, merchant.clone()];
+    let res_install_agent = wallet.try_install_agent_session(
+        &pk,
+        &token,
+        &10_000_000,
+        &3600,
+        &50_000_000,
+        &0,
+        &allowlist,
+        &BytesN::from_array(&env, &[0u8; 32]),
+    );
+    assert!(res_install_agent.is_err(), "install_agent_session without admin auth must reject");
+
+    // 4. revoke_agent_session without admin auth must revert
+    let res_revoke_agent = wallet.try_revoke_agent_session(&pk);
+    assert!(res_revoke_agent.is_err(), "revoke_agent_session without admin auth must reject");
+}
+
+#[test]
+fn agent_per_tx_limit_boundary_tested_on_both_sides() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (id, wallet) = deploy(&env);
+    let token = Address::generate(&env);
+    let per_tx_cap: i128 = 10_000_000; // 10 tokens
+    let to = install_session(&env, &wallet, &token, per_tx_cap, 3600, 100_000_000, 0);
+
+    // 1. cap - 1 stroop: PERMITTED
+    let verdict_minus = env.as_contract(&id, || {
+        super::try_authorize_agent_transfer(&env, &agent_pk(&env), &token, &to, per_tx_cap - 1)
+    });
+    assert_eq!(verdict_minus, Ok(true));
+
+    // 2. exact cap: PERMITTED
+    let verdict_exact = env.as_contract(&id, || {
+        super::try_authorize_agent_transfer(&env, &agent_pk(&env), &token, &to, per_tx_cap)
+    });
+    assert_eq!(verdict_exact, Ok(true));
+
+    // 3. cap + 1 stroop: REJECTED with AmountExceedsCap
+    let verdict_plus = env.as_contract(&id, || {
+        super::try_authorize_agent_transfer(&env, &agent_pk(&env), &token, &to, per_tx_cap + 1)
+    });
+    assert_eq!(verdict_plus, Err(Error::AmountExceedsCap));
+}
+
+#[test]
+fn agent_session_expires_at_boundary_tested_on_both_sides() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (id, wallet) = deploy(&env);
+    let token = Address::generate(&env);
+    let expiry = 5_000u64;
+    let to = install_session(&env, &wallet, &token, 10_000_000, 3600, 100_000_000, expiry);
+
+    // 1. expiry - 1 second: PERMITTED
+    env.ledger().with_mut(|li| li.timestamp = expiry - 1);
+    let verdict_before = env.as_contract(&id, || {
+        super::try_authorize_agent_transfer(&env, &agent_pk(&env), &token, &to, 1_000_000)
+    });
+    assert_eq!(verdict_before, Ok(true));
+
+    // 2. exact expiry: REJECTED with SessionExpired
+    env.ledger().with_mut(|li| li.timestamp = expiry);
+    let verdict_at = env.as_contract(&id, || {
+        super::try_authorize_agent_transfer(&env, &agent_pk(&env), &token, &to, 1_000_000)
+    });
+    assert_eq!(verdict_at, Err(Error::SessionExpired));
+
+    // 3. expiry + 1 second: REJECTED with SessionExpired
+    env.ledger().with_mut(|li| li.timestamp = expiry + 1);
+    let verdict_after = env.as_contract(&id, || {
+        super::try_authorize_agent_transfer(&env, &agent_pk(&env), &token, &to, 1_000_000)
+    });
+    assert_eq!(verdict_after, Err(Error::SessionExpired));
+}
+
+#[test]
+fn policy_match_expires_at_boundary_tested_on_both_sides() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (id, wallet) = deploy(&env);
+    let merchant = Address::generate(&env);
+    let token = Address::generate(&env);
+    let expiry = 10_000u64;
+
+    wallet.install_policy(&merchant, &token, &5_000_000, &5_000_000, &3600, &expiry);
+    let ctx = make_transfer_ctx(&env, &token, &id, &merchant, 5_000_000);
+
+    // 1. expiry - 1: PERMITTED
+    env.ledger().with_mut(|li| li.timestamp = expiry - 1);
+    let v_before = env.as_contract(&id, || {
+        super::try_match_policy(&env, &ctx)
+    });
+    assert_eq!(v_before, Ok(true));
+
+    // 2. exact expiry: REJECTED (PolicyExpired)
+    env.ledger().with_mut(|li| li.timestamp = expiry);
+    let v_at = env.as_contract(&id, || {
+        super::try_match_policy(&env, &ctx)
+    });
+    assert_eq!(v_at, Err(Error::PolicyExpired));
+
+    // 3. expiry + 1: REJECTED (PolicyExpired)
+    env.ledger().with_mut(|li| li.timestamp = expiry + 1);
+    let v_after = env.as_contract(&id, || {
+        super::try_match_policy(&env, &ctx)
+    });
+    assert_eq!(v_after, Err(Error::PolicyExpired));
+}
+
+#[test]
+fn policy_match_limit_boundary_tested_on_both_sides() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (id, wallet) = deploy(&env);
+    let merchant = Address::generate(&env);
+    let token = Address::generate(&env);
+    let max_cap: i128 = 10_000_000;
+
+    wallet.install_policy(&merchant, &token, &1_000_000, &max_cap, &3600, &0);
+
+    // 1. max_cap - 1 stroop: PERMITTED
+    let ctx_minus = make_transfer_ctx(&env, &token, &id, &merchant, max_cap - 1);
+    let res_minus = env.as_contract(&id, || super::try_match_policy(&env, &ctx_minus));
+    assert_eq!(res_minus, Ok(true));
+
+    // Reset last_charge_at back to 0 or advance time by interval so next check isn't rejected by interval
+    env.ledger().with_mut(|li| li.timestamp += 3601);
+
+    // 2. exact max_cap: PERMITTED
+    let ctx_exact = make_transfer_ctx(&env, &token, &id, &merchant, max_cap);
+    let res_exact = env.as_contract(&id, || super::try_match_policy(&env, &ctx_exact));
+    assert_eq!(res_exact, Ok(true));
+
+    env.ledger().with_mut(|li| li.timestamp += 3601);
+
+    // 3. max_cap + 1 stroop: REJECTED with AmountExceedsCap
+    let ctx_plus = make_transfer_ctx(&env, &token, &id, &merchant, max_cap + 1);
+    let res_plus = env.as_contract(&id, || super::try_match_policy(&env, &ctx_plus));
+    assert_eq!(res_plus, Err(Error::AmountExceedsCap));
+}
+
+#[test]
+fn agent_sliding_window_cap_boundary_tested_on_both_sides() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (id, wallet) = deploy(&env);
+    let token = Address::generate(&env);
+    let per_tx_cap: i128 = 50_000_000;
+    let window_cap: i128 = 80_000_000;
+    let to = install_session(&env, &wallet, &token, per_tx_cap, 3600, window_cap, 0);
+
+    // Spend initial chunk: 40_000_000
+    let v_init = env.as_contract(&id, || {
+        super::try_authorize_agent_transfer(&env, &agent_pk(&env), &token, &to, 40_000_000)
+    });
+    assert_eq!(v_init, Ok(true));
+
+    // Now remaining in window is 40_000_000.
+    // 1. remaining - 1 (39_999_999) on a second wallet context:
+    // Deploy a parallel wallet to test clean remaining boundary
+    let (_id2, wallet2) = deploy(&env);
+    let to2 = install_session(&env, &wallet2, &token, per_tx_cap, 3600, window_cap, 0);
+    // Spend 40_000_000 on wallet2
+    let _ = env.as_contract(&wallet2.address, || {
+        super::try_authorize_agent_transfer(&env, &agent_pk(&env), &token, &to2, 40_000_000)
+    });
+    // Now spend remaining - 1 (39_999_999): must SUCCEED
+    let v_minus = env.as_contract(&wallet2.address, || {
+        super::try_authorize_agent_transfer(&env, &agent_pk(&env), &token, &to2, 39_999_999)
+    });
+    assert_eq!(v_minus, Ok(true));
+
+    // 2. exact remaining (40_000_000) on wallet:
+    // wallet currently has cur_spent = 40_000_000. Spending exact 40_000_000 reaches window_cap: must SUCCEED
+    let v_exact = env.as_contract(&id, || {
+        super::try_authorize_agent_transfer(&env, &agent_pk(&env), &token, &to, 40_000_000)
+    });
+    assert_eq!(v_exact, Ok(true));
+
+    // 3. remaining + 1 (1 stroop above window_cap): must REJECT with WindowCapExceeded
+    let v_plus = env.as_contract(&id, || {
+        super::try_authorize_agent_transfer(&env, &agent_pk(&env), &token, &to, 1)
+    });
+    assert_eq!(v_plus, Err(Error::WindowCapExceeded));
+}
+
+
