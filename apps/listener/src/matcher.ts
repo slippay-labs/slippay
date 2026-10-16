@@ -1,4 +1,4 @@
-import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
+import { NETWORK, USDC_ASSET_CODE, stellarToStroops, stroopsToStellar } from "@slippay/shared";
 
 export interface StellarPaymentEvent {
   memo_type: string;
@@ -72,21 +72,4 @@ export function matchPaymentToOrder(
   return { outcome: "underpaid", expected: expectedMerchantShare, received: ev.amount };
 }
 
-/**
- * Parse a Stellar amount string ("1234.5678901") into BigInt stroops. Rejects
- * negatives, non-finite forms, and anything past 7 fractional digits.
- */
-export function stellarToStroops(s: string): bigint {
-  if (!/^\d+(\.\d{1,7})?$/.test(s)) throw new Error(`bad_amount:${s}`);
-  const [intPart, fracPartRaw = ""] = s.split(".");
-  const fracPart = fracPartRaw.padEnd(7, "0");
-  return BigInt(intPart!) * 10_000_000n + BigInt(fracPart);
-}
-
-export function stroopsToStellar(n: bigint): string {
-  const sign = n < 0n ? "-" : "";
-  const abs = n < 0n ? -n : n;
-  const intPart = abs / 10_000_000n;
-  const fracPart = abs % 10_000_000n;
-  return `${sign}${intPart}.${fracPart.toString().padStart(7, "0")}`;
-}
+export { stellarToStroops, stroopsToStellar };
