@@ -31,6 +31,10 @@ jobs:
       run: pnpm -r lint
     - name: Workspace tests (shared, web, listener)
       run: pnpm -r test
+    - name: Test Soroban checkout contract
+      run: |
+        cd contracts/checkout
+        cargo test
     - name: Start local Supabase stack
       run: supabase start
     - name: API edge function tests (deno)
