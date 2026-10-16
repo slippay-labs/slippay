@@ -14,6 +14,11 @@ import ramp from "./routes/ramp.ts";
 import offramp from "./routes/offramp.ts";
 import { ALLOWED_ORIGINS_SET } from "@slippay/shared";
 import fourp from "./routes/fourp.ts";
+import {
+  bodyLimit,
+  DEFAULT_JSON_BODY_LIMIT,
+  DEFAULT_WEBHOOK_PROXY_BODY_LIMIT,
+} from "./middleware/body_limit.ts";
 
 const api = new Hono().basePath("/api");
 api.use("*", errorMiddleware);
@@ -26,6 +31,8 @@ api.use("*", cors({
   allowMethods: ["GET", "POST", "PATCH", "OPTIONS"],
   allowHeaders: ["authorization", "content-type"],
 }));
+// Audit-004 · Issue #188: Strict request body size limit for JSON routes (default 64 KB)
+api.use("*", bodyLimit({ maxBytes: DEFAULT_JSON_BODY_LIMIT }));
 // Audit-004 · C6: global token-bucket per IP applied to every /api/* request
 // as the outer guardrail. Per-route limiters (e.g. /v1/ask) compose on top.
 api.use("*", rateLimit({ capacity: 120, refillPerSec: 2, scope: "global" }));
@@ -59,6 +66,8 @@ app.route("/", api);
 // Raw body bytes pass through untouched: both HMAC verifications (Shopify's
 // x-shopify-hmac-sha256, SlipPay's x-slippay-signature) happen in the
 // connector against the exact bytes.
+// Enforce documented 1 MB ceiling on webhook payloads (issue #188).
+app.use("/shopify/*", bodyLimit({ maxBytes: DEFAULT_WEBHOOK_PROXY_BODY_LIMIT }));
 const SHOPIFY_CONNECTOR = Deno.env.get("SHOPIFY_CONNECTOR_URL") ?? "http://localhost:4001";
 app.all("/shopify/*", async (c) => {
   const url = new URL(c.req.url);
