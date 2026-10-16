@@ -178,6 +178,25 @@ export async function validateWebhookUrl(
 }
 
 /**
+ * Lookup callback factory for undici Agent connect options. Pins resolution
+ * unconditionally to the validated IP to defeat DNS rebinding. Supports both
+ * standard callback (err, address, family) and `{ all: true }` array callback
+ * (err, [{ address, family }]).
+ */
+export function createPinnedLookup(target: ValidatedTarget) {
+  return (_hostname: string, opts: unknown, cb: (err: Error | null, address: any, family?: number) => void) => {
+    // undici may call with { all: true } and read res[0].address; answering
+    // (ip, family) there yields address=undefined and every delivery dies
+    // with "TypeError: fetch failed" / ERR_INVALID_IP_ADDRESS (2026-07-14).
+    if (opts && (opts as { all?: boolean }).all) {
+      cb(null, [{ address: target.ip, family: target.family }]);
+    } else {
+      cb(null, target.ip, target.family);
+    }
+  };
+}
+
+/**
  * Build an undici Dispatcher that connects to the pre-resolved IP, so the
  * second DNS resolution (which fetch would otherwise perform) cannot rebind
  * to an internal address between validation and connect. SNI and Host header
@@ -186,16 +205,7 @@ export async function validateWebhookUrl(
 export function pinnedDispatcher(target: ValidatedTarget): Dispatcher {
   return new Agent({
     connect: {
-      lookup: (_hostname: string, opts: unknown, cb: (err: Error | null, address: any, family?: number) => void) => {
-        // undici may call with { all: true } and read res[0].address; answering
-        // (ip, family) there yields address=undefined and every delivery dies
-        // with "TypeError: fetch failed" / ERR_INVALID_IP_ADDRESS (2026-07-14).
-        if (opts && (opts as { all?: boolean }).all) {
-          cb(null, [{ address: target.ip, family: target.family }]);
-        } else {
-          cb(null, target.ip, target.family);
-        }
-      },
+      lookup: createPinnedLookup(target),
     },
     headersTimeout: 10_000,
     bodyTimeout: 10_000,
