@@ -11,7 +11,20 @@
 // this is the pricing + measurement layer that makes the spread live the moment
 // the anchor is connected.
 
-const SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
+import {
+  DEFAULT_FX_SPREAD_BPS,
+  MIN_FX_SPREAD_BPS,
+  MAX_FX_SPREAD_BPS,
+  resolveFxSpreadBps,
+} from "@slippay/shared";
+
+export const SPREAD_BPS = resolveFxSpreadBps(import.meta.env?.VITE_FX_SPREAD_BPS);
+
+// Log active spread once at module startup (Acceptance criteria 2)
+if (typeof console !== "undefined" && typeof console.info === "function") {
+  console.info(`[SlipPay FX] Active spread configured: ${SPREAD_BPS} bps (${(SPREAD_BPS / 100).toFixed(2)}%)`);
+}
+
 const RATE_URL = "https://open.er-api.com/v6/latest/USD";
 const FALLBACK_BRL_PER_USD = 5.4;
 

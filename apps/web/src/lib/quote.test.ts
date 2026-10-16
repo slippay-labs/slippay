@@ -60,6 +60,28 @@ describe("quoteBRLtoUSDC — fee and rate math", () => {
     expect(q.usdcOut.toFixed(7)).toBe("19.6270854");
   });
 
+  describe("FX Spread Bounds & Startup Governance (Issue #234)", () => {
+    it("uses DEFAULT_FX_SPREAD_BPS (190) from shared constants as single source of truth", () => {
+      expect(quote.SPREAD_BPS).toBe(190);
+      expect(quote.SPREAD_PCT).toBe(1.9);
+    });
+
+    it("fails loudly when VITE_FX_SPREAD_BPS is non-numeric or out-of-range", async () => {
+      const { resolveFxSpreadBps } = await import("@slippay/shared");
+
+      expect(() => resolveFxSpreadBps("invalid-string")).toThrow(/must be a valid integer/);
+      expect(() => resolveFxSpreadBps("-10")).toThrow(/out of range/);
+      expect(() => resolveFxSpreadBps("10001")).toThrow(/out of range/);
+    });
+
+    it("logs the active spread configuration once on startup", async () => {
+      const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+      vi.resetModules();
+      await import("./quote.ts");
+      expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("[SlipPay FX] Active spread configured: 190 bps"));
+    });
+  });
+
   it("resolves USDC out to the 7-fraction limit without trailing drift", async () => {
     vi.stubGlobal("fetch", okFetch(5));
 

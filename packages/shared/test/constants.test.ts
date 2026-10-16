@@ -2,6 +2,10 @@ import { describe, it, expect } from "vitest";
 import {
   NETWORK,
   DEFAULT_PLATFORM_FEE_BP,
+  DEFAULT_FX_SPREAD_BPS,
+  MIN_FX_SPREAD_BPS,
+  MAX_FX_SPREAD_BPS,
+  resolveFxSpreadBps,
   ORDER_DEFAULT_EXPIRY_MINUTES,
   API_KEY_PREFIX,
   API_KEY_BYTES,
@@ -22,6 +26,41 @@ describe("packages/shared constants invariants", () => {
       expect(Number.isInteger(DEFAULT_PLATFORM_FEE_BP)).toBe(true);
       expect(DEFAULT_PLATFORM_FEE_BP).toBeGreaterThanOrEqual(0);
       expect(DEFAULT_PLATFORM_FEE_BP).toBeLessThanOrEqual(1000);
+    });
+  });
+
+  describe("FX Spread Bounds & resolveFxSpreadBps (Issue #234)", () => {
+    it("configures canonical spread bounds in one place alongside platform fee", () => {
+      expect(DEFAULT_FX_SPREAD_BPS).toBe(190);
+      expect(MIN_FX_SPREAD_BPS).toBe(0);
+      expect(MAX_FX_SPREAD_BPS).toBe(1000);
+      expect(MIN_FX_SPREAD_BPS).toBeLessThan(MAX_FX_SPREAD_BPS);
+    });
+
+    it("resolves default spread when raw env value is undefined, null, or empty", () => {
+      expect(resolveFxSpreadBps(undefined)).toBe(190);
+      expect(resolveFxSpreadBps(null)).toBe(190);
+      expect(resolveFxSpreadBps("")).toBe(190);
+    });
+
+    it("parses valid integer strings and numbers within range", () => {
+      expect(resolveFxSpreadBps(150)).toBe(150);
+      expect(resolveFxSpreadBps("250")).toBe(250);
+      expect(resolveFxSpreadBps("0")).toBe(0);
+      expect(resolveFxSpreadBps(1000)).toBe(1000);
+    });
+
+    it("fails loudly when spread is non-numeric or non-integer", () => {
+      expect(() => resolveFxSpreadBps("not-a-number")).toThrow(/must be a valid integer/);
+      expect(() => resolveFxSpreadBps("190.5")).toThrow(/must be a valid integer/);
+      expect(() => resolveFxSpreadBps(NaN)).toThrow(/must be a valid integer/);
+    });
+
+    it("fails loudly when spread is out of range (< 0 or > 1000)", () => {
+      expect(() => resolveFxSpreadBps(-1)).toThrow(/out of range/);
+      expect(() => resolveFxSpreadBps(1001)).toThrow(/out of range/);
+      expect(() => resolveFxSpreadBps("-50")).toThrow(/out of range/);
+      expect(() => resolveFxSpreadBps("10000")).toThrow(/out of range/);
     });
   });
 
