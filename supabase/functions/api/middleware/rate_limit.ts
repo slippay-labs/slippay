@@ -32,6 +32,8 @@ export interface LimiterConfig {
   scope?: string;
   /** Maximum number of buckets tracked before LRU eviction. Defaults to 10,000. */
   maxBuckets?: number;
+  /** Injectable clock returning ms timestamp. Defaults to Date.now. */
+  now?: () => number;
 }
 
 export const DEFAULT_MAX_BUCKETS = 10_000;
@@ -42,9 +44,20 @@ const BUCKET_TTL_MS = 5 * 60_000;
 const buckets: Map<string, Bucket> = new Map();
 let lastSweep = Date.now();
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
+let customClock: (() => number) | null = null;
 
-export function sweepBuckets(ttlMs = BUCKET_TTL_MS) {
-  const now = Date.now();
+export function __setClock(clock: (() => number) | null) {
+  customClock = clock;
+}
+
+function getNow(cfg?: LimiterConfig): number {
+  if (cfg?.now) return cfg.now();
+  if (customClock) return customClock();
+  return Date.now();
+}
+
+export function sweepBuckets(ttlMs = BUCKET_TTL_MS, nowMs?: number) {
+  const now = nowMs ?? getNow();
   lastSweep = now;
   for (const [k, b] of buckets) {
     if (now - b.lastRefill > ttlMs) {
@@ -52,6 +65,7 @@ export function sweepBuckets(ttlMs = BUCKET_TTL_MS) {
     }
   }
 }
+
 
 export function ensureSweepTimer() {
   if (sweepTimer === null && typeof setInterval !== "undefined") {
@@ -97,7 +111,7 @@ export function rateLimit(cfg: LimiterConfig) {
     );
 
     const id = `${scope}:${keyFn(c)}`;
-    const now = Date.now();
+    const now = getNow(cfg);
 
     let bucket = buckets.get(id);
     if (bucket) {
@@ -153,6 +167,7 @@ export function merchantKey(c: Context): string {
 /** Visible for tests. */
 export function __resetBuckets() {
   buckets.clear();
+  customClock = null;
   lastSweep = Date.now();
   if (sweepTimer !== null) {
     clearInterval(sweepTimer);
