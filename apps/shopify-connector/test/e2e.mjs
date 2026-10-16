@@ -86,6 +86,24 @@ try {
   });
   ok(r.status === 401, "orders/create rejects bad shopify hmac");
 
+  // 1a. orders/create with MISSING hmac header → 401 missing_signature
+  r = await fetch(`${base}/shopify/orders-create`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ id: 1 }),
+  });
+  const missingSigBody = await r.json();
+  ok(r.status === 401 && missingSigBody.error === "missing_signature", "orders/create explicitly rejects missing signature header");
+
+  // 1b. orders/create with OVERSIZED body (> 1MB) → 413 Payload Too Large
+  const bigBody = Buffer.alloc(1024 * 1024 + 100, 65); // 1MB + 100 bytes
+  r = await fetch(`${base}/shopify/orders-create`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-shopify-hmac-sha256": "any" },
+    body: bigBody,
+  });
+  ok(r.status === 413, "orders/create rejects oversized payload with 413 before verification");
+
   // 2. orders/create for a non-slippay gateway → ignored
   let raw = JSON.stringify({ id: 111, order_number: 1000, name: "#1000", total_price: "50.00", currency: "BRL", payment_gateway_names: ["credit_card"] });
   r = await fetch(`${base}/shopify/orders-create`, {

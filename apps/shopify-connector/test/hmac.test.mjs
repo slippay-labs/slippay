@@ -3,6 +3,8 @@ import {
   safeEqual,
   verifyShopifyWebhookHmac,
   verifyShopifyQueryHmac,
+  readRawBody,
+  MAX_BODY_BYTES,
 } from "../src/index.mjs";
 
 let failures = 0;
@@ -122,6 +124,92 @@ console.log("\n--- Timing-Safe String Comparison Tests ---");
   assert(!safeEqual("abcdef123456", "abcdef123457"), "same length different char returns false");
   assert(!safeEqual("short", "much_longer_string"), "different lengths return false");
   assert(safeEqual("", ""), "empty strings return true");
+}
+
+console.log("\n--- Negative HMAC & Raw Bytes Invariant Tests ---");
+
+// 10. Truncated, wrong-length, and mismatched body signature rejection
+{
+  const rawBody = Buffer.from(JSON.stringify({ id: 999, total_price: "200.00" }));
+  const validHmac = createWebhookHmac(rawBody);
+  const truncatedHmac = validHmac.slice(0, 16);
+  const differentBody = Buffer.from(JSON.stringify({ id: 999, total_price: "200.01" }));
+  const differentHmac = createWebhookHmac(differentBody);
+
+  assert(!verifyShopifyWebhookHmac(rawBody, truncatedHmac, TEST_SECRET), "truncated signature is rejected");
+  assert(!verifyShopifyWebhookHmac(rawBody, "not_a_valid_base64_hmac", TEST_SECRET), "malformed signature string is rejected");
+  assert(!verifyShopifyWebhookHmac(rawBody, "   ", TEST_SECRET), "whitespace-only signature is rejected");
+  assert(!verifyShopifyWebhookHmac(rawBody, differentHmac, TEST_SECRET), "signature computed over different body is rejected");
+}
+
+// 11. Raw Bytes Invariant: re-serialized body fails verification
+{
+  // Wire format with distinct whitespace and property ordering
+  const rawWireBytes = Buffer.from('{\n  "currency": "BRL",\n  "total_price": "150.00",\n  "id": 98765\n}');
+  const validWireHmac = createWebhookHmac(rawWireBytes);
+
+  // If a connector parses the body before verification and re-serializes it:
+  const parsed = JSON.parse(rawWireBytes.toString("utf8"));
+  const reserializedBytes = Buffer.from(JSON.stringify(parsed));
+
+  assert(!rawWireBytes.equals(reserializedBytes), "raw bytes and re-serialized JSON differ in byte content");
+  assert(
+    !verifyShopifyWebhookHmac(reserializedBytes, validWireHmac, TEST_SECRET),
+    "verification fails if computed over re-serialized body instead of raw bytes",
+  );
+
+  // Conversely, an HMAC computed over re-serialized JSON fails to verify the raw bytes
+  const reserializedHmac = createWebhookHmac(reserializedBytes);
+  assert(
+    !verifyShopifyWebhookHmac(rawWireBytes, reserializedHmac, TEST_SECRET),
+    "HMAC over re-serialized body fails when verified against wire raw bytes",
+  );
+  assert(
+    verifyShopifyWebhookHmac(rawWireBytes, validWireHmac, TEST_SECRET),
+    "raw bytes verification succeeds when wire bytes are passed untouched",
+  );
+}
+
+console.log("\n--- Bounded Request Body Size Tests ---");
+
+// 12. readRawBody size enforcement
+{
+  // Test oversized stream rejection
+  const makeChunkStream = function*(chunks) {
+    for (const c of chunks) yield Buffer.from(c);
+  };
+
+  const limit = 100; // 100 bytes limit
+  const smallStream = {
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from("a".repeat(50));
+      yield Buffer.from("b".repeat(40));
+    },
+  };
+  const smallBuf = await readRawBody(smallStream, limit);
+  assert(smallBuf.length === 90, "body within limit is read completely");
+
+  const oversizedStream = {
+    async *[Symbol.asyncIterator]() {
+      yield Buffer.from("a".repeat(60));
+      yield Buffer.from("b".repeat(60)); // total 120 > limit 100
+      yield Buffer.from("c".repeat(1000)); // should never be read
+    },
+  };
+
+  let threw413 = false;
+  let errorCode = null;
+  let errorStatus = null;
+  try {
+    await readRawBody(oversizedStream, limit);
+  } catch (e) {
+    threw413 = true;
+    errorStatus = e.statusCode;
+    errorCode = e.code;
+  }
+  assert(threw413, "oversized body throws an error before reading further");
+  assert(errorStatus === 413, "error carries HTTP 413 status code");
+  assert(errorCode === "PAYLOAD_TOO_LARGE", "error code is PAYLOAD_TOO_LARGE");
 }
 
 console.log(failures === 0 ? "\nALL HMAC TESTS PASSED" : `\n${failures} TEST FAILURES`);

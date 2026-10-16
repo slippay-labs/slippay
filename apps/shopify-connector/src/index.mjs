@@ -68,9 +68,21 @@ const html = (res, code, body) => {
   res.end(body);
 };
 const redirect = (res, to) => { res.writeHead(302, { location: to }); res.end(); };
-async function readRawBody(req) {
+export const MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES ?? 1024 * 1024); // 1MB default bound
+
+export async function readRawBody(req, limit = MAX_BODY_BYTES) {
   const chunks = [];
-  for await (const c of req) chunks.push(c);
+  let totalLength = 0;
+  for await (const c of req) {
+    totalLength += c.length;
+    if (totalLength > limit) {
+      const err = new Error(`Payload Too Large: body exceeds maximum limit of ${limit} bytes`);
+      err.statusCode = 413;
+      err.code = "PAYLOAD_TOO_LARGE";
+      throw err;
+    }
+    chunks.push(c);
+  }
   return Buffer.concat(chunks);
 }
 const parse = (buf) => { try { return JSON.parse(buf.toString("utf8")); } catch { return {}; } };
@@ -86,12 +98,13 @@ export function safeEqual(a, b) {
 // OAuth-app webhooks are signed with the app secret; legacy custom-app
 // webhooks with the custom app's API secret key. Accept either.
 export function verifyShopifyWebhookHmac(rawBody, header, secrets = [APP_SECRET, LEGACY_WEBHOOK_SECRET]) {
-  if (!header) return false;
+  if (!header || typeof header !== "string" || !header.trim()) return false;
+  if (!rawBody || !(Buffer.isBuffer(rawBody) || typeof rawBody === "string")) return false;
   const list = Array.isArray(secrets) ? secrets : [secrets];
   for (const secret of list) {
     if (!secret) continue;
     const digest = createHmac("sha256", secret).update(rawBody).digest("base64");
-    if (safeEqual(digest, header)) return true;
+    if (safeEqual(digest, header.trim())) return true;
   }
   return false;
 }
@@ -223,11 +236,12 @@ número do seu pedido"</i>.</p>
 }
 
 // ---------- server ----------
-const server = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://localhost:${PORT}`);
-  // The connector is reverse-proxied at /shopify/* — accept both forms.
-  const path = url.pathname.replace(/^\/shopify(?=\/|$)/, "") || "/";
-  const q = url.searchParams;
+export const server = http.createServer(async (req, res) => {
+  try {
+    const url = new URL(req.url, `http://localhost:${PORT}`);
+    // The connector is reverse-proxied at /shopify/* — accept both forms.
+    const path = url.pathname.replace(/^\/shopify(?=\/|$)/, "") || "/";
+    const q = url.searchParams;
 
   // ---- mode A: OAuth install flow ----
   if (req.method === "GET" && (path === "/install" || path === "/app" || path === "/")) {
@@ -305,8 +319,10 @@ const server = http.createServer(async (req, res) => {
 
   // ---- mandatory GDPR webhooks (public app requirement) ----
   if (req.method === "POST" && path.startsWith("/gdpr/")) {
+    const sig = req.headers["x-shopify-hmac-sha256"];
+    if (!sig) return json(res, 401, { error: "missing_signature", message: "missing X-Shopify-Hmac-Sha256 header" });
     const raw = await readRawBody(req);
-    if (!verifyShopifyWebhookHmac(raw, req.headers["x-shopify-hmac-sha256"])) {
+    if (!verifyShopifyWebhookHmac(raw, sig)) {
       return json(res, 401, { error: "bad hmac" });
     }
     // shop/redact: drop everything we hold for the shop.
@@ -323,8 +339,10 @@ const server = http.createServer(async (req, res) => {
 
   // ---- money path: orders/create webhook (modes A + B) ----
   if (req.method === "POST" && path === "/orders-create") {
+    const sig = req.headers["x-shopify-hmac-sha256"];
+    if (!sig) return json(res, 401, { error: "missing_signature", message: "missing X-Shopify-Hmac-Sha256 header" });
     const raw = await readRawBody(req);
-    if (!verifyShopifyWebhookHmac(raw, req.headers["x-shopify-hmac-sha256"])) {
+    if (!verifyShopifyWebhookHmac(raw, sig)) {
       return json(res, 401, { error: "bad shopify hmac" });
     }
     const shop = ((req.headers["x-shopify-shop-domain"] ?? LEGACY_SHOP) + "").toLowerCase();
@@ -448,7 +466,23 @@ const server = http.createServer(async (req, res) => {
       orders: Object.keys(state.orders).length,
     });
   }
-  json(res, 404, { error: "not_found", path: url.pathname });
+    json(res, 404, { error: "not_found", path: url.pathname });
+  } catch (err) {
+    if (err.statusCode === 413 || err.code === "PAYLOAD_TOO_LARGE") {
+      return json(res, 413, { error: "payload_too_large", message: err.message });
+    }
+    console.error(`[unhandled error] ${err.message ?? err}`);
+    if (!res.headersSent) {
+      json(res, 500, { error: "internal_error", message: String(err.message ?? err) });
+    }
+  }
 });
 
-server.listen(PORT, () => console.log(`SlipPay×Shopify connector on :${PORT} → ${SLIPPAY_API_BASE} (oauth: ${APP_KEY ? "on" : "off"})`));
+const isMain = process.argv[1] && (
+  process.argv[1].endsWith("src/index.mjs") ||
+  process.argv[1].endsWith("src\\index.mjs")
+);
+
+if (isMain && process.env.NODE_ENV !== "test") {
+  server.listen(PORT, () => console.log(`SlipPay×Shopify connector on :${PORT} → ${SLIPPAY_API_BASE} (oauth: ${APP_KEY ? "on" : "off"})`));
+}
