@@ -105,94 +105,207 @@ SlipPay refuses to deliver to localhost, RFC1918 private ranges, link-local,
 and IPv6 ULA. See `apps/listener/src/ssrf.ts`. If your webhook URL fails
 SSRF check, the delivery is marked `dead` immediately and never attempted.
 
-## HMAC verification
+## Headers and delivery contract
 
-The signature header is `X-Slippay-Signature`, hex-encoded HMAC-SHA256 of
-the raw body using your merchant's `webhook_secret`.
+Every webhook request emitted by SlipPay includes the following security and delivery headers:
 
-```
-X-Slippay-Signature: 6fda9c0f8e7b2a1c3d4e5f6789a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8
-```
+| Header | Description | Example |
+|---|---|---|
+| `x-slippay-signature` | Timestamped signature header formatted as `t=<timestamp>,v1=<hex_hmac>` | `t=1778430000,v1=6fda9c0f8e7b2a1c3d4e5f6789a0b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8` |
+| `x-slippay-delivery-id` | Unique UUID for this delivery attempt | `7b235e12-4f3b-4822-b5e2-63b72c918c44` |
+| `content-type` | Content type of payload | `application/json` |
 
-### Node / TypeScript
+### Deduplication contract
+
+SlipPay operates an **at-least-once** delivery model. Receivers must guard against duplicate deliveries:
+1. **Delivery-level deduplication**: Use `x-slippay-delivery-id` to identify redeliveries of the same webhook attempt (e.g. if an earlier response timed out on the wire). If the delivery ID was already acknowledged, respond with HTTP `200 OK` immediately.
+2. **Business-level idempotency**: Store processed `data.id` (order UUID) or `data.tx_hash` (on-chain transaction hash). Multiple webhooks may reference the same paid order; processing must be idempotent.
+
+## Retry and backoff schedule
+
+SlipPay’s webhook dispatcher executes bounded retries with exponential backoff:
+
+| Attempt | Backoff delay from previous attempt | Approximate cumulative elapsed time |
+|---|---|---|
+| 1 | Immediate | 0 |
+| 2 | 60 seconds (1 minute) | ~1 min |
+| 3 | 300 seconds (5 minutes) | ~6 min |
+| 4 | 1,800 seconds (30 minutes) | ~36 min |
+| 5 | 7,200 seconds (2 hours) | ~2.5 hours |
+| 6 | 43,200 seconds (12 hours) | ~14.5 hours |
+| 7 | 86,400 seconds (24 hours) | ~38.5 hours |
+| > 7 | Dead-lettered (status: `dead`) | No further retries |
+
+### Critical retry rules
+
+- **4xx Fail-Closed Policy**: If your endpoint returns an HTTP `4xx` client error (e.g., `400 Bad Request`, `401 Unauthorized`, `404 Not Found`, `422 Unprocessable Entity`), the delivery is classified as permanently rejected and **immediately marked as `dead`**. It will **not** be retried.
+- **5xx and Network Errors**: Server errors (`5xx`) or connection timeouts are retried according to the schedule above.
+- **Request Timeout**: Each webhook delivery attempt has a hard timeout of **10 seconds**. Receivers should acknowledge `200 OK` promptly and process asynchronous work in the background.
+
+## Webhook signature verification
+
+The signature is computed over the string `"${t}.${raw_body}"` using your merchant `webhook_secret` with HMAC-SHA256.
+
+### Specification
+
+1. **Header Format**: `x-slippay-signature` contains comma-separated key-value pairs: `t=<timestamp_in_seconds>,v1=<hex_encoded_signature>`.
+2. **Canonical String to Sign**: Concatenate the timestamp string `t`, a literal dot `.`, and the exact UTF-8 raw request body bytes:
+   ```
+   message = `${t}.${raw_body}`
+   ```
+3. **Tolerance Window**: Assert that `Math.abs(currentTime - t) <= 300` (5 minutes). Rejects timestamps older than 5 minutes or in the far future to prevent replay attacks.
+4. **Timing-Safe Comparison**: Always verify the signature using a constant-time comparison function (e.g. `crypto.timingSafeEqual` or `hash_equals`) to prevent timing side-channel attacks.
+
+> **CRITICAL**: Always read the **raw body** bytes before parsing JSON. Re-serializing parsed JSON alters whitespace and key ordering, which breaks HMAC verification.
+
+### Reference implementation (Node.js / TypeScript)
 
 ```ts
 import crypto from "node:crypto";
 
-export function verify(rawBody: Buffer, header: string, secret: string): boolean {
-  const expected = crypto
-    .createHmac("sha256", secret)
-    .update(rawBody)
-    .digest("hex");
-  if (expected.length !== header.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(header));
+export function verifySlippayWebhook(
+  rawBody: string | Buffer,
+  signatureHeader: string,
+  secret: string,
+  toleranceSeconds: number = 300,
+): boolean {
+  if (!signatureHeader || !secret) return false;
+
+  const parts = Object.fromEntries(
+    signatureHeader.split(",").map(p => {
+      const idx = p.indexOf("=");
+      return [p.slice(0, idx).trim(), p.slice(idx + 1).trim()];
+    }),
+  );
+
+  const t = Number(parts.t);
+  const v1 = parts.v1;
+  if (!Number.isFinite(t) || !v1) return false;
+
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - t) > toleranceSeconds) {
+    return false; // Stale timestamp or clock skew > 5 minutes
+  }
+
+  const payload = Buffer.isBuffer(rawBody) ? rawBody.toString("utf8") : rawBody;
+  const toSign = `${t}.${payload}`;
+  const expectedHex = crypto.createHmac("sha256", secret).update(toSign).digest("hex");
+
+  if (expectedHex.length !== v1.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(expectedHex, "utf8"), Buffer.from(v1, "utf8"));
 }
 ```
 
-### Python
+### Reference implementation (Python 3)
 
 ```python
-import hmac, hashlib
+import hmac
+import hashlib
+import time
 
-def verify(raw: bytes, header: str, secret: str) -> bool:
-    expected = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
-    return hmac.compare_digest(expected, header)
+def verify_slippay_webhook(
+    raw_body: bytes,
+    signature_header: str,
+    secret: str,
+    tolerance_seconds: int = 300,
+) -> bool:
+    if not signature_header or not secret:
+        return False
+
+    parts = dict(pair.split("=", 1) for pair in signature_header.split(",") if "=" in pair)
+    t_str = parts.get("t")
+    v1 = parts.get("v1")
+    if not t_str or not v1:
+        return False
+
+    try:
+        t = int(t_str)
+    except ValueError:
+        return False
+
+    now = int(time.time())
+    if abs(now - t) > tolerance_seconds:
+        return False  # Replay prevention
+
+    to_sign = f"{t}.".encode("utf-8") + raw_body
+    expected_hex = hmac.new(secret.encode("utf-8"), to_sign, hashlib.sha256).hexdigest()
+
+    return hmac.compare_digest(expected_hex, v1)
 ```
 
-### PHP
+### Reference implementation (PHP 8+)
 
 ```php
-function verify(string $raw, string $header, string $secret): bool {
-    $expected = hash_hmac('sha256', $raw, $secret);
-    return hash_equals($expected, $header);
+function verifySlippayWebhook(
+    string $rawBody,
+    string $signatureHeader,
+    string $secret,
+    int $toleranceSeconds = 300
+): bool {
+    if (empty($signatureHeader) || empty($secret)) {
+        return false;
+    }
+
+    $parts = [];
+    foreach (explode(',', $signatureHeader) as $item) {
+        $kv = explode('=', $item, 2);
+        if (count($kv) === 2) {
+            $parts[trim($kv[0])] = trim($kv[1]);
+        }
+    }
+
+    if (!isset($parts['t'], $parts['v1']) || !is_numeric($parts['t'])) {
+        return false;
+    }
+
+    $t = (int) $parts['t'];
+    $v1 = $parts['v1'];
+
+    if (abs(time() - $t) > $toleranceSeconds) {
+        return false; // Timestamp out of tolerance
+    }
+
+    $toSign = $t . '.' . $rawBody;
+    $expectedHex = hash_hmac('sha256', $toSign, $secret);
+
+    return hash_equals($expectedHex, $v1);
 }
 ```
 
-> Always read the **raw** body before any framework parsing — JSON
-> reserialization changes whitespace and key ordering, breaking HMAC.
-
-## Sample handler (Express)
+### Sample Express Receiver
 
 ```ts
 import express from "express";
-import crypto from "node:crypto";
+import { verifySlippayWebhook } from "./verifySlippayWebhook.js";
 
 const app = express();
 
-// CRITICAL: capture raw body for HMAC
+// Capture raw bytes as a Buffer
 app.use("/webhooks/slippay", express.raw({ type: "application/json" }));
 
-app.post("/webhooks/slippay", (req, res) => {
-  const signature = req.header("X-Slippay-Signature") ?? "";
-  const expected = crypto
-    .createHmac("sha256", process.env.SLIPPAY_WEBHOOK_SECRET!)
-    .update(req.body)
-    .digest("hex");
+app.post("/webhooks/slippay", async (req, res) => {
+  const sig = req.header("x-slippay-signature") ?? "";
+  const deliveryId = req.header("x-slippay-delivery-id") ?? "";
+  const secret = process.env.SLIPPAY_WEBHOOK_SECRET!;
 
-  if (signature.length !== expected.length ||
-      !crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected))) {
-    return res.status(401).send("invalid signature");
+  // 1. Verify signature over raw bytes
+  if (!verifySlippayWebhook(req.body, sig, secret)) {
+    return res.status(401).json({ error: "invalid_signature" });
+  }
+
+  // 2. Delivery deduplication
+  if (await isDeliveryAlreadyHandled(deliveryId)) {
+    return res.status(200).json({ ok: true, note: "duplicate_delivery_ack" });
   }
 
   const event = JSON.parse(req.body.toString("utf8"));
 
-  // Idempotency: have we processed this event before?
-  if (await alreadyProcessed(event.data.id, event.data.tx_hash)) {
-    return res.status(200).send("ok"); // ack the duplicate
+  // 3. Process business event idempotently
+  if (event.type === "order.paid") {
+    await markOrderFulfilled(event.data.id, event.data.tx_hash);
   }
 
-  switch (event.type) {
-    case "order.paid":
-    case "subscription.charged":
-      await markOrderPaid(event.data);
-      break;
-    case "order.underpaid":
-      await flagForReview(event.data);
-      break;
-    // ...
-  }
-
-  res.status(200).send("ok");
+  return res.status(200).json({ ok: true });
 });
 ```
 
