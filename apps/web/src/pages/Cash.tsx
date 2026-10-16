@@ -143,9 +143,15 @@ export default function Cash() {
                   <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#0a0a0a]/45">Você envia</div>
                   <div className="mt-2 flex items-baseline gap-2">
                     <span className="text-2xl text-[#0a0a0a]/55" style={display}>R$</span>
-                    <input type="number" min={0} value={brl}
+                    <input
+                      aria-label="Você envia em Reais"
+                      type="number"
+                      min={0}
+                      value={brl}
                       onChange={(e) => setBrl(Math.max(0, Number(e.target.value)))}
-                      className="w-full bg-transparent outline-none text-5xl md:text-6xl font-semibold tabular-nums tracking-[-0.03em]" style={display} />
+                      className="w-full bg-transparent outline-none text-5xl md:text-6xl font-semibold tabular-nums tracking-[-0.03em]"
+                      style={display}
+                    />
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
                     {PRESETS.map((p) => (
@@ -184,10 +190,22 @@ export default function Cash() {
                 <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#0a0a0a]/45">Seu CPF</div>
                 <p className="mt-2 text-[13px] text-[#0a0a0a]/55">O Pix exige seu CPF. O dólar cai na <b>sua carteira</b> — a mesma da sua digital. Você não precisa de carteira nenhuma, nem colar endereço.</p>
                 <div className="mt-6 space-y-4">
-                  <input value={cpf} onChange={(e) => setCpf(e.target.value)} placeholder="CPF" inputMode="numeric"
-                    className="w-full rounded-xl border border-[#0a0a0a]/15 bg-white/60 px-4 py-3 outline-none focus:border-[#0a0a0a]/40" />
-                  <input value={email ?? ""} onChange={(e) => setEmail(e.target.value)} placeholder="E-mail (recibo do Pix)" inputMode="email"
-                    className="w-full rounded-xl border border-[#0a0a0a]/15 bg-white/60 px-4 py-3 outline-none focus:border-[#0a0a0a]/40" />
+                  <input
+                    aria-label="Seu CPF (11 dígitos)"
+                    value={cpf}
+                    onChange={(e) => setCpf(e.target.value)}
+                    placeholder="CPF"
+                    inputMode="numeric"
+                    className="w-full rounded-xl border border-[#0a0a0a]/15 bg-white/60 px-4 py-3 outline-none focus:border-[#0a0a0a]/40"
+                  />
+                  <input
+                    aria-label="E-mail para recibo do Pix"
+                    value={email ?? ""}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="E-mail (recibo do Pix)"
+                    inputMode="email"
+                    className="w-full rounded-xl border border-[#0a0a0a]/15 bg-white/60 px-4 py-3 outline-none focus:border-[#0a0a0a]/40"
+                  />
                 </div>
                 {err && <div className="mt-4 text-[13px] text-red-700">{err}</div>}
                 <div className="mt-6 flex items-center gap-4">

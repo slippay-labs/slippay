@@ -41,7 +41,7 @@ export default function Signup() {
               if (data.session) nav("/dashboard");
               else setMsg({ kind: "info", text: "Confira seu e-mail pra confirmar." });
             }} className="mt-16 max-w-md space-y-8">
-              <Field label="E-mail" type="email" value={email} onChange={setEmail} required autoFocus />
+              <Field label="E-mail" type="email" value={email} onChange={setEmail} required />
               <Field label="Senha" type="password" value={password} onChange={setPassword} required minLength={8} />
               <button disabled={loading}
                 className="w-full bg-[#0a0a0a] text-[#f1eee7] py-5 text-sm uppercase tracking-[0.18em] hover:bg-[#1a1a1a] disabled:opacity-50">
@@ -60,16 +60,17 @@ export default function Signup() {
   );
 }
 
-function Field({ label, type, value, onChange, required, autoFocus, minLength }: {
+function Field({ label, type, value, onChange, required, minLength }: {
   label: string; type: string; value: string; onChange: (v: string) => void;
-  required?: boolean; autoFocus?: boolean; minLength?: number;
+  required?: boolean; minLength?: number;
 }) {
   return (
     <label className="block">
       <span className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block mb-2">{label}</span>
       <input
+        aria-label={label}
         type={type} value={value} onChange={e => onChange(e.target.value)}
-        required={required} autoFocus={autoFocus} minLength={minLength}
+        required={required} minLength={minLength}
         className="w-full bg-transparent border-b border-[#0a0a0a]/30 py-3 text-lg tracking-tight focus:outline-none focus:border-[#0a0a0a] transition-colors"
       />
     </label>

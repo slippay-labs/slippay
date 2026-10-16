@@ -5,9 +5,19 @@
 // and non-essential).
 export function FaceScan({ state }: { state: "scanning" | "done" }) {
   const accent = state === "done" ? "#A16207" : "#0a0a0a";
+  const announcement = state === "scanning"
+    ? "Verificando biometria facial..."
+    : "Biometria facial confirmada com sucesso";
+
   return (
-    <div className="grid place-items-center py-2">
-      <div className="relative w-[120px] h-[120px]">
+    <div
+      role="status"
+      aria-live="polite"
+      aria-atomic="true"
+      className="grid place-items-center py-2"
+    >
+      <span className="sr-only">{announcement}</span>
+      <div className="relative w-[120px] h-[120px]" aria-hidden="true">
         {/* corner brackets */}
         <svg viewBox="0 0 120 120" className="absolute inset-0 w-full h-full" fill="none" stroke={accent} strokeWidth="3" strokeLinecap="round">
           <path d="M10 34 V16 a6 6 0 0 1 6-6 H34" />

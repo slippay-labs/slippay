@@ -165,8 +165,10 @@ export default function PixPay() {
 
           <div className="md:col-span-9 max-w-xl">
             {/* step: input code */}
-            <label className="text-xs uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-4 block">Código PIX (copia e cola)</label>
+            <label htmlFor="pix-code-input" className="text-xs uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-4 block">Código PIX (copia e cola)</label>
             <textarea
+              id="pix-code-input"
+              aria-label="Código PIX (copia e cola)"
               value={code}
               onChange={e => setCode(e.target.value)}
               disabled={step !== "input"}
@@ -190,9 +192,15 @@ export default function PixPay() {
                     R$ {Number(amountBRL).toFixed(2)}
                   </div>
                 ) : (
-                  <input type="number" value={manualAmount} onChange={e => setManualAmount(e.target.value)} disabled={step !== "validated"}
+                  <input
+                    aria-label="Valor a pagar em R$"
+                    type="number"
+                    value={manualAmount}
+                    onChange={e => setManualAmount(e.target.value)}
+                    disabled={step !== "validated"}
                     placeholder="valor em R$"
-                    className="w-full bg-transparent border-b border-[#0a0a0a]/30 text-4xl tabular-nums py-2 disabled:opacity-60" />
+                    className="w-full bg-transparent border-b border-[#0a0a0a]/30 text-4xl tabular-nums py-2 disabled:opacity-60"
+                  />
                 )}
                 {transfer.payerName && <div className="mt-3 text-sm text-[#0a0a0a]/70">{transfer.payerName}</div>}
                 {transfer.pixKey && <div className="mt-1 text-xs font-mono text-[#0a0a0a]/55 break-all">{transfer.pixKey}</div>}

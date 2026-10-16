@@ -53,16 +53,19 @@ export function StellarAddressInput({
 
   return (
     <div>
-      <span className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block mb-2">{label}</span>
-      <input
-        value={value}
-        onChange={e => onChange(e.target.value)}
-        placeholder="GABC..."
-        autoCapitalize="off"
-        autoCorrect="off"
-        spellCheck={false}
-        className="w-full bg-transparent border-b border-[#0a0a0a]/30 py-3 font-mono text-sm tracking-tight focus:outline-none focus:border-[#0a0a0a] transition-colors"
-      />
+      <label className="block">
+        <span className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block mb-2">{label}</span>
+        <input
+          aria-label={label}
+          value={value}
+          onChange={e => onChange(e.target.value)}
+          placeholder="GABC..."
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
+          className="w-full bg-transparent border-b border-[#0a0a0a]/30 py-3 font-mono text-sm tracking-tight focus:outline-none focus:border-[#0a0a0a] transition-colors"
+        />
+      </label>
       {hint && <p className="text-xs text-[#0a0a0a]/55 mt-2">{hint}</p>}
       <Status address={value} network={network} checking={checking} check={check} />
     </div>

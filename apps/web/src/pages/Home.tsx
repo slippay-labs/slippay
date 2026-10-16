@@ -547,8 +547,8 @@ export default function Home() {
                 {t.footer.legal}
               </div>
               <ul className="space-y-2 text-sm">
-                <li><a href="#" className="hover:opacity-60">{t.footer.fTerms}</a></li>
-                <li><a href="#" className="hover:opacity-60">{t.footer.fPrivacy}</a></li>
+                <li><a href="/security" className="hover:opacity-60">{t.footer.fTerms}</a></li>
+                <li><a href="/docs" className="hover:opacity-60">{t.footer.fPrivacy}</a></li>
               </ul>
             </div>
           </div>

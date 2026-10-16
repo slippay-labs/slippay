@@ -140,7 +140,16 @@ export function MandateDemo({ lang = "pt" }: { lang?: Lang }) {
       </div>
 
       <span
+        role="link"
+        tabIndex={0}
         onClick={(e) => { e.stopPropagation(); window.open(TX, "_blank", "noopener"); }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.stopPropagation();
+            e.preventDefault();
+            window.open(TX, "_blank", "noopener");
+          }
+        }}
         className="mt-5 flex items-center justify-between border-t border-[#0a0a0a]/10 pt-5 font-mono text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 hover:text-[#0a0a0a]"
       >
         <span>{t.real}</span>

@@ -17,9 +17,14 @@
     "policy-checkout:spike": "NODE_PATH=apps/web/node_modules node scripts/policy-checkout-spike-server.mjs"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
     "eslint-plugin-jsx-a11y": "^6.10.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.7",
     "globals": "^15.14.0",
-    "typescript": "^5.6.0"
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.71.2"
   },
   "pnpm": {
     "overrides": {

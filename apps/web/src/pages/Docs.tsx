@@ -127,12 +127,13 @@ export default function Docs() {
 
   const html = useMemo(() => (doc ? renderMd(doc.content, doc.slug) : ""), [doc]);
 
-  // Build TOC from rendered H2s
+  // Build TOC from rendered H2s and delegate link clicks to SPA router
   const tocRef = useRef<HTMLDivElement>(null);
   const [toc, setToc] = useState<Array<{ id: string; text: string }>>([]);
   useEffect(() => {
-    if (!tocRef.current) return;
-    const headings = Array.from(tocRef.current.querySelectorAll("h2")) as HTMLHeadingElement[];
+    const el = tocRef.current;
+    if (!el) return;
+    const headings = Array.from(el.querySelectorAll("h2")) as HTMLHeadingElement[];
     const next = headings.map((h, i) => {
       const text = h.textContent ?? "";
       const id = text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || `section-${i}`;
@@ -140,7 +141,19 @@ export default function Docs() {
       return { id, text };
     });
     setToc(next);
-  }, [html]);
+
+    const handleClick = (e: MouseEvent) => {
+      const target = (e.target as HTMLElement).closest("a") as HTMLAnchorElement | null;
+      if (!target) return;
+      const href = target.getAttribute("href") ?? "";
+      if (href.startsWith("/docs") && !target.target) {
+        e.preventDefault();
+        nav(href);
+      }
+    };
+    el.addEventListener("click", handleClick);
+    return () => el.removeEventListener("click", handleClick);
+  }, [html, nav]);
 
   // Previous / next nav across the flat ordered list
   const flatIndex = DOCS.findIndex(d => d.slug === slug);
@@ -190,6 +203,7 @@ export default function Docs() {
           <div className="mb-8">
             <input
               type="text"
+              aria-label="Search docs"
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Search docs…"
@@ -279,17 +293,8 @@ export default function Docs() {
 
               <Reveal delay={200} className="docs-md mt-12">
                 <div
+                  ref={tocRef}
                   dangerouslySetInnerHTML={{ __html: html }}
-                  onClick={(e) => {
-                    const target = (e.target as HTMLElement).closest("a") as HTMLAnchorElement | null;
-                    if (!target) return;
-                    const href = target.getAttribute("href") ?? "";
-                    // Intercept only same-origin /docs internal links for SPA nav
-                    if (href.startsWith("/docs") && !target.target) {
-                      e.preventDefault();
-                      nav(href);
-                    }
-                  }}
                 />
               </Reveal>
 

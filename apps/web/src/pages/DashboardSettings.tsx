@@ -253,11 +253,16 @@ function Editable({ label, value, onChange, placeholder, hint, mono }: {
   placeholder?: string; hint?: string; mono?: boolean;
 }) {
   return (
-    <div>
+    <label className="block">
       <span className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block mb-2">{label}</span>
-      <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        className={`w-full bg-transparent border-b border-[#0a0a0a]/30 py-3 ${mono ? "font-mono text-sm" : "text-base"} tracking-tight focus:outline-none focus:border-[#0a0a0a] transition-colors`} />
+      <input
+        aria-label={label}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        className={`w-full bg-transparent border-b border-[#0a0a0a]/30 py-3 ${mono ? "font-mono text-sm" : "text-base"} tracking-tight focus:outline-none focus:border-[#0a0a0a] transition-colors`}
+      />
       {hint && <p className="text-xs text-[#0a0a0a]/55 mt-2">{hint}</p>}
-    </div>
+    </label>
   );
 }

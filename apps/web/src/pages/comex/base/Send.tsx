@@ -157,7 +157,7 @@ export default function BaseSend() {
         {/* Destination */}
         <div className="mb-6">
           <div className="flex items-center justify-between mb-3">
-            <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55">
+            <label htmlFor="base-send-destination" className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55">
               Destino
             </label>
             <button
@@ -170,6 +170,8 @@ export default function BaseSend() {
             </button>
           </div>
           <input
+            id="base-send-destination"
+            aria-label="Endereço Base (0x...)"
             type="text"
             value={destination}
             onChange={(e) => setDestination(e.target.value)}
@@ -191,12 +193,14 @@ export default function BaseSend() {
 
         {/* Amount */}
         <div className="mb-8">
-          <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
+          <label htmlFor="base-send-amount" className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
             Valor (USD)
           </label>
           <div className="flex items-baseline gap-2 border border-[#0a0a0a]/20 p-4">
             <span className="text-xl text-[#0a0a0a]/45">$</span>
             <input
+              id="base-send-amount"
+              aria-label="Valor em USD"
               type="text"
               inputMode="decimal"
               value={amount}

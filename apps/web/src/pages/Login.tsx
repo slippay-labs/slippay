@@ -34,7 +34,7 @@ export default function Login() {
               setLoading(false);
               if (error) setErr(error.message); else nav("/dashboard");
             }} className="mt-16 max-w-md space-y-8">
-              <Field label="Email" type="email" value={email} onChange={setEmail} required autoFocus />
+              <Field label="Email" type="email" value={email} onChange={setEmail} required />
               <Field label="Password" type="password" value={password} onChange={setPassword} required />
               <button disabled={loading}
                 className="w-full bg-[#0a0a0a] text-[#f1eee7] py-5 text-sm uppercase tracking-[0.18em] hover:bg-[#1a1a1a] disabled:opacity-50">
@@ -49,16 +49,17 @@ export default function Login() {
   );
 }
 
-function Field({ label, type, value, onChange, required, autoFocus }: {
+function Field({ label, type, value, onChange, required }: {
   label: string; type: string; value: string; onChange: (v: string) => void;
-  required?: boolean; autoFocus?: boolean;
+  required?: boolean;
 }) {
   return (
     <label className="block">
       <span className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block mb-2">{label}</span>
       <input
+        aria-label={label}
         type={type} value={value} onChange={e => onChange(e.target.value)}
-        required={required} autoFocus={autoFocus}
+        required={required}
         className="w-full bg-transparent border-b border-[#0a0a0a]/30 py-3 text-lg tracking-tight focus:outline-none focus:border-[#0a0a0a] transition-colors"
       />
     </label>

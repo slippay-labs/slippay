@@ -48,6 +48,7 @@ export function Waitlist({ source, lang }: { source: string; lang: "pt" | "en" }
         type="email"
         inputMode="email"
         autoComplete="email"
+        aria-label={t.ph || "Seu e-mail"}
         value={email}
         onChange={(e) => { setEmail(e.target.value); if (state === "bad") setState("idle"); }}
         placeholder={state === "bad" ? t.bad : t.ph}

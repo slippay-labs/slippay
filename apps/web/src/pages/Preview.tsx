@@ -41,11 +41,11 @@ export default function Preview() {
           <div className="flex items-center gap-8">
             <span className="text-xl font-extrabold tracking-tight text-[#e63946]">runfast.</span>
             <nav className="hidden md:flex items-center gap-6 text-xs text-[#444]">
-              <a className="hover:text-[#111]" href="#">running</a>
-              <a className="hover:text-[#111]" href="#">basquete</a>
-              <a className="hover:text-[#111]" href="#">academia</a>
-              <a className="hover:text-[#111]" href="#">streetwear</a>
-              <a className="hover:text-[#111]" href="#">ofertas</a>
+              <button type="button" className="hover:text-[#111] bg-transparent p-0 border-0 cursor-pointer">running</button>
+              <button type="button" className="hover:text-[#111] bg-transparent p-0 border-0 cursor-pointer">basquete</button>
+              <button type="button" className="hover:text-[#111] bg-transparent p-0 border-0 cursor-pointer">academia</button>
+              <button type="button" className="hover:text-[#111] bg-transparent p-0 border-0 cursor-pointer">streetwear</button>
+              <button type="button" className="hover:text-[#111] bg-transparent p-0 border-0 cursor-pointer">ofertas</button>
             </nav>
           </div>
           <div className="flex items-center gap-5 text-xs text-[#444]">

@@ -219,18 +219,19 @@ function BuyPanel({ address, email: initialEmail }: { address: string; email: st
       {step === "amount" && (
         <>
           <div className="border border-[#0a0a0a]/15 p-6">
-            <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
+            <label htmlFor="base-buy-brl-input" className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
               Você envia
             </label>
             <div className="flex items-baseline gap-2">
               <span className="text-xl text-[#0a0a0a]/55">R$</span>
               <input
+                id="base-buy-brl-input"
+                aria-label="Valor que você envia em Reais"
                 type="text"
                 inputMode="decimal"
                 value={brlInput}
                 onChange={(e) => setBrlInput(e.target.value.replace(/[^\d.,]/g, ""))}
                 placeholder="0"
-                autoFocus
                 className="w-full bg-transparent outline-none text-4xl tabular-nums placeholder:text-[#0a0a0a]/25"
               />
             </div>
@@ -254,9 +255,9 @@ function BuyPanel({ address, email: initialEmail }: { address: string; email: st
               ))}
             </div>
             <div className="my-5 h-px bg-[#0a0a0a]/10" />
-            <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
               Você recebe
-            </label>
+            </div>
             <div className="flex items-baseline gap-2">
               <span className="text-xl text-[#0a0a0a]/45">$</span>
               <span className="text-4xl tabular-nums">
@@ -325,23 +326,33 @@ function BuyPanel({ address, email: initialEmail }: { address: string; email: st
 
       {step === "identity" && (
         <div className="border border-[#0a0a0a]/15 p-6 space-y-4">
-          <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block">
             Dados para o Pix
-          </label>
-          <input
-            value={cpf}
-            onChange={(e) => setCpf(e.target.value)}
-            placeholder="CPF (11 dígitos)"
-            inputMode="numeric"
-            className="w-full bg-transparent border border-[#0a0a0a]/20 p-4 text-sm"
-          />
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="E-mail (recibo)"
-            inputMode="email"
-            className="w-full bg-transparent border border-[#0a0a0a]/20 p-4 text-sm"
-          />
+          </div>
+          <div>
+            <label htmlFor="base-buy-cpf" className="sr-only">CPF (11 dígitos)</label>
+            <input
+              id="base-buy-cpf"
+              aria-label="CPF (11 dígitos)"
+              value={cpf}
+              onChange={(e) => setCpf(e.target.value)}
+              placeholder="CPF (11 dígitos)"
+              inputMode="numeric"
+              className="w-full bg-transparent border border-[#0a0a0a]/20 p-4 text-sm"
+            />
+          </div>
+          <div>
+            <label htmlFor="base-buy-email" className="sr-only">E-mail (recibo)</label>
+            <input
+              id="base-buy-email"
+              aria-label="E-mail (recibo)"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="E-mail (recibo)"
+              inputMode="email"
+              className="w-full bg-transparent border border-[#0a0a0a]/20 p-4 text-sm"
+            />
+          </div>
           {err && (
             <div className="text-xs uppercase tracking-[0.14em] text-red-700 border-l-2 border-red-700 pl-3">
               {err}
@@ -367,9 +378,9 @@ function BuyPanel({ address, email: initialEmail }: { address: string; email: st
 
       {step === "pix" && order && (
         <div className="border border-[#0a0a0a]/15 p-6 space-y-4">
-          <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block">
             Pague com Pix
-          </label>
+          </div>
           <p className="text-sm text-[#0a0a0a]/70">
             Copie o código e pague no seu banco. O {asset} cai na sua carteira na rede Base assim que o Pix confirmar.
           </p>
@@ -674,12 +685,14 @@ function SellPanel({ address, email: initialEmail, sendTransaction }: {
           <>
             <div className="border border-[#0a0a0a]/15 p-6 space-y-4">
               <div>
-                <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
+                <label htmlFor="base-sell-usdc" className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
                   Valor em USDC
                 </label>
                 <div className="flex items-baseline gap-2">
                   <span className="text-xl text-[#0a0a0a]/45">$</span>
                   <input
+                    id="base-sell-usdc"
+                    aria-label="Valor em USDC"
                     type="text"
                     inputMode="decimal"
                     value={usdc}
@@ -696,9 +709,9 @@ function SellPanel({ address, email: initialEmail, sendTransaction }: {
 
               {usdcValid && (
                 <div>
-                  <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-1 block">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-1 block">
                     Você recebe (aprox.)
-                  </label>
+                  </div>
                   <div className="flex items-baseline gap-2">
                     <span className="text-xl text-[#0a0a0a]/45">R$</span>
                     <span className="text-4xl tabular-nums">
@@ -722,10 +735,12 @@ function SellPanel({ address, email: initialEmail, sendTransaction }: {
             </div>
 
             <div>
-              <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
+              <label htmlFor="base-sell-pix-key" className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
                 Chave Pix para receber
               </label>
               <input
+                id="base-sell-pix-key"
+                aria-label="Chave Pix para receber"
                 type="text"
                 value={pixKey}
                 onChange={(e) => setPixKey(e.target.value)}
@@ -738,10 +753,12 @@ function SellPanel({ address, email: initialEmail, sendTransaction }: {
             {/* Company document — asked once, then reused on every sell */}
             {!savedDoc && (
               <div>
-                <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
+                <label htmlFor="base-sell-doc-input" className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
                   CNPJ da empresa <span className="text-[#0a0a0a]/40 normal-case tracking-normal">(só nesta primeira venda)</span>
                 </label>
                 <input
+                  id="base-sell-doc-input"
+                  aria-label="CNPJ ou CPF da empresa"
                   type="text"
                   value={docInput}
                   onChange={(e) => setDocInput(e.target.value)}

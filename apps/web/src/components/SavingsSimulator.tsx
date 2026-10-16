@@ -23,6 +23,7 @@ function Slider({
       </div>
       <input
         type="range" min={min} max={max} step={step} value={value}
+        aria-label={label}
         onChange={(e) => onChange(Number(e.target.value))}
         className="w-full accent-[#0a0a0a] cursor-pointer"
       />

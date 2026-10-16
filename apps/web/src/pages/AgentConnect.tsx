@@ -119,8 +119,14 @@ export default function AgentConnect() {
 
         {/* agent key */}
         <Field label="Agent session key">
-          <input value={pubkey} onChange={e => setPubkey(e.target.value)} placeholder="G… address or 64-hex pubkey"
-            className="w-full bg-transparent border-b py-2 font-mono text-sm" style={{ borderColor: "#0a0a0a33" }} />
+          <input
+            aria-label="Agent session key"
+            value={pubkey}
+            onChange={e => setPubkey(e.target.value)}
+            placeholder="G… address or 64-hex pubkey"
+            className="w-full bg-transparent border-b py-2 font-mono text-sm"
+            style={{ borderColor: "#0a0a0a33" }}
+          />
           <button onClick={genKey} className="mt-2 text-xs underline opacity-70">generate one for me</button>
           {generated && (
             <div className="mt-2 text-[11px] font-mono break-all p-2 rounded" style={{ background: "#0a0a0a", color: lime }}>
@@ -131,12 +137,24 @@ export default function AgentConnect() {
 
         <div className="grid md:grid-cols-2 gap-6">
           <Field label="Per-transaction limit (USDC)">
-            <input value={perTx} onChange={e => setPerTx(e.target.value)} inputMode="decimal"
-              className="w-full bg-transparent border-b py-2 text-2xl tabular-nums" style={{ borderColor: "#0a0a0a33" }} />
+            <input
+              aria-label="Per-transaction limit (USDC)"
+              value={perTx}
+              onChange={e => setPerTx(e.target.value)}
+              inputMode="decimal"
+              className="w-full bg-transparent border-b py-2 text-2xl tabular-nums"
+              style={{ borderColor: "#0a0a0a33" }}
+            />
           </Field>
           <Field label="Daily limit (USDC)">
-            <input value={daily} onChange={e => setDaily(e.target.value)} inputMode="decimal"
-              className="w-full bg-transparent border-b py-2 text-2xl tabular-nums" style={{ borderColor: "#0a0a0a33" }} />
+            <input
+              aria-label="Daily limit (USDC)"
+              value={daily}
+              onChange={e => setDaily(e.target.value)}
+              inputMode="decimal"
+              className="w-full bg-transparent border-b py-2 text-2xl tabular-nums"
+              style={{ borderColor: "#0a0a0a33" }}
+            />
           </Field>
         </div>
 
@@ -153,17 +171,29 @@ export default function AgentConnect() {
         </Field>
 
         <Field label="Allowed recipients (one per line · empty = any, within budget)">
-          <textarea value={recipients} onChange={e => setRecipients(e.target.value)} rows={3}
+          <textarea
+            aria-label="Allowed recipients"
+            value={recipients}
+            onChange={e => setRecipients(e.target.value)}
+            rows={3}
             placeholder="G… / C…  (leave blank to allow any recipient within the limits)"
-            className="w-full bg-transparent border p-3 font-mono text-xs rounded" style={{ borderColor: "#0a0a0a22" }} />
+            className="w-full bg-transparent border p-3 font-mono text-xs rounded"
+            style={{ borderColor: "#0a0a0a22" }}
+          />
         </Field>
 
         <details className="mb-8">
           <summary className="text-sm opacity-70 cursor-pointer">Advanced · bind a policy (ssl_hash)</summary>
           <Field label="Policy JSON (hashed → ssl_hash, bound to the session on-chain)">
-            <textarea value={policy} onChange={e => setPolicy(e.target.value)} rows={4}
+            <textarea
+              aria-label="Policy JSON"
+              value={policy}
+              onChange={e => setPolicy(e.target.value)}
+              rows={4}
               placeholder='{"purpose":"buy x402 API calls","max_per_day":"50"}'
-              className="w-full bg-transparent border p-3 font-mono text-xs rounded" style={{ borderColor: "#0a0a0a22" }} />
+              className="w-full bg-transparent border p-3 font-mono text-xs rounded"
+              style={{ borderColor: "#0a0a0a22" }}
+            />
           </Field>
         </details>
 
@@ -196,9 +226,9 @@ export default function AgentConnect() {
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
-    <div className="mb-6">
-      <div className="text-[10px] uppercase tracking-[0.18em] opacity-55 mb-1">{label}</div>
+    <label className="block mb-6">
+      <span className="text-[10px] uppercase tracking-[0.18em] opacity-55 mb-1 block">{label}</span>
       {children}
-    </div>
+    </label>
   );
 }

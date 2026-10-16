@@ -118,10 +118,12 @@ export default function SolanaSend() {
 
         {/* Destination */}
         <div className="mb-6">
-          <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
+          <label htmlFor="solana-send-destination" className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
             Destino
           </label>
           <input
+            id="solana-send-destination"
+            aria-label="Endereço Solana (base58)"
             type="text"
             value={destination}
             onChange={(e) => setDestination(e.target.value)}
@@ -143,10 +145,12 @@ export default function SolanaSend() {
 
         {/* Amount */}
         <div className="mb-8">
-          <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
+          <label htmlFor="solana-send-amount" className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
             Valor (USD)
           </label>
           <input
+            id="solana-send-amount"
+            aria-label="Valor em USD"
             type="number"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}

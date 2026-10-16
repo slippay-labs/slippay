@@ -125,6 +125,7 @@ export default function Yield() {
         <div>
           <p className={labelCls}>Valor USDC</p>
           <input
+            aria-label="Valor a aplicar em USDC"
             className={inputCls}
             type="number"
             min="0"
@@ -162,6 +163,7 @@ export default function Yield() {
         <div>
           <p className={labelCls}>Valor USDC</p>
           <input
+            aria-label="Valor a resgatar em USDC"
             className={inputCls}
             type="number"
             min="0"

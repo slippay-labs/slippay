@@ -32,10 +32,8 @@ export default tseslint.config(
     },
   },
 
-  // Accessibility — bounty #86
-  // Enable the alt-text rule so an <img> without an `alt` attribute
-  // fails the lint job. Decorative images get `alt=""` + role="presentation";
-  // meaningful images get descriptive alt text.
+  // Accessibility — bounty #86 & #335
+  // Broader jsx-a11y recommended set enabled for apps/web/src
   {
     files: ["apps/web/src/**/*.{ts,tsx,jsx}"],
     plugins: {
@@ -48,6 +46,7 @@ export default tseslint.config(
       },
     },
     rules: {
+      ...a11y.configs.recommended.rules,
       "jsx-a11y/alt-text": "error",
       // Strict: also enforce that long alt text is not just the file name.
       "jsx-a11y/no-redundant-roles": "warn",

@@ -133,12 +133,14 @@ function BuyPanel({ address, email: initialEmail }: { address: string; email: st
       {step === "amount" && (
         <>
           <div className="border border-[#0a0a0a]/15 p-6">
-            <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
+            <label htmlFor="solana-buy-brl-input" className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
               Você envia
             </label>
             <div className="flex items-baseline gap-2">
               <span className="text-xl text-[#0a0a0a]/55">R$</span>
               <input
+                id="solana-buy-brl-input"
+                aria-label="Valor que você envia em Reais"
                 type="number"
                 min={0}
                 value={brl}
@@ -163,9 +165,9 @@ function BuyPanel({ address, email: initialEmail }: { address: string; email: st
               ))}
             </div>
             <div className="my-5 h-px bg-[#0a0a0a]/10" />
-            <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
+            <div className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
               Você recebe (aprox.)
-            </label>
+            </div>
             <div className="flex items-baseline gap-2">
               <span className="text-xl text-[#0a0a0a]/45">$</span>
               <span className="text-4xl tabular-nums">
@@ -191,23 +193,33 @@ function BuyPanel({ address, email: initialEmail }: { address: string; email: st
 
       {step === "identity" && (
         <div className="border border-[#0a0a0a]/15 p-6 space-y-4">
-          <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block">
             Dados para o Pix
-          </label>
-          <input
-            value={cpf}
-            onChange={(e) => setCpf(e.target.value)}
-            placeholder="CPF (11 digitos)"
-            inputMode="numeric"
-            className="w-full bg-transparent border border-[#0a0a0a]/20 p-4 text-sm"
-          />
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="E-mail (recibo)"
-            inputMode="email"
-            className="w-full bg-transparent border border-[#0a0a0a]/20 p-4 text-sm"
-          />
+          </div>
+          <div>
+            <label htmlFor="solana-buy-cpf" className="sr-only">CPF (11 dígitos)</label>
+            <input
+              id="solana-buy-cpf"
+              aria-label="CPF (11 dígitos)"
+              value={cpf}
+              onChange={(e) => setCpf(e.target.value)}
+              placeholder="CPF (11 digitos)"
+              inputMode="numeric"
+              className="w-full bg-transparent border border-[#0a0a0a]/20 p-4 text-sm"
+            />
+          </div>
+          <div>
+            <label htmlFor="solana-buy-email" className="sr-only">E-mail (recibo)</label>
+            <input
+              id="solana-buy-email"
+              aria-label="E-mail (recibo)"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="E-mail (recibo)"
+              inputMode="email"
+              className="w-full bg-transparent border border-[#0a0a0a]/20 p-4 text-sm"
+            />
+          </div>
           {err && <div className="text-xs uppercase tracking-[0.14em] text-red-700 border-l-2 border-red-700 pl-3">{err}</div>}
           <div className="flex gap-4 items-center pt-2">
             <button
@@ -229,9 +241,9 @@ function BuyPanel({ address, email: initialEmail }: { address: string; email: st
 
       {step === "pix" && order && (
         <div className="border border-[#0a0a0a]/15 p-6 space-y-4">
-          <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block">
             Pague com Pix
-          </label>
+          </div>
           <p className="text-sm text-[#0a0a0a]/70">
             Copie o codigo e pague no seu banco. O {asset} cai na sua carteira assim que o Pix confirmar.
           </p>
@@ -498,12 +510,14 @@ function SellPanel({ address, signTransaction }: {
           <>
             <div className="border border-[#0a0a0a]/15 p-6 space-y-4">
               <div>
-                <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
+                <label htmlFor="solana-sell-usdc" className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
                   Valor em USDC
                 </label>
                 <div className="flex items-baseline gap-2">
                   <span className="text-xl text-[#0a0a0a]/45">$</span>
                   <input
+                    id="solana-sell-usdc"
+                    aria-label="Valor em USDC"
                     type="number"
                     value={usdc}
                     onChange={(e) => setUsdc(e.target.value)}
@@ -523,9 +537,9 @@ function SellPanel({ address, signTransaction }: {
 
               {usdcValid && (
                 <div>
-                  <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-1 block">
+                  <div className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-1 block">
                     Voce recebe (aprox.)
-                  </label>
+                  </div>
                   <div className="flex items-baseline gap-2">
                     <span className="text-xl text-[#0a0a0a]/45">R$</span>
                     <span className="text-4xl tabular-nums">
@@ -547,10 +561,12 @@ function SellPanel({ address, signTransaction }: {
             </div>
 
             <div>
-              <label className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
+              <label htmlFor="solana-sell-pix-key" className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 mb-3 block">
                 Chave Pix para receber
               </label>
               <input
+                id="solana-sell-pix-key"
+                aria-label="Chave Pix para receber"
                 type="text"
                 value={pixKey}
                 onChange={(e) => setPixKey(e.target.value)}

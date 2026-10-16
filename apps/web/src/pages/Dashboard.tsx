@@ -96,9 +96,15 @@ export default function Dashboard() {
             }} className="mt-14 max-w-md space-y-8">
               <label className="block">
                 <span className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block mb-2">Business name</span>
-                <input value={displayName} onChange={e => setDisplayName(e.target.value)}
-                  autoFocus required minLength={1} maxLength={120}
-                  className="w-full bg-transparent border-b border-[#0a0a0a]/30 py-3 text-lg tracking-tight focus:outline-none focus:border-[#0a0a0a] transition-colors" />
+                <input
+                  aria-label="Business name"
+                  value={displayName}
+                  onChange={e => setDisplayName(e.target.value)}
+                  required
+                  minLength={1}
+                  maxLength={120}
+                  className="w-full bg-transparent border-b border-[#0a0a0a]/30 py-3 text-lg tracking-tight focus:outline-none focus:border-[#0a0a0a] transition-colors"
+                />
               </label>
               <StellarAddressInput
                 value={stellarAddress}

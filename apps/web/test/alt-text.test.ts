@@ -9,11 +9,12 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const SRC_ROOT = new URL("../src/", import.meta.url).pathname;
+const SRC_ROOT = fileURLToPath(new URL("../src/", import.meta.url));
 
 /** Recursively collect every .tsx / .jsx / .ts file under SRC_ROOT. */
-function* walk(dir) {
+function* walk(dir: string): Generator<string> {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     const st = statSync(full);
@@ -29,10 +30,10 @@ function* walk(dir) {
 }
 
 /** Extract every <img ...> tag from a source file. */
-function extractImgTags(src) {
-  const tags = [];
+function extractImgTags(src: string): string[] {
+  const tags: string[] = [];
   // Match <img ...> including across newlines (multiline flag).
-  const re = /<img[^>]*>/g;
+  const re = /<img [^>]*>/g;
   for (const m of src.matchAll(re)) {
     tags.push(m[0]);
   }
@@ -40,7 +41,7 @@ function extractImgTags(src) {
 }
 
 /** Check whether an <img> tag has an `alt` attribute (even an empty one). */
-function hasAlt(imgTag) {
+function hasAlt(imgTag: string): boolean {
   // Match `alt="..."`, `alt=''`, `alt={...}` etc. — the attribute name
   // must be present.
   return /\balt\s*=/.test(imgTag);

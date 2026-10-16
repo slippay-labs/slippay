@@ -99,10 +99,16 @@ export default function Vault() {
                   ))}
                 </div>
 
-                <input type="text" inputMode="decimal" value={amount}
-                  onChange={e => setAmount(e.target.value)} disabled={busy}
+                <input
+                  aria-label="Valor em USDC"
+                  type="text"
+                  inputMode="decimal"
+                  value={amount}
+                  onChange={e => setAmount(e.target.value)}
+                  disabled={busy}
                   placeholder="valor em USDC"
-                  className="mt-4 w-full bg-transparent border-b border-[#0a0a0a]/30 text-4xl tabular-nums py-2 disabled:opacity-60" />
+                  className="mt-4 w-full bg-transparent border-b border-[#0a0a0a]/30 text-4xl tabular-nums py-2 disabled:opacity-60"
+                />
 
                 <button onClick={doSubmit} disabled={busy || !amount.trim()}
                   className="mt-6 w-full bg-[#0a0a0a] text-[#f1eee7] py-5 text-sm uppercase tracking-[0.18em] hover:bg-[#1a1a1a] disabled:opacity-50">

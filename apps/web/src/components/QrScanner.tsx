@@ -63,18 +63,62 @@ export function QrScanner({ onScan, onClose }: { onScan: (text: string) => void;
     };
   }, [onScan]);
 
+  // Keyboard navigation: Escape key closes the scanner modal
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   return (
-    <div className="fixed inset-0 z-50 bg-[#0a0a0a] flex flex-col items-center justify-center">
-      <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" muted playsInline />
-      <canvas ref={canvasRef} className="hidden" />
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Leitor de QR code"
+      className="fixed inset-0 z-50 bg-[#0a0a0a] flex flex-col items-center justify-center"
+    >
+      <video
+        ref={videoRef}
+        aria-label="Câmera do leitor de QR code"
+        className="absolute inset-0 w-full h-full object-cover"
+        muted
+        playsInline
+      />
+      <canvas ref={canvasRef} className="hidden" aria-hidden="true" />
       {/* framing reticle */}
-      <div className="relative z-10 w-[70vw] max-w-[300px] aspect-square border-2 border-[#FDDA24]" />
-      <div className="relative z-10 mt-8 text-[#f1eee7] text-sm font-mono uppercase tracking-[0.18em]">
+      <div
+        aria-hidden="true"
+        className="relative z-10 w-[70vw] max-w-[300px] aspect-square border-2 border-[#FDDA24]"
+      />
+      {/* Live region for scanner state announcement */}
+      <div
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="relative z-10 mt-8 text-[#f1eee7] text-sm font-mono uppercase tracking-[0.18em]"
+      >
         {err ?? "aponta pro QR de cobrança"}
       </div>
-      {err && <div className="relative z-10 mt-3 text-[#f1eee7]/70 text-xs max-w-[80vw] text-center">{err}</div>}
-      <button onClick={onClose}
-        className="relative z-10 mt-10 px-6 py-3 border border-[#f1eee7]/40 text-[#f1eee7] text-[11px] uppercase tracking-[0.22em]">
+      {err && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="relative z-10 mt-3 text-[#f1eee7]/70 text-xs max-w-[80vw] text-center"
+        >
+          {err}
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Cancelar leitura do QR code"
+        className="relative z-10 mt-10 px-6 py-3 border border-[#f1eee7]/40 text-[#f1eee7] text-[11px] uppercase tracking-[0.22em] focus:outline-none focus:ring-2 focus:ring-[#FDDA24]"
+      >
         Cancelar
       </button>
     </div>

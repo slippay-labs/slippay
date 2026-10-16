@@ -60,14 +60,28 @@ export default function Verify() {
 
         <div className="mt-10 grid md:grid-cols-2 gap-4">
           <div>
-            <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#0a0a0a]/55 mb-2">certificate (JSON)</div>
-            <textarea value={cert} onChange={(e) => setCert(e.target.value)} spellCheck={false}
-              className="w-full h-44 bg-[#0a0a0a] text-[#FDDA24] font-mono text-xs p-4 resize-y outline-none" />
+            <label className="block">
+              <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#0a0a0a]/55 mb-2 block">certificate (JSON)</span>
+              <textarea
+                aria-label="certificate (JSON)"
+                value={cert}
+                onChange={(e) => setCert(e.target.value)}
+                spellCheck={false}
+                className="w-full h-44 bg-[#0a0a0a] text-[#FDDA24] font-mono text-xs p-4 resize-y outline-none"
+              />
+            </label>
           </div>
           <div>
-            <div className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#0a0a0a]/55 mb-2">agent spec (.axl)</div>
-            <textarea value={spec} onChange={(e) => setSpec(e.target.value)} spellCheck={false}
-              className="w-full h-44 bg-[#0a0a0a] text-[#f1eee7] font-mono text-xs p-4 resize-y outline-none" />
+            <label className="block">
+              <span className="font-mono text-[10px] uppercase tracking-[0.22em] text-[#0a0a0a]/55 mb-2 block">agent spec (.axl)</span>
+              <textarea
+                aria-label="agent spec (.axl)"
+                value={spec}
+                onChange={(e) => setSpec(e.target.value)}
+                spellCheck={false}
+                className="w-full h-44 bg-[#0a0a0a] text-[#f1eee7] font-mono text-xs p-4 resize-y outline-none"
+              />
+            </label>
           </div>
         </div>
 

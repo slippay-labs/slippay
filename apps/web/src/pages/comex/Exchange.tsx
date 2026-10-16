@@ -167,6 +167,7 @@ export default function Exchange() {
         <div>
           <p className={labelCls}>Valor em R$</p>
           <input
+            aria-label="Valor em R$"
             className={inputCls}
             type="number"
             min="0"
@@ -231,6 +232,7 @@ export default function Exchange() {
         <div>
           <p className={labelCls}>Valor em USD</p>
           <input
+            aria-label="Valor em USD"
             className={inputCls}
             type="number"
             min="0"
@@ -244,6 +246,7 @@ export default function Exchange() {
         <div>
           <p className={labelCls}>Chave Pix (destino)</p>
           <input
+            aria-label="Chave Pix (destino)"
             className="w-full bg-transparent border border-[#0a0a0a]/20 p-4 text-base disabled:opacity-60"
             type="text"
             placeholder="CPF, e-mail, telefone ou chave aleatória"
