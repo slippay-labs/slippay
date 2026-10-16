@@ -15,7 +15,7 @@ export const config = {
   // and the stream errors forever. Map the Stellar-facing shape to that column.
   merchantNetwork: rawNetwork === "TESTNET" ? "testnet" : "mainnet",
   // Fail-closed gating flag: anything not explicitly TESTNET is treated as
-  // mainnet. `network` keeps its Stellar-facing "TESTNET"|"PUBLIC" shape (used
+  // mainnet. `network` keeps its Stellar-facing "TESTNET" | "PUBLIC" shape (used
   // by horizon/manager); this flag is the one the SSRF guard keys off of so a
   // PUBLIC network can never silently disable the webhook blocklist (audit-003).
   isMainnet: rawNetwork !== "TESTNET",
