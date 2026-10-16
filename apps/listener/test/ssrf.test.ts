@@ -5,7 +5,14 @@ vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(),
 }));
 
-import { isSafeWebhookUrl, isBlockedIp, validateWebhookUrl } from "../src/ssrf.js";
+import {
+  isSafeWebhookUrl,
+  isBlockedIp,
+  validateWebhookUrl,
+  normaliseHost,
+  IPV4_BLOCKED_RANGES,
+  IPV6_BLOCKED_RANGES,
+} from "../src/ssrf.js";
 
 const mockLookup = lookup as unknown as ReturnType<typeof vi.fn>;
 
@@ -84,6 +91,73 @@ describe("isBlockedIp", () => {
     expect(isBlockedIp("::ffff:10.0.0.1")).toBe(true);
   });
 
+  describe("transition & translation ranges (fixes #247)", () => {
+    it("blocks 6to4 (2002::/16) addresses", () => {
+      // Embedded RFC1918 or metadata IP
+      expect(isBlockedIp("2002:a9fe:a9fe::1")).toBe(true);
+      expect(isBlockedIp("2002:c0a8:0101::1")).toBe(true);
+      expect(isBlockedIp("2002::1")).toBe(true);
+    });
+
+    it("blocks Teredo (2001::/32) addresses", () => {
+      expect(isBlockedIp("2001::1")).toBe(true);
+      expect(isBlockedIp("2001:0000:4136:e378:8000:63bf:3fff:fdd2")).toBe(true);
+    });
+
+    it("blocks NAT64 (64:ff9b::/96 and 64:ff9b:1::/48) addresses", () => {
+      // 64:ff9b::a9fe:a9fe embeds 169.254.169.254
+      expect(isBlockedIp("64:ff9b::a9fe:a9fe")).toBe(true);
+      expect(isBlockedIp("64:ff9b::7f00:0001")).toBe(true); // embeds 127.0.0.1
+      expect(isBlockedIp("64:ff9b::1")).toBe(true);
+      expect(isBlockedIp("64:ff9b:1::1")).toBe(true);
+    });
+
+    it("enumerates every blocked IPv4 range with a sample address", () => {
+      const samples = [
+        "0.1.2.3",          // 0.0.0.0/8
+        "10.254.1.1",       // 10.0.0.0/8
+        "100.64.10.1",      // 100.64.0.0/10
+        "127.0.0.5",        // 127.0.0.0/8
+        "169.254.169.254",  // 169.254.0.0/16
+        "172.16.50.1",      // 172.16.0.0/12
+        "192.0.0.8",        // 192.0.0.0/24
+        "192.0.2.1",        // 192.0.2.0/24
+        "192.168.1.100",    // 192.168.0.0/16
+        "198.18.0.25",      // 198.18.0.0/15
+        "198.51.100.4",     // 198.51.100.0/24
+        "203.0.113.8",      // 203.0.113.0/24
+        "224.1.2.3",        // 224.0.0.0/4
+        "240.5.6.7",        // 240.0.0.0/4
+      ];
+      expect(samples.length).toBe(IPV4_BLOCKED_RANGES.length);
+      for (const ip of samples) {
+        expect(isBlockedIp(ip)).toBe(true);
+      }
+    });
+
+    it("enumerates every blocked IPv6 range with a sample address", () => {
+      const samples = [
+        "::",                                         // unspecified
+        "::1",                                        // loopback
+        "fc00::1",                                    // ULA
+        "fe80::1",                                    // link-local
+        "ff02::1",                                    // multicast
+        "100::1",                                     // discard-only
+        "2001:db8::1",                                // documentation
+        "2001::1",                                    // Teredo
+        "2001:20::1",                                 // ORCHIDv2
+        "2001:10::1",                                 // Deprecated ORCHID
+        "64:ff9b::1",                                 // NAT64 well-known
+        "64:ff9b:1::1",                               // NAT64 local-use
+        "2002::1",                                    // 6to4
+      ];
+      expect(samples.length).toBe(IPV6_BLOCKED_RANGES.length);
+      for (const ip of samples) {
+        expect(isBlockedIp(ip)).toBe(true);
+      }
+    });
+  });
+
   it("blocks multicast and reserved", () => {
     expect(isBlockedIp("224.0.0.1")).toBe(true);
     expect(isBlockedIp("240.0.0.1")).toBe(true);
@@ -136,6 +210,32 @@ describe("validateWebhookUrl · DNS rebinding defense", () => {
     const r = await validateWebhookUrl("https://169.254.169.254/latest/meta-data/", false);
     expect(r.safe).toBe(false);
   });
+
+  it("rejects 64:ff9b::a9fe:a9fe with embedded-address reason (literal path)", async () => {
+    const r = await validateWebhookUrl("https://[64:ff9b::a9fe:a9fe]/wh", false);
+    expect(r.safe).toBe(false);
+    if (!r.safe) {
+      expect(r.reason).toBe("blocked_ip:embedded:169.254.169.254");
+    }
+  });
+
+  it("rejects 64:ff9b::a9fe:a9fe with embedded-address reason (DNS path)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "64:ff9b::a9fe:a9fe", family: 6 }]);
+    const r = await validateWebhookUrl("https://nat64.attacker.example/wh", false);
+    expect(r.safe).toBe(false);
+    if (!r.safe) {
+      expect(r.reason).toBe("blocked_ip:embedded:169.254.169.254");
+    }
+  });
+
+  it("rejects 2002:a9fe:a9fe::1 with embedded-address reason (6to4)", async () => {
+    mockLookup.mockResolvedValueOnce([{ address: "2002:a9fe:a9fe::1", family: 6 }]);
+    const r = await validateWebhookUrl("https://6to4.attacker.example/wh", false);
+    expect(r.safe).toBe(false);
+    if (!r.safe) {
+      expect(r.reason).toBe("blocked_ip:embedded:169.254.169.254");
+    }
+  });
 });
 
 // M3 regression guard: the entire SSRF defense used to be gated behind a
@@ -161,4 +261,83 @@ describe("M3 · blocklist enforced on all networks (allowLocal=false)", () => {
     const r = await validateWebhookUrl("https://loopback.attacker.example/wh", false);
     expect(r.safe).toBe(false);
   });
+});
+
+describe("normaliseHost (fixes #248)", () => {
+  it("normalises standard hostnames and IPs", () => {
+    expect(normaliseHost("EXAMPLE.COM")).toEqual({ valid: true, host: "example.com", isIp: false });
+    expect(normaliseHost("127.0.0.1")).toEqual({
+      valid: true,
+      host: "127.0.0.1",
+      isIp: true,
+      parsedIp: expect.anything(),
+    });
+  });
+
+  it("strips balanced brackets from IPv6 and normalises representation", () => {
+    expect(normaliseHost("[::1]")).toEqual({
+      valid: true,
+      host: "::1",
+      isIp: true,
+      parsedIp: expect.anything(),
+    });
+    expect(normaliseHost("[0:0:0:0:0:0:0:1]")).toEqual({
+      valid: true,
+      host: "::1",
+      isIp: true,
+      parsedIp: expect.anything(),
+    });
+  });
+
+  it("rejects unbalanced or malformed brackets", () => {
+    expect(normaliseHost("[::1")).toEqual({ valid: false, reason: "unbalanced_brackets" });
+    expect(normaliseHost("::1]")).toEqual({ valid: false, reason: "unbalanced_brackets" });
+    expect(normaliseHost("[[::1]]")).toEqual({ valid: false, reason: "malformed_brackets" });
+  });
+
+  it("rejects zone identifiers (scoped addresses)", () => {
+    expect(normaliseHost("fe80::1%eth0")).toEqual({ valid: false, reason: "zone_identifier_rejected" });
+    expect(normaliseHost("[fe80::1%eth0]")).toEqual({ valid: false, reason: "zone_identifier_rejected" });
+  });
+});
+
+describe("literal-IP path test vectors (fixes #248)", () => {
+  const vectors = [
+    { target: "https://[::1]/wh", expectedReason: "ip_blocked", desc: "loopback [::1]" },
+    {
+      target: "https://[::ffff:127.0.0.1]/wh",
+      expectedReason: "blocked_ip:embedded:127.0.0.1",
+      desc: "IPv4-mapped ::ffff:127.0.0.1",
+    },
+    {
+      target: "https://[0:0:0:0:0:0:0:1]/wh",
+      expectedReason: "ip_blocked",
+      desc: "uncompressed loopback 0:0:0:0:0:0:0:1",
+    },
+    {
+      target: "https://[fe80::1%eth0]/wh",
+      expectedReason: "zone_identifier_rejected",
+      desc: "link-local with zone identifier fe80::1%eth0",
+    },
+    {
+      target: "https://169.254.169.254/wh",
+      expectedReason: "ip_blocked",
+      desc: "cloud metadata IPv4 literal 169.254.169.254",
+    },
+    {
+      target: "https://[64:ff9b::a9fe:a9fe]/wh",
+      expectedReason: "blocked_ip:embedded:169.254.169.254",
+      desc: "NAT64 prefix embedding cloud metadata 64:ff9b::a9fe:a9fe",
+    },
+  ];
+
+  for (const v of vectors) {
+    it(`rejects ${v.desc} with reason ${v.expectedReason}`, async () => {
+      const r = await validateWebhookUrl(v.target, false);
+      expect(r.safe).toBe(false);
+      if (!r.safe) {
+        expect(r.reason).toBe(v.expectedReason);
+      }
+    });
+  }
 });
