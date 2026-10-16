@@ -15,9 +15,11 @@ const hz = vi.hoisted(() => {
       const entry: { order: string; limit: number; cursor?: string } = { order: cur.order, limit: cur.limit };
       if (cur.cursor !== undefined) entry.cursor = cur.cursor;
       calls.push(entry);
-      const page = queue.shift() ?? { records: [] };
+      const next = queue.shift();
       cur.order = "asc"; cur.limit = 0; delete cur.cursor;
-      return page;
+      if (next instanceof Error) throw next;
+      if (typeof next === "function") return next();
+      return next ?? { records: [] };
     },
   };
   const Server = class { constructor(_url: string) {} payments() { return builder; } };
@@ -34,7 +36,12 @@ vi.mock("../src/matcher.js", () => ({ matchPaymentToOrder: vi.fn(() => ({ outcom
 vi.mock("../src/reconciler.js", () => ({ reconcileMatch: vi.fn(async () => undefined) }));
 vi.mock("../src/log.js", () => ({ log: vi.fn() }));
 
-import { watchAccount } from "../src/horizon.js";
+import {
+  watchAccount,
+  ledgerFromPagingToken,
+  isCursorError,
+} from "../src/horizon.js";
+import { log } from "../src/log.js";
 
 // --- db stub: enough of the Supabase chain for listener_state + orders -------
 const stateRow = { current: null as null | { paging_token: string } };
@@ -73,6 +80,7 @@ function paymentRecord(token: string) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  vi.clearAllMocks();
   hz.reset();
   stateRow.current = null;
   upserted.length = 0;
@@ -172,3 +180,137 @@ describe("watchAccount · shutdown", () => {
     expect(hz.calls.length).toBe(before);
   });
 });
+
+describe("ledgerFromPagingToken", () => {
+  it("decodes the 32-bit ledger sequence from a 64-bit operation paging token", () => {
+    const ledger = 5000;
+    const token = ((BigInt(ledger) << 32n) | 1234n).toString();
+    expect(ledgerFromPagingToken(token)).toBe(ledger);
+  });
+
+  it("returns null for non-numeric or invalid tokens", () => {
+    expect(ledgerFromPagingToken("not-a-number")).toBeNull();
+    expect(ledgerFromPagingToken("")).toBeNull();
+    expect(ledgerFromPagingToken("0")).toBeNull();
+  });
+});
+
+describe("isCursorError", () => {
+  it("recognizes 410 Gone status as a cursor error", () => {
+    expect(isCursorError({ status: 410 })).toBe(true);
+    expect(isCursorError({ response: { status: 410 } })).toBe(true);
+  });
+
+  it("recognizes extras.invalid_field = 'cursor'", () => {
+    expect(isCursorError({ response: { data: { extras: { invalid_field: "cursor" } } } })).toBe(true);
+  });
+
+  it("recognizes before_history and stale_history error types", () => {
+    expect(isCursorError({ response: { data: { type: "https://stellar.org/horizon-errors/before_history" } } })).toBe(true);
+    expect(isCursorError({ response: { data: { title: "Cursor Before History" } } })).toBe(true);
+  });
+
+  it("recognizes error message containing cursor invalidity keywords", () => {
+    expect(isCursorError(new Error("cursor is invalid or pruned"))).toBe(true);
+    expect(isCursorError(new Error("paging token is before_history"))).toBe(true);
+  });
+
+  it("returns false for non-cursor errors", () => {
+    expect(isCursorError(null)).toBe(false);
+    expect(isCursorError({ status: 500 })).toBe(false);
+    expect(isCursorError({ response: { status: 502 } })).toBe(false);
+    expect(isCursorError(new Error("network timeout"))).toBe(false);
+  });
+});
+
+describe("watchAccount · cursor reset & recovery (Issue #256)", () => {
+  it("recovers from 410 cursor error, resets to head, and logs alert when gap > backfill window", async () => {
+    const oldLedger = 1_000;
+    const oldToken = ((BigInt(oldLedger) << 32n) | 1n).toString();
+    stateRow.current = { paging_token: oldToken };
+
+    const newLedger = 2_500;
+    const newHeadToken = ((BigInt(newLedger) << 32n) | 1n).toString();
+
+    const error410 = Object.assign(new Error("Cursor Gone"), { status: 410 });
+    hz.setQueue([
+      error410,
+      headPage(newHeadToken),
+      { records: [paymentRecord(newHeadToken)] },
+    ]);
+
+    const stop = await watchAccount({ db, network: "TESTNET", accountId: ACCOUNT });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(hz.calls[0]).toMatchObject({ order: "asc", cursor: oldToken });
+    expect(hz.calls[1]).toMatchObject({ order: "desc", limit: 1 });
+
+    expect(log).toHaveBeenCalledWith("alert", "cursor_reset_exceeded_backfill_window", expect.objectContaining({
+      account: ACCOUNT,
+      oldLedger,
+      newLedger,
+      gapLedgers: 1_500,
+    }));
+
+    const resetUpsert = upserted.find((u) => u.paging_token === newHeadToken);
+    expect(resetUpsert).toBeDefined();
+    expect(resetUpsert?.last_ledger).toBe(newLedger);
+
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(hz.calls[2]).toMatchObject({ order: "asc", cursor: newHeadToken });
+    stop();
+  });
+
+  it("recovers from before_history error and logs info when gap <= backfill window", async () => {
+    const oldLedger = 10_000;
+    const oldToken = ((BigInt(oldLedger) << 32n) | 1n).toString();
+    stateRow.current = { paging_token: oldToken };
+
+    const newLedger = 10_050;
+    const newHeadToken = ((BigInt(newLedger) << 32n) | 1n).toString();
+
+    const beforeHistoryErr = Object.assign(new Error("before history"), {
+      response: {
+        status: 400,
+        data: { type: "https://stellar.org/horizon-errors/before_history" },
+      },
+    });
+
+    hz.setQueue([
+      beforeHistoryErr,
+      headPage(newHeadToken),
+    ]);
+
+    const stop = await watchAccount({ db, network: "TESTNET", accountId: ACCOUNT });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(log).toHaveBeenCalledWith("info", "cursor_reset_within_window", expect.objectContaining({
+      account: ACCOUNT,
+      oldLedger,
+      newLedger,
+      gapLedgers: 50,
+    }));
+
+    stop();
+  });
+
+  it("does not reset cursor on ordinary non-cursor network errors", async () => {
+    stateRow.current = { paging_token: "100" };
+    const netErr = new Error("ECONNRESET");
+
+    hz.setQueue([netErr, { records: [] }]);
+
+    const stop = await watchAccount({ db, network: "TESTNET", accountId: ACCOUNT });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(log).toHaveBeenCalledWith("error", "poll_error", expect.objectContaining({
+      account: ACCOUNT,
+      consecutive: 1,
+    }));
+
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(hz.calls[1]).toMatchObject({ order: "asc", cursor: "100" });
+    stop();
+  });
+});
+

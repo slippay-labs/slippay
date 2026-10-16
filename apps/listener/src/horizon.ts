@@ -14,6 +14,68 @@ const POLL_MS = Number(process.env.LISTENER_POLL_MS ?? "4000");
 const PAGE_LIMIT = 200;
 const ALIVE_LOG_MS = 60_000;
 
+// Max ledgers we consider within a safe automatic backfill window when resetting
+// an invalid/pruned cursor (~5s per Stellar ledger -> 1000 ledgers ~ 83 minutes).
+export const DEFAULT_BACKFILL_WINDOW_LEDGERS = Number(process.env.LISTENER_BACKFILL_WINDOW_LEDGERS ?? "1000");
+
+/**
+ * Extracts the 32-bit ledger sequence from a 64-bit Stellar operation/payment paging token.
+ * Horizon paging tokens for operations encode `(ledger_sequence << 32) | (tx_index << 12) | op_index`.
+ */
+export function ledgerFromPagingToken(token: string): number | null {
+  try {
+    const rawBig = BigInt(token);
+    const ledger = Number(rawBig >> 32n);
+    return Number.isSafeInteger(ledger) && ledger > 0 ? ledger : null;
+  } catch {
+    return null;
+  }
+}
+
+interface HorizonErrorLike {
+  status?: number;
+  response?: {
+    status?: number;
+    data?: {
+      type?: string;
+      title?: string;
+      extras?: {
+        invalid_field?: string;
+      };
+    };
+  };
+  message?: string;
+}
+
+/**
+ * Determines whether an error thrown by Horizon indicates an invalid, stale,
+ * or pruned cursor (e.g. 410 Gone, bad_request on cursor, before_history).
+ */
+export function isCursorError(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const anyErr = e as HorizonErrorLike;
+  const status = anyErr.status ?? anyErr.response?.status;
+  if (status === 410) return true;
+
+  const data = anyErr?.response?.data;
+  if (data?.extras?.invalid_field === "cursor") return true;
+  if (typeof data?.type === "string" && (data.type.includes("before_history") || data.type.includes("stale_history"))) return true;
+  if (typeof data?.title === "string" && data.title.toLowerCase().includes("before history")) return true;
+
+  const msg = String(anyErr?.message ?? "").toLowerCase();
+  if (
+    msg.includes("before_history") ||
+    msg.includes("before history") ||
+    msg.includes("stale_history") ||
+    msg.includes("stale history") ||
+    ((msg.includes("cursor") || msg.includes("paging token") || msg.includes("paging_token")) &&
+      (msg.includes("invalid") || msg.includes("stale") || msg.includes("pruned") || msg.includes("gone")))
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export interface AccountWatcherDeps {
   db: SupabaseClient;
   network: "TESTNET" | "PUBLIC";
@@ -30,16 +92,31 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
   const server = new Horizon.Server(HORIZON[network]);
 
   // Resume cursor. If none, start at the current head so we don't replay history.
-  const { data: stateRow } = await db.from("listener_state").select("paging_token").eq("account_id", accountId).maybeSingle();
+  const { data: stateRow } = await db
+    .from("listener_state")
+    .select("paging_token, last_ledger, last_poll_at")
+    .eq("account_id", accountId)
+    .maybeSingle();
+
   let cursor: string | undefined = stateRow?.paging_token ?? undefined;
+  let lastLedger: number | null = stateRow?.last_ledger != null ? Number(stateRow.last_ledger) : null;
+  if (cursor && !lastLedger) {
+    lastLedger = ledgerFromPagingToken(cursor);
+  }
+
   if (!cursor) {
     try {
       const head = await server.payments().forAccount(accountId).order("desc").limit(1).call();
       cursor = head.records[0]?.paging_token;
-    } catch (e) { log("error", "head_fetch_error", { account: accountId, error: String(e) }); }
+      if (cursor) {
+        lastLedger = ledgerFromPagingToken(cursor);
+      }
+    } catch (e) {
+      log("error", "head_fetch_error", { account: accountId, error: String(e) });
+    }
   }
 
-  log("info", "poller_open", { account: accountId, cursor: cursor ?? "head", pollMs: POLL_MS });
+  log("info", "poller_open", { account: accountId, cursor: cursor ?? "head", pollMs: POLL_MS, lastLedger });
 
   async function processRecord(raw: any): Promise<void> {
     if (raw.type !== "payment") return;
@@ -103,17 +180,91 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
       for (const raw of page.records) {
         await processRecord(raw);
         cursor = raw.paging_token;
-        await db.from("listener_state").upsert({ account_id: accountId, paging_token: cursor, updated_at: new Date().toISOString() });
+        const recLedger = ledgerFromPagingToken(cursor);
+        if (recLedger != null) {
+          lastLedger = recLedger;
+        }
+        await db.from("listener_state").upsert({
+          account_id: accountId,
+          paging_token: cursor,
+          last_ledger: lastLedger,
+          last_poll_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
       }
+
+
       consecutiveErrors = 0;
       const now = Date.now();
       if (now - lastAliveLog > ALIVE_LOG_MS) {
-        log("info", "poller_alive", { account: accountId, cursor: cursor ?? "head" });
+        log("info", "poller_alive", { account: accountId, cursor: cursor ?? "head", lastLedger });
         lastAliveLog = now;
       }
     } catch (e) {
-      consecutiveErrors++;
-      log("error", "poll_error", { account: accountId, error: String(e), consecutive: consecutiveErrors });
+      if (isCursorError(e)) {
+        // Horizon reported cursor invalid, pruned, or before history!
+        // Reset and re-derive cursor from head to keep the stream moving.
+        log("warn", "horizon_cursor_invalid", {
+          account: accountId,
+          failedCursor: cursor,
+          error: String(e),
+        });
+
+        try {
+          const head = await server.payments().forAccount(accountId).order("desc").limit(1).call();
+          const newHeadCursor = head.records[0]?.paging_token;
+          const newLedger = newHeadCursor ? ledgerFromPagingToken(newHeadCursor) : null;
+
+          if (lastLedger != null && newLedger != null) {
+            const gap = newLedger - lastLedger;
+            if (gap > DEFAULT_BACKFILL_WINDOW_LEDGERS) {
+              // Reset skipped beyond the backfill window -> raise an alert
+              log("alert", "cursor_reset_exceeded_backfill_window", {
+                account: accountId,
+                oldLedger: lastLedger,
+                newLedger,
+                gapLedgers: gap,
+                backfillWindow: DEFAULT_BACKFILL_WINDOW_LEDGERS,
+                message: "Horizon cursor reset skipped beyond backfill window; payments may require manual reconciliation",
+              });
+            } else {
+              log("info", "cursor_reset_within_window", {
+                account: accountId,
+                oldLedger: lastLedger,
+                newLedger,
+                gapLedgers: gap,
+              });
+            }
+          } else {
+            log("alert", "cursor_reset_gap_unknown", {
+              account: accountId,
+              oldCursor: cursor,
+              newCursor: newHeadCursor,
+            });
+          }
+
+          cursor = newHeadCursor;
+          if (newLedger != null) lastLedger = newLedger;
+
+          if (cursor) {
+            await db.from("listener_state").upsert({
+              account_id: accountId,
+              paging_token: cursor,
+              last_ledger: lastLedger,
+              last_poll_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          }
+        } catch (recoverErr) {
+          log("error", "cursor_recovery_failed", {
+            account: accountId,
+            error: String(recoverErr),
+          });
+        }
+      } else {
+        consecutiveErrors++;
+        log("error", "poll_error", { account: accountId, error: String(e), consecutive: consecutiveErrors });
+      }
     }
   }
 
