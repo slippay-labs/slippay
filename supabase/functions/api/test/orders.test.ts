@@ -288,4 +288,20 @@ Deno.test("GET /v1/x402/:slug sets platform_fee_bp and fee_usdc on order insert"
   assertEquals(orderData.fee_usdc, "0.1485000"); // 5.0 * 297 / 10000
 });
 
+Deno.test("orders.fee_inferred defaults to false on new order creation (Issue #229)", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const sb = serviceClient();
+  const m = await createMerchant();
+  const { data, error } = await sb.from("orders").insert({
+    merchant_id: m.merchant.id,
+    brl_amount: "10.00",
+    usdc_amount: "1.7241379",
+    rate_brl_usdc: "5.80",
+    memo: "m_inf_" + crypto.randomUUID().replace(/-/g, "").slice(0, 40),
+    fee_usdc: "0.0512068",
+  }).select("fee_inferred").single();
+  assert(error === null);
+  assertEquals(data.fee_inferred, false);
+});
+
+
 
