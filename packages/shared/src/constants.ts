@@ -32,7 +32,23 @@ export type AssetCode = keyof typeof ASSET_CODES;
 export const USDC_ASSET_CODE = ASSET_CODES.USDC;
 export const STELLAR_ADDRESS_LENGTH = 56;
 export const MEMO_HASH_HEX_LENGTH = 64; // 32 bytes
+
+/**
+ * Canonical default platform fee on order settlement in basis points.
+ * 297 bps = 2.97%.
+ * Configured per-merchant on the `merchants` table via `platform_fee_bp`.
+ * Charged atomically on-chain or recorded for invoice billing.
+ */
 export const DEFAULT_PLATFORM_FEE_BP = 297; // 2.97%
+
+/**
+ * Canonical default FX conversion spread in basis points.
+ * 190 bps = 1.90%.
+ * Applies per conversion (e.g. Pix BRL -> USDC) in the FX quoting engine.
+ * Distinct from the platform settlement fee.
+ */
+export const DEFAULT_FX_SPREAD_BPS = 190; // 1.90%
+
 export const ORDER_DEFAULT_EXPIRY_MINUTES = 30;
 export const API_KEY_PREFIX = "sk_live_";
 export const API_KEY_BYTES = 32;

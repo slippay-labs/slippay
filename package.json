@@ -14,7 +14,8 @@
     "supabase:stop": "supabase stop",
     "supabase:reset": "supabase db reset",
     "api:test": "deno test --allow-all supabase/functions/api/test/",
-    "policy-checkout:spike": "NODE_PATH=apps/web/node_modules node scripts/policy-checkout-spike-server.mjs"
+    "policy-checkout:spike": "NODE_PATH=apps/web/node_modules node scripts/policy-checkout-spike-server.mjs",
+    "check:fees": "node scripts/check-fee-narrative.mjs"
   },
   "devDependencies": {
     "eslint-plugin-jsx-a11y": "^6.10.0",

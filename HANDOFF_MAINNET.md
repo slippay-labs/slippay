@@ -34,9 +34,9 @@ Prod backend (api/relayer/scheduler) is a **separate Deno app on the same box**
 - On-ramp: Transak (Pix→USDC→stellar), key `VITE_TRANSAK_API_KEY` in `apps/web/.env.production`.
 
 ## Revenue streams (state)
-1. **Rail fee** (~0.3%, `fee_bps` in the subscription contract) — fires only when money moves. Live in contract.
+1. **Rail fee** (2.97% canonical platform fee, `fee_bps = 297` in the subscription contract, citing `DEFAULT_PLATFORM_FEE_BP = 297`) — fires atomically on-chain when money moves. Live in contract.
 2. **Attestation/compliance** (monetize the gate, merchant-side) — not metered yet (TASK 3).
-3. **FX spread** (~1%, the 10x lever) — **built**: `apps/web/src/lib/quote.ts` (live USD/BRL × spread) + `/buy` page + `recordConversionIntent`. **Captures $0 until TASK 1 + a licensed FX anchor/rev-share** (today Transak keeps its margin).
+3. **FX spread** (1.90% canonical FX conversion spread, citing `DEFAULT_FX_SPREAD_BPS = 190`, the 10x lever) — **built**: `apps/web/src/lib/quote.ts` (live USD/BRL × spread) + `/buy` page + `recordConversionIntent`. **Captures $0 until TASK 1 + a licensed FX anchor/rev-share** (today Transak keeps its margin).
 
 ---
 

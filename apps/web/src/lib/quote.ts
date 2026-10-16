@@ -1,9 +1,15 @@
-// FX quote engine — Pix (BRL) -> USDC. This is the real margin layer: SlipPay
-// quotes the mid-market rate x (1 + spread) and keeps the difference. The spread
-// fires on EVERY conversion (including users who only hold dollars), which is why
-// it scales ~10x vs a per-transfer rail fee. Configurable via VITE_FX_SPREAD_BPS
-// (default 190 = 1.90% — the price decided + shown on the landing; still ~3x
-// cheaper than a bank's ~5% IOF+spread, while capturing healthy margin).
+import { DEFAULT_FX_SPREAD_BPS, DEFAULT_PLATFORM_FEE_BP } from "@slippay/shared";
+
+// REVENUE ARCHITECTURE — TWO DISTINCT FEE LINES:
+// 1. Platform Fee (per order settlement): 297 bp (2.97%) by default via
+//    `DEFAULT_PLATFORM_FEE_BP`. Settle on-chain or billed by invoice.
+// 2. FX Conversion Spread (per fiat conversion): 190 bp (1.90%) by default via
+//    `DEFAULT_FX_SPREAD_BPS`. Sits on top of the mid-market rate (Pix BRL -> USDC).
+//
+// FX quote engine — Pix (BRL) -> USDC. SlipPay quotes the mid-market rate x
+// (1 + spread) and captures the conversion spread. The spread fires per
+// conversion, separate from the 2.97% per-order platform settlement fee.
+// Configurable via VITE_FX_SPREAD_BPS (default DEFAULT_FX_SPREAD_BPS = 190, or 1.90%).
 //
 // HONEST STATE: this computes and records the SlipPay-quoted rate + captured
 // margin. The margin is actually pocketed when BRL settles through a SlipPay-owned
@@ -11,7 +17,9 @@
 // this is the pricing + measurement layer that makes the spread live the moment
 // the anchor is connected.
 
-const SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
+export { DEFAULT_FX_SPREAD_BPS, DEFAULT_PLATFORM_FEE_BP };
+
+const SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? DEFAULT_FX_SPREAD_BPS);
 const RATE_URL = "https://open.er-api.com/v6/latest/USD";
 const FALLBACK_BRL_PER_USD = 5.4;
 

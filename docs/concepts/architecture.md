@@ -316,7 +316,10 @@ the relayer signs the outer envelope (gas only) and submits. Funds move only
 because the on-chain `__check_auth` accepts the passkey assertion.
 
 The platform fee is configurable per merchant via `platform_fee_bp`. The API
-default is 297 bp (2.97%). The fee is computed, persisted, and exposed per order.
+default is 297 bp (2.97%), governed by `DEFAULT_PLATFORM_FEE_BP` in `packages/shared/src/constants.ts`.
+The fee is computed, persisted, and exposed per order. This platform settlement fee is distinct
+from the FX conversion spread (190 bp / 1.90% via `DEFAULT_FX_SPREAD_BPS`), which applies separately
+when buyers convert fiat (e.g. Pix BRL -> USDC).
 
 ## How a payment flows (human, one-shot order)
 

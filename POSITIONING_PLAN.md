@@ -40,7 +40,7 @@ Two motions, sequenced — not one:
 
 ### 3. For how much
 - **Bridge:** per-attestation + annual retainer. Honest ceiling: ~$5–20k/yr per client → ~$10M ARR needs ~500 clients, all pulling Manuel's time. Consultant-rich, not rich-rich. Treat as runway, not destination.
-- **Rail:** take-rate on settled volume. **Anchor low (10–30 bps), not Stripe's 2.9%** — on-chain rails (x402/stablecoin) are racing the protocol fee toward zero, so the premium has to come from the proof-gate, not from being a payment processor. 30 bps × $1B settled = $3M; the same 30 bps scales to $130M at $100B of flow with no extra headcount.
+- **Rail:** take-rate on settled volume. In current production, merchant checkout and autonomous subscription contracts charge **297 bps (2.97%)** by default (`DEFAULT_PLATFORM_FEE_BP = 297` in `packages/shared/src/constants.ts`, with FX spread at 190 bps via `DEFAULT_FX_SPREAD_BPS = 190`). For long-term massive-scale pure agent-to-agent clearing, the thesis envisions **anchoring low (10–30 bps), not Stripe's 2.9%** — on-chain rails (x402/stablecoin) are racing the protocol fee toward zero, so the premium has to come from the proof-gate, not from being a payment processor. 30 bps × $1B settled = $3M; the same 30 bps scales to $130M at $100B of flow with no extra headcount.
 - **MCP:** $0. It is customer-acquisition, not a SKU.
 
 ### 4. Why someone buys / adopts

@@ -121,26 +121,48 @@ underpaid -[after 5 retries]-> dead
 
 Sorted by `created_at` desc.
 
-## Get one order (public)
+## Get one order (public with signed checkout token)
 
-`GET /api/v1/orders/:id`
+`GET /api/v1/orders/:id?t=<token>`
 
-No auth required — used by the hosted checkout to render the page. Returns
-a slimmed-down view including `merchant_stellar_address` so the wallet flow
-can construct the payment.
+This endpoint is designed for the customer's browser during hosted checkout. Because it is hit by unauthenticated end-users, it **does not require an API key**. Instead, it is protected by a cryptographic **signed checkout token** to prevent UUID enumeration attacks (Audit-004 C2):
 
-### Response
+### Token mechanics and security model
+
+1. **Token Generation**: When an order is created via `POST /api/v1/orders`, the API derives an immutable HMAC-SHA256 signature from the `order_id` and the server secret `CHECKOUT_TOKEN_SECRET`:
+   ```
+   token = base64url(hmac_sha256(CHECKOUT_TOKEN_SECRET, order_id))
+   ```
+2. **Checkout URL Binding**: The generated token is embedded directly in the order's `checkout_url` returned to the merchant:
+   ```
+   https://app.slippay.cc/checkout/<order_id>?t=<signed_token>
+   ```
+3. **Public Read Verification**: When the browser requests `GET /api/v1/orders/:id?t=<token>`, the server verifies the token against the requested `order_id` in constant time.
+   - **Missing or Invalid Token**: The API returns HTTP `401 Unauthorized` (`{"error":"unauthorized"}`). An attacker guessing an order UUID cannot read its details without the secret token.
+4. **PII and Data Scrubbing**: Sensitive merchant fields not needed for payment (including `merchant_id`, `external_ref`, and `tx_hash`) are stripped from the response. A leaked token only reveals what the customer needs to pay.
+5. **Pinned Recipient Snapshot**: The returned `merchant_stellar_address` is the immutable snapshot recorded at order creation time. It cannot drift after consent.
+6. **Order Expiry Semantics**: The order has a fixed lifespan governed by `expires_at` (default 30 minutes from creation). Once elapsed without an on-chain payment, the background `pg_cron` worker marks the order as `expired` (terminal status).
+
+### Query parameters
+
+| Parameter | Type | Required | Description |
+|---|---|---|---|
+| `t` | string | **Yes** | Signed base64url checkout token matching the order ID. |
+
+### Response (`200 OK`)
 
 ```json
 {
   "order": {
-    "id": "...",
-    "merchant_id": "...",
+    "id": "ord_3f1a8c4d-9b8e-4f5a-a3c2-1d2e3f4a5b6c",
     "brl_amount": "99.90",
+    "usd_amount": "18.16",
     "usdc_amount": "18.16",
-    "memo": "ce230c...",
+    "memo": "ce230c1913a3668164c8544ac49fd244fba452b19ddee02425386945a5e85cd2",
     "status": "pending",
-    "expires_at": "...",
+    "expires_at": "2026-05-10T14:30:00Z",
+    "paid_at": null,
+    "created_at": "2026-05-10T14:00:00Z",
     "merchant_stellar_address": "GA5ZSE..."
   }
 }
@@ -167,9 +189,11 @@ See [webhooks reference](./webhooks.md) for payload shape.
 
 ## Notes on settlement math
 
-SlipPay charges a platform fee (default 2.97% / 297 bp, configurable per merchant via
+SlipPay charges a platform fee (default 2.97% / 297 bp, citing `DEFAULT_PLATFORM_FEE_BP = 297`, configurable per merchant via
 `platform_fee_bp`). The buyer pays `usdc_amount`; the merchant receives
 `usdc_amount * (1 - platform_fee_bp / 10000)`. The platform receives the rest.
+This platform settlement fee is distinct from the FX conversion spread (default 1.90% / 190 bp, citing `DEFAULT_FX_SPREAD_BPS = 190`),
+which applies only during fiat-to-stablecoin conversions (Pix BRL -> USDC).
 
 The matcher accepts the payment as `paid` only if the on-chain amount is
 **>= the expected merchant share**. This way the buyer can pay the gross or

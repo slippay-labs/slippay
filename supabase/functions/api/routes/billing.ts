@@ -1,5 +1,6 @@
 import { Hono } from "hono";
 import type { SupabaseClient } from "supabase";
+import { DEFAULT_PLATFORM_FEE_BP } from "@slippay/shared";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
 import { mapDbError } from "../lib/db-error.ts";
 
@@ -43,7 +44,7 @@ r.get("/fees", requireApiKeyOrJwt, async (c) => {
     gross_usdc: grossTotal.toFixed(7),
     fee_usdc_total: feeTotal.toFixed(7),     // what SlipPay invoices for the period
     net_usdc_total: (grossTotal - feeTotal).toFixed(7),
-    platform_fee_bp: Number(merchant.platform_fee_bp ?? 98),
+    platform_fee_bp: Number(merchant.platform_fee_bp ?? DEFAULT_PLATFORM_FEE_BP),
   });
 });
 

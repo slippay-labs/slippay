@@ -1,12 +1,12 @@
 # SlipPay
 
-> The Stellar-native commerce stack for Brazil. Merchants accept stablecoin at checkout and receive USD (USDC) directly in their own non-custodial wallet, with atomic on-chain settlement in ~6 seconds and a 0.98% fee — the lowest on the market. Live on Stellar mainnet.
+> The Stellar-native commerce stack for Brazil. Merchants accept stablecoin at checkout and receive USD (USDC) directly in their own non-custodial wallet, with atomic on-chain settlement in ~6 seconds and a 2.97% platform fee (DEFAULT_PLATFORM_FEE_BP = 297) — zero chargebacks, zero card fraud. Live on Stellar mainnet.
 
 SlipPay lets a Brazilian merchant bill in dollars without a bank, without custody, and without chargebacks. The buyer pays in stablecoin from any Stellar wallet (Freighter, Lobstr); the merchant receives USDC on-chain in seconds. SlipPay is a payment-technology provider — it does not hold custody, does not operate FX, and is not a financial institution. BRL→USDC conversion is executed by a BCB-authorized partner (FX + PSAV), partnership in definition.
 
 ## What is live today
-- **Checkout in USDC** — live on Stellar mainnet. Atomic settlement < 6s, 0.98% fee, non-custodial. PYUSD support coming.
-- **Subscription contract (Soroban)** — deployed on mainnet at contract `CBJMQ6ZYQJ2OMM46FGXPEIKKZDRHHERBXUVE54ZN64FDPKN5DJKSEVQN`, Apache-2.0, recurring on-chain billing verified end-to-end.
+- **Checkout in USDC** — live on Stellar mainnet. Atomic settlement < 6s, 2.97% canonical platform fee (DEFAULT_PLATFORM_FEE_BP = 297), non-custodial. PYUSD support coming.
+- **Subscription contract (Soroban)** — deployed on mainnet at contract `CD2RFNOLMIKZN4EETDCGULGMD4ANS56IIUDIBLOE24P4JRZM2GCVFV2U` (v0.4 autocharge + attestation gate + 2.97% on-chain platform fee), Apache-2.0, recurring on-chain billing verified end-to-end.
 - **x402 protocol support** — pay-per-request stablecoin payments.
 
 ## Roadmap modules (not yet live — labeled honestly)
@@ -14,7 +14,7 @@ SlipPay lets a Brazilian merchant bill in dollars without a bank, without custod
 - **Cross-border cash-out** — international buyers withdraw physical cash at MoneyGram agencies over the Stellar network (physical cash-out via the Stellar/SDF ecosystem, not cross-border stablecoin settlement).
 
 ## Key facts (verifiable)
-- Fee: **0.98%** (vs Stripe 2.9% + $0.30, Coinbase Commerce 1.0%).
+- Platform Fee: **2.97%** (`DEFAULT_PLATFORM_FEE_BP = 297`, vs Stripe all-in ~8.3% on cross-border cards + IOF). FX conversion spread: **1.90%** (`DEFAULT_FX_SPREAD_BPS = 190`) on fiat conversions.
 - Settlement: ~6 seconds, deterministic, on Stellar mainnet. Network fee ~US$0.000001.
 - Custody: **non-custodial** — funds settle directly to the merchant's own Stellar address.
 - Assets: USDC live; PYUSD coming.

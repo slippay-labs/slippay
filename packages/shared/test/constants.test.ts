@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   NETWORK,
   DEFAULT_PLATFORM_FEE_BP,
+  DEFAULT_FX_SPREAD_BPS,
   ORDER_DEFAULT_EXPIRY_MINUTES,
   API_KEY_PREFIX,
   API_KEY_BYTES,
@@ -22,6 +23,16 @@ describe("packages/shared constants invariants", () => {
       expect(Number.isInteger(DEFAULT_PLATFORM_FEE_BP)).toBe(true);
       expect(DEFAULT_PLATFORM_FEE_BP).toBeGreaterThanOrEqual(0);
       expect(DEFAULT_PLATFORM_FEE_BP).toBeLessThanOrEqual(1000);
+    });
+  });
+
+  describe("DEFAULT_FX_SPREAD_BPS", () => {
+    it("matches the exact default FX spread expectation (190 bps = 1.90%)", () => {
+      expect(DEFAULT_FX_SPREAD_BPS).toBe(190);
+    });
+
+    it("is distinct from DEFAULT_PLATFORM_FEE_BP", () => {
+      expect(DEFAULT_FX_SPREAD_BPS).not.toBe(DEFAULT_PLATFORM_FEE_BP);
     });
   });
 
