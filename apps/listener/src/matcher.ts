@@ -1,4 +1,4 @@
-import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
+import { NETWORK, USDC_ASSET_CODE, computeFeeStroops } from "@slippay/shared";
 
 export interface StellarPaymentEvent {
   memo_type: string;
@@ -64,11 +64,12 @@ export function matchPaymentToOrder(
   ) {
     return { outcome: "ignore", reason: "fee_bp_invalid" };
   }
-  // Floor division here is conservative: integer division truncates toward
+  // The fee/net split is defined once in @slippay/shared. Floor division
+  // inside the helper is conservative: integer division truncates toward
   // zero, so the merchant receives at most the mathematically correct amount.
-  const expectedStroops = (totalStroops * BigInt(10_000 - order.platform_fee_bp)) / 10_000n;
-  const expectedMerchantShare = stroopsToStellar(expectedStroops);
-  if (receivedStroops >= expectedStroops) return { outcome: "paid" };
+  const { netStroops } = computeFeeStroops(totalStroops, order.platform_fee_bp);
+  const expectedMerchantShare = stroopsToStellar(netStroops);
+  if (receivedStroops >= netStroops) return { outcome: "paid" };
   return { outcome: "underpaid", expected: expectedMerchantShare, received: ev.amount };
 }
 
