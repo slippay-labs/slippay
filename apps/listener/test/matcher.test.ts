@@ -1,5 +1,6 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { matchPaymentToOrder, stellarToStroops, stroopsToStellar, type StellarPaymentEvent } from "../src/matcher.js";
+import { MAX_PLATFORM_FEE_BP } from "@slippay/shared";
 
 const order = {
   id: "ord-1",
@@ -78,9 +79,36 @@ describe("matchPaymentToOrder", () => {
     expect(matchPaymentToOrder(e, order, "TESTNET").outcome).toBe("ignore");
   });
 
-  it("rejects fee_bp >= 10000 as ignore (would zero merchant share)", () => {
+  it("alerts on fee_bp at the old wider bound (10000)", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const o = { ...order, platform_fee_bp: 10_000 };
-    expect(matchPaymentToOrder(validEvent, o, "TESTNET").outcome).toBe("ignore");
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+    expect(logSpy).toHaveBeenCalled();
+    const entry = JSON.parse(logSpy.mockCalls[0]![0] as string);
+    expect(entry.level).toBe("error");
+    expect(entry.msg).toBe("fee_bp_out_of_bound");
+    expect(entry.alert).toBe(true);
+    expect(entry.platform_fee_bp).toBe(10_000);
+    expect(entry.max_fee_bp).toBe(MAX_PLATFORM_FEE_BP);
+    logSpy.mockRestore();
+  });
+
+  it("alerts on fee_bp above the database bound", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const o = { ...order, platform_fee_bp: MAX_PLATFORM_FEE_BP + 1 };
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+    expect(logSpy).toHaveBeenCalled();
+    const entry = JSON.parse(logSpy.mockCalls[0]![0] as string);
+    expect(entry.level).toBe("error");
+    expect(entry.alert).toBe("true");
+    logSpy.mockRestore();
+  });
+
+  it("accepts fee_bp at the database bound", () => {
+    const o = { ...order, platform_fee_bp: MAX_PLATFORM_FEE_BP, usdc_amount: "10.0000000" };
+    // merchant share = 10 * 9000 / 10000 = 9.0000000
+    const e = { ...validEvent, amount: "9.0000000" };
+    expect(matchPaymentToOrder(e, o, "TESTNET")).toEqual({ outcome: "paid" });
   });
 
   it("rejects null fee_bp as ignore instead of treating as zero fee", () => {

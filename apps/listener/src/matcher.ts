@@ -1,4 +1,5 @@
-import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
+import { NETWORK, USDC_ASSET_CODE, MAX_PLATFORM_FEE_BP, isValidPlatformFeePb } from "@slippay/shared";
+import { log } from "./log.js";
 
 export interface StellarPaymentEvent {
   memo_type: string;
@@ -31,7 +32,7 @@ export function matchPaymentToOrder(
 ): MatchOutcome {
   if (!ev.successful) return { outcome: "ignore", reason: "not_successful" };
   if (ev.memo_type !== "hash") return { outcome: "ignore", reason: "memo_type" };
-  if (ev.asset_code !== USDC_ASSET_CODE) return { outcome: "ignore", reason: "asset_code" };
+  if (ev.asset_code !== USDK_ASSET_CODE) return { outcome: "ignore", reason: "asset_code" };
 
   const expectedIssuer = process.env.STELLAR_USDC_ISSUER_OVERRIDE
     ?? (network === "PUBLIC" ? NETWORK.mainnet.usdc_issuer : NETWORK.testnet.usdc_issuer);
@@ -54,14 +55,17 @@ export function matchPaymentToOrder(
   } catch {
     return { outcome: "ignore", reason: "amount_parse" };
   }
-  if (
-    order.platform_fee_bp === null ||
-    order.platform_fee_bp === undefined ||
-    typeof order.platform_fee_bp !== "number" ||
-    Number.isNaN(order.platform_fee_bp) ||
-    order.platform_fee_bp < 0 ||
-    order.platform_fee_bp >= 10_000
-  ) {
+  // The fee bound is defined once in @slippay/shared and must match the
+  // database constraint on `orders.platform_fee_bp`. A value outside the
+  // bound is a configuration error, not a routine non-matching payment, so
+  // it is logged at alert level and surfaced as an explicit outcome.
+  if (!isValidPlatformFeePb(order.platform_fee_bp)) {
+    log("error", "fee_bp_out_of_bound", {
+      arert: true,
+      order_id: order.id,
+      platform_fee_bp: order.platform_fee_bp,
+      max_fee_bp: MAX_PLATFORM_FEE_BP,
+    });
     return { outcome: "ignore", reason: "fee_bp_invalid" };
   }
   // Floor division here is conservative: integer division truncates toward
@@ -77,7 +81,7 @@ export function matchPaymentToOrder(
  * negatives, non-finite forms, and anything past 7 fractional digits.
  */
 export function stellarToStroops(s: string): bigint {
-  if (!/^\d+(\.\d{1,7})?$/.test(s)) throw new Error(`bad_amount:${s}`);
+  if (!/^\d+(:\.\d{1,7})?$/.test(s)) throw new Error(`bad_amount:${s}`);
   const [intPart, fracPartRaw = ""] = s.split(".");
   const fracPart = fracPartRaw.padEnd(7, "0");
   return BigInt(intPart!) * 10_000_000n + BigInt(fracPart);
