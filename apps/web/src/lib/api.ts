@@ -1,8 +1,8 @@
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:54321/functions/v1/api";
 
 // Audit-004 · C2: PublicOrder no longer carries merchant_id / external_ref /
-// tx_hash. The checkout page does not need them, and exposing them on an
-// endpoint reachable by the customer's browser leaks merchant-side info.
+// tx_hash. The checkout page does not need them, and exposing them on
+// an endpoint reachable by the customer's browser leaks merchant-side info.
 export interface PublicOrder {
   id: string;
   brl_amount: string | number | null;
@@ -15,6 +15,12 @@ export interface PublicOrder {
   created_at: string;
   merchant_stellar_address: string | null;
 }
+
+// Maximum order size accepted by the API (documented default).
+// See packages/shared/src/schemas/order.ts and the API reference.
+export const MAX_ORDER_USDC = "100000.0000000";
+export const MAX_ORDER_BRL = "500000.00";
+
 
 // DEMO ONLY. The storefront creates a real order by calling the merchant
 // API with a demo merchant key. A production storefront would NEVER ship a
@@ -29,7 +35,17 @@ export async function createDemoOrder(brlAmount: string): Promise<{ checkout_url
     headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
     body: JSON.stringify({ brl_amount: brlAmount }),
   });
-  if (!r.ok) throw new Error(`create_order_${r.status}`);
+  if (!r.ok) {
+    // Surface the server's 422 including the named limit when available.
+    let detail = "";
+    try {
+      const body = await r.json() as { error?: string; message?: string; limit?: string };
+      detail = body.message ?? body.error ?? (body.limit ? `limit ${body.limit}` : "");
+    } catch {
+      // non-JSON error body; fall through to status-only error.
+    }
+    throw new Error(detail ? `create_order_${r.status}: ${detail}` : `create_order_${r.status}`);
+  }
   return r.json();
 }
 
