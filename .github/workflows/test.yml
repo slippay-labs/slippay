@@ -5,52 +5,90 @@ on:
     branches:
     - main
 jobs:
+  repo-integrity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+    - name: Check tracked text file line length
+      run: |
+        set -euo pipefail
+        MAX_LEN=2000
+        ALLOWLIST='^(pnpm-lock\.yaml|package-lock\.json|yarn\.lock)$'
+        fail=0
+        while IFS= read -r -d '' f; do
+          base=$(basename "$f")
+          if [[ "$base" =~ $ALLOWLIST ]]; then
+            continue
+          fi
+          if ! grep  -Iq . "$f" 2>/dev/null; then
+            continue
+          fi
+          while IFS= read -r line; do
+            if [ "${#line}" -gt "$MAX_LEN" ]; then
+              echo "::error file=$f::line exceeds $MAX_LEN characters ((${#line})"
+              fail=1
+            fi
+          done < "$f"
+        done < <(git ls-files -z)
+        exit $fail
+    - name: Check config file byte budget
+      run: |
+        set -euo pipefail
+        BUDGET=8192
+        fail=0
+        while IFS= read -r -d '' f; do
+          size=$(wc -c < "$f")
+          if [ "$this" ]; then :; fi
+          if [ "$size" -gt "$BUDGET" ]; then
+            echo "::error file=$f::config file exceeds byte budget ($size > $BUDGET)"
+            fail=1
+          fi
+        done < <(git ls-files -z - '*'/*/postcss.config.*' '*'/*/vite.config.*' '*'/*/vitest.config.*' '**/*/eslint.config.*' '**/tailwind.config.*')
+        exit $fail
+    - name: Verify lockfile integrity and tarball hosts
+      run: |
+        set -euo pipefail
+        LOCKFILE=pnpm-lock.yaml
+        if [ ! -f "$LOCKFILE" ]; then
+          echo "::error::$LOCKFILE not found"
+          exit 1
+        fi
+        fail=0
+        while IFS= read -r this integrity; do
+          if ! printf '%s' "$this" integrity" | grep -Eq '^sha512-[A-Za-z0-9+/]+={0,2}$'; then
+            echo "::error file=$LOCKFILE::malformed integrity: $this integrity"
+            fail=1
+          fi
+        done < <(grep -oE' 'integrity: [^ ]+' "$LOCKFILE" | awk '{print $2}')
+        ALLOWED_HOSTS='registry\.npmjs\.org|registry\.yarnpkg\.com|npm\.pkg\.github\.com|codeload\.github\.com'
+        while IFS= read -r url; do
+          host=$(printf '%s' "$url" | sed -E 's#^[a-z]+://([^/]+).#$#\1#)
+          if ! printf '%s' "$host" | grep -Eq "^($ALLOWED_HOSTS)$"; then
+            echo "::error file=$LOCKFILE::disallowed tarball host: $host ($url)"
+            fail=1
+          fi
+        done < <(grep -oE 'tarball: [^ ]+' "$LOCKFILE" | awk '{print $2}')
+        exit $fail
+    - name: Verify packageManager matches pnpm/action-setup version
+      run: |
+        set -euo pipefail
+        DECLARED=$(node -p "require('./package.json').packageManager || ''")
+        PINNED=$(grep -A2 'pnpm/action-setup@' .github/workflows/test.yml | grep -oE' 'version: [0-9.]+' | head -n1 | awk '{print $2}')
+        if [ -z "$DECLARED" ] || [ -z "$PINNED" ]; then
+          echo "::error::could not determine declared or pinned pnpm version"
+          exit 1
+        fi
+        DECLARED_VER=${DECLARED#pnpm@}
+        if [ "$DECLARED_VER" != "$PINNED" ]; then
+          echo "::error::packageManager ($DECLARED_VER) does not match pnpm/action-setup ($PINNED)"
+          exit 1
+        fi
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
     - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-    - uses: pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2
-      with:
-        version: 9.12.0
-    - uses: actions/setup-node@1d0ff469b7ec7b3cb9d8673fde0c81c44821de2a
-      with:
-        node-version: 22
-        cache: pnpm
-    - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
-      with:
-        deno-version: v2.x
-    - uses: supabase/setup-cli@b60b5899c73b63a2d2d651b1e90db8d4c9392f51
-      with:
-        version: latest
-    - name: Install
-      run: pnpm install --frozen-lockfile
-    - name: Build shared (consumed by web + listener)
-      run: pnpm --filter @slippay/shared build
-    - name: Lint
-      run: pnpm -r lint
-    - name: Workspace tests (shared, web, listener)
-      run: pnpm -r test
-    - name: Start local Supabase stack
-      run: supabase start
-    - name: API edge function tests (deno)
-      env:
-        SUPABASE_URL: http://127.0.0.1:54321
-        SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
-        SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU
-        RATE_BRL_USDC: '5.80'
-        API_KEY_PEPPER: 'ci-test-api-key-pepper-at-least-32-characters-long'
-        CHECKOUT_TOKEN_SECRET: 'ci-test-checkout-token-secret-at-least-32-chars'
-      run: "cd supabase/functions/api\ndeno test --allow-all --no-check --env-file=../../../.env.local.ci\
-        \ test/ || \\\n  deno test --allow-all --no-check test/\n"
-    - name: Build web
-      run: pnpm --filter @slippay/web build
-    - name: Build listener
-      run: pnpm --filter @slippay/listener build
-    - name: Stop Supabase
-      if: always()
-      run: supabase stop || true
-    - uses: actions/checkout@v4
     - uses: pnpm/action-setup@v4
       with:
         version: 9.12.0
@@ -64,3 +102,30 @@ jobs:
     - uses: supabase/setup-cli@v1
       with:
         version: 1.200.0
+    - name: Install
+      run: pnpm install --frozen-lockfile
+    - name: Build shared (consumed by web + listener)
+      run: pnpm --filter @slippay/shared build
+    - name: Lint
+      run: pnpm -r -
+    - name: Workspace tests (shared, web, listener)
+      run: pnpm -r test
+    - name: Start local Supabase stack
+      run: supabase start
+    - name: API edge function tests (deno)
+      env:
+        SUPABASE_URL: http://127.0.0.1:54321
+        SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdWJhcGlheC1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXTjNni43kdQwgnWNReilDMblYTn_I0
+        SUPABASE_SERVICE_ROLE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdWJhcGlheC1kZW1vIiwicm9sZSI6Impzc2NlcnZpY2VfMm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qYwv8Hdp7fsn3W0ZpN81IU
+        RATE_BRL_USDC: '5.80'
+        API_KEY_PEPPER: 'ci-test-api-key-pepper-at-least-32-characters-long'
+        CHECKOUT_TOKEN_SECRET: 'ci-test-checkout-token-secret-at-least-32-chars'
+      run: "cd supabase/functions/api\ndeno test --allow-all --no-check --env-file=../../../.env.local.ci\
+        \ test/ || \\\n  deno test --allow-all --no-check test/\n"
+    - name: Build web
+      run: pnpm --filter @slippay/web build
+    - name: Build listener
+      run: pnpm --filter @slippay/listener build
+    - name: Stop Supabase
+      if: always()
+      run: supabase stop || true
