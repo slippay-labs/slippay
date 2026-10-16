@@ -21,7 +21,16 @@ export function startManager(db: SupabaseClient) {
       if (!active.has(addr)) {
         // audit-003 L2: serialize watchAccount on a per-account lease so two
         // pods can never run Horizon streams against the same merchant.
-        const lease = await acquireLease(db, addr);
+        const lease = await acquireLease(db, addr, {
+          onLost: () => {
+            const current = active.get(addr);
+            if (current) {
+              current.stop();
+              active.delete(addr);
+              log("warn", "manager_stopped_lost_lease", { addr });
+            }
+          },
+        });
         if (!lease.acquired) {
           log("info", "manager_lease_held_elsewhere", { addr, heldBy: lease.heldBy, expiresAt: lease.expiresAt });
           continue;

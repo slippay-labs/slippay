@@ -24,13 +24,19 @@ const DEFAULT_HEARTBEAT_S = 20;
 export const HOLDER_ID = process.env.LISTENER_HOLDER_ID ?? randomUUID();
 
 export type LeaseResult =
-  | { acquired: true; release: () => Promise<void> }
+  | { acquired: true; release: () => Promise<void>; heartbeat?: () => Promise<void> }
   | { acquired: false; heldBy: string; expiresAt: string };
+
+export interface AcquireLeaseOpts {
+  ttlSeconds?: number;
+  heartbeatSeconds?: number;
+  onLost?: () => void | Promise<void>;
+}
 
 export async function acquireLease(
   db: SupabaseClient,
   accountId: string,
-  opts: { ttlSeconds?: number; heartbeatSeconds?: number } = {},
+  opts: AcquireLeaseOpts = {},
 ): Promise<LeaseResult> {
   const ttl = opts.ttlSeconds ?? DEFAULT_LEASE_TTL_S;
   const heartbeatMs = (opts.heartbeatSeconds ?? DEFAULT_HEARTBEAT_S) * 1000;
@@ -76,23 +82,51 @@ export async function acquireLease(
   }
 
   let stopped = false;
-  const heartbeat = setInterval(async () => {
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+  const doHeartbeat = async () => {
     if (stopped) return;
     const nextExpires = new Date(Date.now() + ttl * 1000).toISOString();
     const r = await db.from("listener_leases")
       .update({ expires_at: nextExpires })
       .eq("account_id", accountId)
-      .eq("holder_id", HOLDER_ID);
+      .eq("holder_id", HOLDER_ID)
+      .select("holder_id");
+
     if (r.error) {
       log("warn", "lease_heartbeat_failed", { account_id: accountId, error: r.error.message });
+      return;
     }
-  }, heartbeatMs);
+
+    const affected = Array.isArray(r.data) ? r.data.length : (r.data ? 1 : 0);
+    if (affected === 0) {
+      // Zero rows affected indicates the lease was stolen or deleted by another pod
+      log("error", "lease_lost", { account_id: accountId, holder_id: HOLDER_ID });
+      stopped = true;
+      if (heartbeat) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+      if (opts.onLost) {
+        try {
+          await opts.onLost();
+        } catch (err: unknown) {
+          log("error", "lease_on_lost_failed", { account_id: accountId, error: String(err) });
+        }
+      }
+    }
+  };
+
+  heartbeat = setInterval(doHeartbeat, heartbeatMs);
   // Prevent the heartbeat timer from keeping the process alive after shutdown.
   if (typeof heartbeat.unref === "function") heartbeat.unref();
 
   const release = async () => {
     stopped = true;
-    clearInterval(heartbeat);
+    if (heartbeat) {
+      clearInterval(heartbeat);
+      heartbeat = null;
+    }
     const r = await db.from("listener_leases")
       .delete()
       .eq("account_id", accountId)
@@ -101,5 +135,5 @@ export async function acquireLease(
   };
 
   log("info", "lease_acquired", { account_id: accountId, holder_id: HOLDER_ID, ttl_s: ttl });
-  return { acquired: true, release };
+  return { acquired: true, release, heartbeat: doHeartbeat };
 }

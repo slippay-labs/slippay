@@ -122,6 +122,32 @@ describe("startManager · desired-vs-running reconciliation", () => {
     expect(m.log).toHaveBeenCalledWith("error", "manager_query_failed", expect.objectContaining({ error: "boom" }));
     await shutdown();
   });
+
+  it("stops watching when a lease is stolen and onLost is triggered", async () => {
+    let capturedOnLost: (() => void) | undefined;
+    seed(["A"]);
+    m.acquireLease.mockImplementation(async (_db: unknown, addr: string, opts?: any) => {
+      releases[addr] = vi.fn(async () => undefined);
+      capturedOnLost = opts?.onLost;
+      return { acquired: true, release: releases[addr] };
+    });
+
+    const shutdown = startManager(db);
+    await flush();
+
+    expect(m.watchAccount).toHaveBeenCalledTimes(1);
+    expect(typeof stops.A).toBe("function");
+    expect(stops.A).not.toHaveBeenCalled();
+
+    // Simulate stolen lease triggering onLost
+    expect(typeof capturedOnLost).toBe("function");
+    capturedOnLost!();
+
+    expect(stops.A).toHaveBeenCalledTimes(1);
+    expect(m.log).toHaveBeenCalledWith("warn", "manager_stopped_lost_lease", { addr: "A" });
+
+    await shutdown();
+  });
 });
 
 describe("startManager · shutdown", () => {
