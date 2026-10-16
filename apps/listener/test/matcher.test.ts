@@ -97,6 +97,29 @@ describe("matchPaymentToOrder", () => {
     const o = { ...order, platform_fee_bp: -1 };
     expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
   });
+
+  it("rejects fractional fee_bp as ignore without throwing RangeError (Issue #225)", () => {
+    const fractions = [297.5, 25.1, 0.5, 99.999, 1000.1];
+    for (const f of fractions) {
+      const o = { ...order, platform_fee_bp: f };
+      expect(() => matchPaymentToOrder(validEvent, o, "TESTNET")).not.toThrow();
+      expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({
+        outcome: "ignore",
+        reason: "fee_bp_invalid",
+      });
+    }
+  });
+
+  it("rejects non-integer special numbers as ignore without throwing (NaN, Infinity)", () => {
+    for (const special of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const o = { ...order, platform_fee_bp: special };
+      expect(() => matchPaymentToOrder(validEvent, o, "TESTNET")).not.toThrow();
+      expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({
+        outcome: "ignore",
+        reason: "fee_bp_invalid",
+      });
+    }
+  });
 });
 
 describe("stellarToStroops · stroopsToStellar", () => {

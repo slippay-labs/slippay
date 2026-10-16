@@ -261,6 +261,18 @@ Deno.test("orders.platform_fee_bp constraint rejects out-of-bounds values, enfor
   }).select("*").single();
   assert(defErr === null, "insert without explicit platform_fee_bp must succeed");
   assertEquals(defData.platform_fee_bp, 297);
+
+  // 5. Rejects fractional platform_fee_bp (Issue #225)
+  const { error: fracErr } = await sb.from("orders").insert({
+    merchant_id: m.merchant.id,
+    brl_amount: "10.00",
+    usdc_amount: "1.7241379",
+    rate_brl_usdc: "5.80",
+    memo: "m_fee_frac_" + crypto.randomUUID().replace(/-/g, "").slice(0, 40),
+    fee_usdc: "0.0168965",
+    platform_fee_bp: 297.5,
+  });
+  assert(fracErr !== null, "insert with fractional platform_fee_bp must be rejected");
 });
 
 Deno.test("GET /v1/x402/:slug sets platform_fee_bp and fee_usdc on order insert", { sanitizeOps: false, sanitizeResources: false }, async () => {

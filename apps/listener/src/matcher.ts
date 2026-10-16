@@ -1,4 +1,5 @@
 import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
+import { log } from "./log.js";
 
 export interface StellarPaymentEvent {
   memo_type: string;
@@ -59,9 +60,18 @@ export function matchPaymentToOrder(
     order.platform_fee_bp === undefined ||
     typeof order.platform_fee_bp !== "number" ||
     Number.isNaN(order.platform_fee_bp) ||
+    !Number.isInteger(order.platform_fee_bp) ||
     order.platform_fee_bp < 0 ||
     order.platform_fee_bp >= 10_000
   ) {
+    log("warn", "fee_bp_invalid", {
+      order_id: order.id,
+      fee_bp: order.platform_fee_bp,
+      reason:
+        typeof order.platform_fee_bp === "number" && !Number.isInteger(order.platform_fee_bp)
+          ? "fractional_fee_bp"
+          : "invalid_fee_bp",
+    });
     return { outcome: "ignore", reason: "fee_bp_invalid" };
   }
   // Floor division here is conservative: integer division truncates toward
