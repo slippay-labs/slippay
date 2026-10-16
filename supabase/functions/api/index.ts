@@ -102,9 +102,10 @@ const MIME: Record<string, string> = {
 // Nginx aliases both hostnames to this Deno backend on :8080 (Mario's vhost
 // edit). Routing by Host header here splits the surface cleanly without
 // requiring two nginx vhosts.
-const APP_HOST   = "app.slippay.cc";
-const API_HOST   = "api.slippay.cc";
-const APP_ORIGIN = "https://app.slippay.cc";
+const APP_HOST       = "app.slippay.cc";
+const API_HOST       = "api.slippay.cc";
+const APP_ORIGIN     = "https://app.slippay.cc";
+export const CANONICAL_REPO = "https://github.com/slippay-labs/slippay";
 
 app.get("*", async (c) => {
   const host = (c.req.header("host") ?? "").toLowerCase();
@@ -115,12 +116,19 @@ app.get("*", async (c) => {
   // origin. GET / returns service-info JSON for crawlers / health checks.
   if (host === API_HOST || host.startsWith(API_HOST + ":")) {
     if (c.req.path === "/" || c.req.path === "/index.html") {
+      const commitSha =
+        Deno.env.get("DENO_DEPLOYMENT_ID") ??
+        Deno.env.get("COMMIT_SHA") ??
+        Deno.env.get("GIT_COMMIT") ??
+        "development";
       return c.json({
         service: "slippay-api",
         status: "ok",
         canonical_app: APP_ORIGIN,
         health: "/api/health",
-        repo: "https://github.com/Galmanus/slippay",
+        repo: CANONICAL_REPO,
+        commit_sha: commitSha,
+        revision: commitSha,
       });
     }
     // Any other non-/api/* path on api.slippay.cc → redirect to app origin.
