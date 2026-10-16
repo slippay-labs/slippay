@@ -1,5 +1,12 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { matchPaymentToOrder, stellarToStroops, stroopsToStellar, type StellarPaymentEvent } from "../src/matcher.js";
+import {
+  matchPaymentToOrder,
+  stellarToStroops,
+  stroopsToStellar,
+  MAX_STROOPS,
+  MAX_STELLAR_AMOUNT,
+  type StellarPaymentEvent,
+} from "../src/matcher.js";
 
 const order = {
   id: "ord-1",
@@ -97,6 +104,23 @@ describe("matchPaymentToOrder", () => {
     const o = { ...order, platform_fee_bp: -1 };
     expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
   });
+
+  it("rejects payment amount exceeding Stellar int64 stroop bounds as ignore with amount_bounds", () => {
+    // Exactly 1 stroop above the Stellar int64 limit (922337203685.4775807)
+    const e = { ...validEvent, amount: "922337203685.4775808" };
+    expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({
+      outcome: "ignore",
+      reason: "amount_bounds",
+    });
+  });
+
+  it("rejects order amount exceeding Stellar int64 stroop bounds as ignore with amount_bounds", () => {
+    const o = { ...order, usdc_amount: "99999999999999999999.0000000" };
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({
+      outcome: "ignore",
+      reason: "amount_bounds",
+    });
+  });
 });
 
 describe("stellarToStroops · stroopsToStellar", () => {
@@ -116,4 +140,19 @@ describe("stellarToStroops · stroopsToStellar", () => {
     expect(() => stellarToStroops("1e2")).toThrow();
     expect(() => stellarToStroops("1.00000001")).toThrow();
   });
+
+  it("accepts and round-trips maximum Stellar amount (int64 stroop limit)", () => {
+    expect(stellarToStroops(MAX_STELLAR_AMOUNT)).toBe(MAX_STROOPS);
+    expect(stroopsToStellar(MAX_STROOPS)).toBe(MAX_STELLAR_AMOUNT);
+  });
+
+  it("rejects amount exactly one stroop above maximum Stellar limit", () => {
+    expect(() => stellarToStroops("922337203685.4775808")).toThrow(/amount_out_of_bounds/);
+  });
+
+  it("rejects amounts with integer part longer than 12 digits upfront", () => {
+    expect(() => stellarToStroops("99999999999999999999.0000000")).toThrow(/amount_out_of_bounds/);
+    expect(() => stellarToStroops("1000000000000.0000000")).toThrow(/amount_out_of_bounds/);
+  });
 });
+

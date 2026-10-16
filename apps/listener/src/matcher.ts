@@ -51,7 +51,10 @@ export function matchPaymentToOrder(
   try {
     totalStroops = stellarToStroops(order.usdc_amount);
     receivedStroops = stellarToStroops(ev.amount);
-  } catch {
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.startsWith("amount_out_of_bounds")) {
+      return { outcome: "ignore", reason: "amount_bounds" };
+    }
     return { outcome: "ignore", reason: "amount_parse" };
   }
   if (
@@ -73,14 +76,38 @@ export function matchPaymentToOrder(
 }
 
 /**
+ * Stellar int64 stroop maximum bound (2^63 - 1 = 9,223,372,036,854,775,807).
+ * Equivalent to 922,337,203,685.4775807 in decimal representation.
+ * Amounts exceeding this cannot exist or be transacted on the Stellar network.
+ */
+export const MAX_STROOPS = 9_223_372_036_854_775_807n;
+export const MAX_STELLAR_AMOUNT = "922337203685.4775807";
+
+/** Maximum integer part string length for Stellar amounts (12 digits). */
+const MAX_INT_PART_LENGTH = 12;
+const MAX_INT_PART_VALUE = 922_337_203_685n;
+
+/**
  * Parse a Stellar amount string ("1234.5678901") into BigInt stroops. Rejects
- * negatives, non-finite forms, and anything past 7 fractional digits.
+ * negatives, non-finite forms, anything past 7 fractional digits, and amounts
+ * exceeding Stellar's int64 stroop maximum (922,337,203,685.4775807).
  */
 export function stellarToStroops(s: string): bigint {
   if (!/^\d+(\.\d{1,7})?$/.test(s)) throw new Error(`bad_amount:${s}`);
-  const [intPart, fracPartRaw = ""] = s.split(".");
+  const [intPart = "", fracPartRaw = ""] = s.split(".");
+
+  // Cheap upfront integer length check before multiplication
+  if (intPart.length > MAX_INT_PART_LENGTH ||
+      (intPart.length === MAX_INT_PART_LENGTH && BigInt(intPart) > MAX_INT_PART_VALUE)) {
+    throw new Error(`amount_out_of_bounds:${s}`);
+  }
+
   const fracPart = fracPartRaw.padEnd(7, "0");
-  return BigInt(intPart!) * 10_000_000n + BigInt(fracPart);
+  const stroops = BigInt(intPart) * 10_000_000n + BigInt(fracPart);
+  if (stroops > MAX_STROOPS) {
+    throw new Error(`amount_out_of_bounds:${s}`);
+  }
+  return stroops;
 }
 
 export function stroopsToStellar(n: bigint): string {
@@ -90,3 +117,4 @@ export function stroopsToStellar(n: bigint): string {
   const fracPart = abs % 10_000_000n;
   return `${sign}${intPart}.${fracPart.toString().padStart(7, "0")}`;
 }
+
