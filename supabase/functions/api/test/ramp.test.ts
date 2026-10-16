@@ -1,6 +1,8 @@
-import { assertEquals } from "https://deno.land/std@0.224.0/assert/mod.ts";
+import { assertEquals, assertRejects } from "https://deno.land/std@0.224.0/assert/mod.ts";
 import { _resetRampProvider, applyMargin, getRampMarginBps, getRampProvider, isRampEnabled } from "../lib/ramp/index.ts";
 import { EtherfuseClient } from "../lib/ramp/etherfuse/index.ts";
+import { AnchorError } from "../lib/ramp/types.ts";
+import { CnopApi, CnopApiError } from "../lib/ramp/criptopix/api.ts";
 
 // ---- factory: dormant unless explicitly enabled + keyed --------------------
 
@@ -132,6 +134,172 @@ Deno.test("EtherfuseClient.getQuote resolves USDC and maps an off-ramp quote", a
     assertEquals(q.fromAmount, "100");
     assertEquals(q.toAmount, "534.6"); // destinationAmountAfterFee wins
     assertEquals(q.fee, "5.4");
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+// ---- EtherfuseClient error, malformed response and timeout coverage ---------
+
+Deno.test("EtherfuseClient maps API errors to AnchorError with code and status", async () => {
+  const orig = globalThis.fetch;
+  globalThis.fetch = (() => {
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          error: {
+            code: "MINIMUM_AMOUNT_NOT_MET",
+            message: "Amount must be at least 10 USDC",
+          },
+        }),
+        { status: 400, headers: { "content-type": "application/json" } },
+      ),
+    );
+  }) as typeof fetch;
+
+  try {
+    const client = new EtherfuseClient({
+      apiKey: "k",
+      baseUrl: "https://api.sand.etherfuse.com",
+    });
+    const err = await assertRejects(
+      () => client.getQuote({ fromCurrency: "USDC", toCurrency: "BRL", fromAmount: "1" }),
+      AnchorError,
+      "Amount must be at least 10 USDC",
+    );
+    assertEquals((err as AnchorError).code, "MINIMUM_AMOUNT_NOT_MET");
+    assertEquals((err as AnchorError).statusCode, 400);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+Deno.test("EtherfuseClient handles malformed non-JSON error responses", async () => {
+  const orig = globalThis.fetch;
+  globalThis.fetch = (() => {
+    return Promise.resolve(
+      new Response("502 Bad Gateway from Cloudflare", {
+        status: 502,
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+  }) as typeof fetch;
+
+  try {
+    const client = new EtherfuseClient({
+      apiKey: "k",
+      baseUrl: "https://api.sand.etherfuse.com",
+    });
+    const err = await assertRejects(
+      () => client.getQuote({ fromCurrency: "USDC", toCurrency: "BRL", fromAmount: "100" }),
+      AnchorError,
+      "502 Bad Gateway from Cloudflare",
+    );
+    assertEquals((err as AnchorError).statusCode, 502);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+Deno.test("EtherfuseClient bubbles network timeouts and connection errors", async () => {
+  const orig = globalThis.fetch;
+  globalThis.fetch = (() => {
+    return Promise.reject(new Error("fetch failed: connection timed out"));
+  }) as typeof fetch;
+
+  try {
+    const client = new EtherfuseClient({
+      apiKey: "k",
+      baseUrl: "https://api.sand.etherfuse.com",
+    });
+    await assertRejects(
+      () => client.getQuote({ fromCurrency: "USDC", toCurrency: "BRL", fromAmount: "100" }),
+      Error,
+      "connection timed out",
+    );
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+// ---- CriptoPix (CnopApi) error, malformed response and timeout coverage -----
+
+Deno.test("CnopApi maps status: false to CnopApiError", async () => {
+  const orig = globalThis.fetch;
+  globalThis.fetch = (() => {
+    return Promise.resolve(
+      new Response(
+        JSON.stringify({
+          status: false,
+          message: "Saldo de USDT insuficiente para saque",
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+    );
+  }) as typeof fetch;
+
+  try {
+    const api = new CnopApi({
+      clientId: "cid",
+      clientSecret: "csecret",
+      baseUrl: "https://api.criptonopix.app.br",
+    });
+    const err = await assertRejects(
+      () => api.quote(100, "WITHDRAW"),
+      CnopApiError,
+      "Saldo de USDT insuficiente para saque",
+    );
+    assertEquals((err as CnopApiError).statusCode, 200);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+Deno.test("CnopApi handles malformed non-JSON responses gracefully", async () => {
+  const orig = globalThis.fetch;
+  globalThis.fetch = (() => {
+    return Promise.resolve(
+      new Response("<html>503 Service Unavailable</html>", {
+        status: 503,
+        headers: { "content-type": "text/html" },
+      }),
+    );
+  }) as typeof fetch;
+
+  try {
+    const api = new CnopApi({
+      clientId: "cid",
+      clientSecret: "csecret",
+      baseUrl: "https://api.criptonopix.app.br",
+    });
+    const err = await assertRejects(
+      () => api.quote(100),
+      CnopApiError,
+      "non-json response (503)",
+    );
+    assertEquals((err as CnopApiError).statusCode, 503);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+Deno.test("CnopApi bubbles network timeouts and connection errors", async () => {
+  const orig = globalThis.fetch;
+  globalThis.fetch = (() => {
+    return Promise.reject(new Error("Network connection reset"));
+  }) as typeof fetch;
+
+  try {
+    const api = new CnopApi({
+      clientId: "cid",
+      clientSecret: "csecret",
+      baseUrl: "https://api.criptonopix.app.br",
+    });
+    await assertRejects(
+      () => api.quote(100),
+      Error,
+      "Network connection reset",
+    );
   } finally {
     globalThis.fetch = orig;
   }
