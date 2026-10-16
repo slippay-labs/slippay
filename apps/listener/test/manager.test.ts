@@ -142,4 +142,34 @@ describe("startManager · shutdown", () => {
     await poll();
     expect(m.watchAccount).toHaveBeenCalledTimes(2);
   });
+
+  it("awaits the lease release before shutdown resolves", async () => {
+    seed(["A"]);
+    let releaseDone = false;
+    m.acquireLease.mockImplementation(async (_db: unknown, addr: string) => {
+      releases[addr] = vi.fn(async () => {
+        await new Promise((r) => setTimeout(r, 50));
+        releaseDone = true;
+      });
+      return { acquired: true, release: releases[addr] };
+    });
+
+    const shutdown = startManager(db);
+    await flush();
+
+    const p = shutdown();
+    expect(releaseDone).toBe(false);
+    await vi.advanceTimersByTimeAsync(50);
+    await p;
+    expect(releaseDone).toBe((true));
+  });
+
+  it("release called twice does not error", async () => {
+    seed(["A"]);
+    const shutdown = startManager(db);
+    await flush();
+
+    await shutdown();
+    await expect(releases["A"]()).resolves.toBeUndefined();
+  });
 });
