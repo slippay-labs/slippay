@@ -9,7 +9,7 @@ vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(),
 }));
 
-import { nextBackoff, deliverOnce } from "../src/webhook.js";
+import { nextBackoff, deliverOnce, updateWebhookDelivery, processWebhookRow } from "../src/webhook.js";
 
 const mockLookup = lookup as unknown as ReturnType<typeof vi.fn>;
 
@@ -73,3 +73,58 @@ describe("deliverOnce", () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
+
+describe("updateWebhookDelivery & Supabase error checking (Issue #243)", () => {
+  it("returns true on successful update", async () => {
+    const db: any = {
+      from: vi.fn().mockReturnValue({
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: null }),
+        }),
+      }),
+    };
+
+    const ok = await updateWebhookDelivery(db, "del-1", "test_op", { status: "sent" });
+    expect(ok).toBe(true);
+  });
+
+  it("surfaces and logs forced write failure with delivery id and returns false", async () => {
+    const db: any = {
+      from: vi.fn().mockReturnValue({
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: new Error("connection reset by peer") }),
+        }),
+      }),
+    };
+
+    const ok = await updateWebhookDelivery(db, "del-failed-write", "test_op", { status: "sent" });
+    expect(ok).toBe(false);
+  });
+
+  it("processWebhookRow returns false when update fails rather than silently dropping", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("ok", { status: 200 })));
+    const db: any = {
+      from: vi.fn().mockReturnValue({
+        update: vi.fn().mockReturnValue({
+          eq: vi.fn().mockResolvedValue({ error: new Error("db write timeout") }),
+        }),
+      }),
+    };
+
+    const row = {
+      id: "del-err",
+      attempt_n: 0,
+      payload: {},
+      orders: {
+        merchants: {
+          webhook_url: "https://example.com/wh",
+          webhook_secret: "sec_123",
+        },
+      },
+    };
+
+    const ok = await processWebhookRow(db, row, true);
+    expect(ok).toBe(false);
+  });
+});
+
