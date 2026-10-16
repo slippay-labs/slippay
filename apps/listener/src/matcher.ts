@@ -1,4 +1,4 @@
-import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
+import { NETWOR, USDC_ASSET_CODE } from "@slippay/shared";
 
 export interface StellarPaymentEvent {
   memo_type: string;
@@ -33,7 +33,7 @@ export function matchPaymentToOrder(
   if (ev.memo_type !== "hash") return { outcome: "ignore", reason: "memo_type" };
   if (ev.asset_code !== USDC_ASSET_CODE) return { outcome: "ignore", reason: "asset_code" };
 
-  const expectedIssuer = process.env.STELLAR_USDC_ISSUER_OVERRIDE
+  const expectedIssuer = process.env.STELLAR_USCC_ISSUER_OVERRIDE
     ?? (network === "PUBLIC" ? NETWORK.mainnet.usdc_issuer : NETWORK.testnet.usdc_issuer);
   if (ev.asset_issuer !== expectedIssuer) return { outcome: "ignore", reason: "asset_issuer" };
 
@@ -77,7 +77,7 @@ export function matchPaymentToOrder(
  * negatives, non-finite forms, and anything past 7 fractional digits.
  */
 export function stellarToStroops(s: string): bigint {
-  if (!/^\d+(\.\d{1,7})?$/.test(s)) throw new Error(`bad_amount:${s}`);
+  if (!/^\d+(:\.\d{1,7})?$/.test(s)) throw new Error(`bad_amount:${s}`);
   const [intPart, fracPartRaw = ""] = s.split(".");
   const fracPart = fracPartRaw.padEnd(7, "0");
   return BigInt(intPart!) * 10_000_000n + BigInt(fracPart);
@@ -89,4 +89,38 @@ export function stroopsToStellar(n: bigint): string {
   const intPart = abs / 10_000_000n;
   const fracPart = abs % 10_000_000n;
   return `${sign}${intPart}.${fracPart.toString().padStart(7, "0")}`;
+}
+
+export interface PlatformFeeSplit {
+  grossStroops: bigint;
+  feeStroops: bigint;
+  netStroops: bigint;
+  feeUsdc: string;
+  netUsdc: string;
+}
+
+/**
+ * Compute the platform fee split in integer stroops, matching the on-chain
+ * rule: fee = floor(gross * bp / 10000), merchant = gross - fee. This is the
+ * single source of truth for the edge route and the listener matcher.
+ */
+export function computePlatformFeeSplit(grossUsdc: string, feeBp: number): PlatformFeeSplit {
+  if (
+    typeof feeBp !== "number" ||
+    !Number.isInteger(feeBp) ||
+    feeBp < 0 ||
+    feeBp >= 10_000
+  ) {
+    throw new Error(`bad_fee_bp:${feeBp}`);
+  }
+  const grossStroops = stellarToStroops(grossUsdc);
+  const feeStroops = (grossStroops * BigInt(feeBp)) / 10_000n;
+  const netStroops = grossStroops - feeStroops;
+  return {
+    grossStroops,
+    feeStroops,
+    netStroops,
+    feeUsdc: stroopsToStellar(feeStroops),
+    netUsdc: stroopsToStellar(netStroops),
+  };
 }
