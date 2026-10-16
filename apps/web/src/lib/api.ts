@@ -1,8 +1,8 @@
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:54321/functions/v1/api";
 
 // Audit-004 · C2: PublicOrder no longer carries merchant_id / external_ref /
-// tx_hash. The checkout page does not need them, and exposing them on an
-// endpoint reachable by the customer's browser leaks merchant-side info.
+// tx_hash. The checkout page does not need them, and exposing them on
+// an endpoint reachable by the customer's browser leaks merchant-side info.
 export interface PublicOrder {
   id: string;
   brl_amount: string | number | null;
