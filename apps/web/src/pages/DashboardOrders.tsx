@@ -22,7 +22,7 @@ const STATUS_DOT: Record<string, string> = {
   pending: "bg-amber-500",
   paid: "bg-[#FDDA24]",
   underpaid: "bg-orange-500",
-  expired: "bg-[#0a0a0a]/25",
+  expired: "bg-[0a0a0a]/25",
   cancelled: "bg-[#0a0a0a]/25",
   dead: "bg-red-500",
 };
