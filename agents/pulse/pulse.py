@@ -11,7 +11,10 @@ Cognitive cycle:
 """
 
 import os
-import fcntl
+try:
+    import fcntl
+except ImportError:
+    fcntl = None  # type: ignore
 import json
 import sys
 import time
@@ -32,10 +35,10 @@ load_dotenv(Path(__file__).parent / ".env")
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
-SUPABASE_URL         = os.environ["SUPABASE_URL"].rstrip("/")
-SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_ROLE_KEY"]
-TELEGRAM_TOKEN       = os.environ["PULSE_TELEGRAM_TOKEN"]
-TELEGRAM_CHAT_IDS    = [c.strip() for c in os.environ["PULSE_TELEGRAM_CHAT_IDS"].split(",") if c.strip()]
+SUPABASE_URL         = os.environ.get("SUPABASE_URL", "http://127.0.0.1:54321").rstrip("/")
+SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "dummy-service-key")
+TELEGRAM_TOKEN       = os.environ.get("PULSE_TELEGRAM_TOKEN", "dummy-telegram-token")
+TELEGRAM_CHAT_IDS    = [c.strip() for c in os.environ.get("PULSE_TELEGRAM_CHAT_IDS", "").split(",") if c.strip()]
 
 STATE_FILE = Path(__file__).parent / "pulse_state.json"
 LOCK_FILE  = Path(__file__).parent / "pulse.lock"
@@ -78,13 +81,14 @@ def acquire_advisory_lock() -> None:
     fcntl.flock is held for the process lifetime; OS releases on exit/crash."""
     global _lock_fd
     _lock_fd = os.open(LOCK_FILE, os.O_CREAT | os.O_WRONLY, 0o644)
-    try:
-        fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        os.ftruncate(_lock_fd, 0)
-        os.write(_lock_fd, f"{os.getpid()}\n{datetime.now(timezone.utc).isoformat()}\n".encode())
-    except BlockingIOError:
-        print(f"[Pulse] Another instance is holding {LOCK_FILE}. Exiting.", file=sys.stderr)
-        sys.exit(1)
+    if fcntl is not None:
+        try:
+            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.ftruncate(_lock_fd, 0)
+            os.write(_lock_fd, f"{os.getpid()}\n{datetime.now(timezone.utc).isoformat()}\n".encode())
+        except BlockingIOError:
+            print(f"[Pulse] Another instance is holding {LOCK_FILE}. Exiting.", file=sys.stderr)
+            sys.exit(1)
 
 # ── State ────────────────────────────────────────────────────────────────────
 

@@ -82,3 +82,61 @@ test("free-text merchant metadata is inert — injection in a note cannot flip t
   // Authorized purely on crypto+consent; the note has zero effect either way.
   assert.equal(r.ok, true, r.reason);
 });
+
+test("boundary: amount term drift on both sides (amount-1 rejected, amount ok, amount+1 rejected)", () => {
+  const { merchant, mandate, intent } = fixture();
+
+  // Exactly equal: ok
+  const exact = authorizeIntent(intent, mandate, new Set());
+  assert.equal(exact.ok, true);
+
+  // 1 unit higher: term_drift
+  const higher = { ...intent, amount: "29000001" };
+  higher.signature = signIntent(merchant, higher);
+  const rHigh = authorizeIntent(higher, mandate, new Set());
+  assert.equal(rHigh.ok, false);
+  assert.equal(rHigh.reason, "term_drift");
+
+  // 1 unit lower: term_drift (consent digest binds exact terms)
+  const lower = { ...intent, amount: "28999999" };
+  lower.signature = signIntent(merchant, lower);
+  const rLow = authorizeIntent(lower, mandate, new Set());
+  assert.equal(rLow.ok, false);
+  assert.equal(rLow.reason, "term_drift");
+});
+
+test("boundary: recipient and token drift rejected even when signed", () => {
+  const { merchant, mandate, intent } = fixture();
+
+  // Recipient mutated by 1 char
+  const driftedRecipient = { ...intent, recipient: intent.recipient.slice(0, -1) + "X" };
+  driftedRecipient.signature = signIntent(merchant, driftedRecipient);
+  const rRecv = authorizeIntent(driftedRecipient, mandate, new Set());
+  assert.equal(rRecv.ok, false);
+  assert.equal(rRecv.reason, "term_drift");
+
+  // Token mutated
+  const driftedToken = { ...intent, token: "EURC_CONTRACT" };
+  driftedToken.signature = signIntent(merchant, driftedToken);
+  const rTok = authorizeIntent(driftedToken, mandate, new Set());
+  assert.equal(rTok.ok, false);
+  assert.equal(rTok.reason, "term_drift");
+});
+
+test("fail-closed: missing, corrupted, or forged signatures always fail closed", () => {
+  const { mandate, intent } = fixture();
+
+  // Missing or empty signature
+  for (const badSig of [null, undefined, "", "not-valid-base64@@@"]) {
+    const corrupted = { ...intent, signature: badSig };
+    const r = authorizeIntent(corrupted, mandate, new Set());
+    assert.equal(r.ok, false);
+    assert.equal(r.reason, "bad_signature");
+  }
+
+  // Corrupted merchant key in mandate
+  const badMandate = { ...mandate, merchantKey: "MALFORMED_PUBLIC_KEY" };
+  const rBadKey = authorizeIntent(intent, badMandate, new Set());
+  assert.equal(rBadKey.ok, false);
+  assert.equal(rBadKey.reason, "bad_signature");
+});

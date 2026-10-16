@@ -92,3 +92,46 @@ test("the agent is bound away from moving money — it can only propose settleme
   const tools = compileToolset(capabilities, REGISTRY);
   assert.equal(tools.find((t) => t.name === "transfer_funds"), undefined);
 });
+
+test("boundary: amount boundary on both sides (A-1stroop short, A ok, A+1stroop ok)", () => {
+  const { order, payment } = fixture();
+  order.usdcAmount = "29.0000000";
+
+  // 1 stroop short (28.9999999): rejected as amount_short
+  const rShort = verifySettlement({ ...payment, amount: "28.9999999" }, order, new Set());
+  assert.equal(rShort.ok, false);
+  assert.equal(rShort.reason, "amount_short");
+
+  // exactly equal (29.0000000): settles
+  const rExact = verifySettlement({ ...payment, amount: "29.0000000" }, order, new Set());
+  assert.equal(rExact.ok, true);
+
+  // 1 stroop over (29.0000001): settles (overpayment permitted)
+  const rOver = verifySettlement({ ...payment, amount: "29.0000001" }, order, new Set());
+  assert.equal(rOver.ok, true);
+});
+
+test("boundary: memo and recipient boundaries (1 character variance)", () => {
+  const { order, payment } = fixture();
+
+  // Memo variance by 1 character
+  const memoDrift = verifySettlement({ ...payment, memo: order.memo + "x" }, order, new Set());
+  assert.equal(memoDrift.ok, false);
+  assert.equal(memoDrift.reason, "memo_mismatch");
+
+  // Destination variance by 1 character
+  const destDrift = verifySettlement(
+    { ...payment, destination: order.consentedRecipient.slice(0, -1) + "Z" },
+    order,
+    new Set()
+  );
+  assert.equal(destDrift.ok, false);
+  assert.equal(destDrift.reason, "recipient_drift");
+});
+
+test("fail-closed: malformed amount throws rather than silently settling", () => {
+  const { order, payment } = fixture();
+  assert.throws(() => {
+    verifySettlement({ ...payment, amount: "not_a_valid_number" }, order, new Set());
+  }, /non-numeric amount/);
+});

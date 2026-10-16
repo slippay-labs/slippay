@@ -69,3 +69,67 @@ test("the agent is bound to propose only — it cannot move money", () => {
   const tools = compileToolset(capabilities, REGISTRY);
   assert.equal(tools.find((t) => t.name === "transfer_funds"), undefined);
 });
+
+test("boundary: expiresAt boundary on both sides (T-1 ok, T expired, T+1 expired)", () => {
+  const expiry = 5000;
+  const s = sub({ lastChargeAt: 0, expiresAt: expiry });
+
+  // 1 unit before expiry: permitted
+  const before = proposeCharge(s, expiry - 1, "n_1");
+  assert.equal(before.ok, true);
+
+  // exactly at expiry: rejected
+  const at = proposeCharge(s, expiry, "n_2");
+  assert.equal(at.ok, false);
+  assert.equal(at.reason, "expired");
+
+  // 1 unit after expiry: rejected
+  const after = proposeCharge(s, expiry + 1, "n_3");
+  assert.equal(after.ok, false);
+  assert.equal(after.reason, "expired");
+});
+
+test("boundary: maxPeriods boundary on both sides (M-1 ok, M rejected, M+1 rejected)", () => {
+  const max = 10;
+  // M-1 (9 of 10): permitted
+  const before = proposeCharge(sub({ maxPeriods: max, chargesDone: max - 1, lastChargeAt: 0 }), 1000, "n_1");
+  assert.equal(before.ok, true);
+  assert.equal(before.intent.periodIndex, 10);
+
+  // exactly at M (10 of 10): rejected
+  const at = proposeCharge(sub({ maxPeriods: max, chargesDone: max, lastChargeAt: 0 }), 1000, "n_2");
+  assert.equal(at.ok, false);
+  assert.equal(at.reason, "max_periods_reached");
+
+  // M+1 (11 of 10): rejected
+  const after = proposeCharge(sub({ maxPeriods: max, chargesDone: max + 1, lastChargeAt: 0 }), 1000, "n_3");
+  assert.equal(after.ok, false);
+  assert.equal(after.reason, "max_periods_reached");
+});
+
+test("boundary: periodSeconds elapsed boundary (P-1 rejected, P ok, P+1 ok)", () => {
+  const last = 1000;
+  const period = 500;
+  const s = sub({ lastChargeAt: last, periodSeconds: period });
+
+  // 1 unit before full period: rejected
+  const before = proposeCharge(s, last + period - 1, "n_1");
+  assert.equal(before.ok, false);
+  assert.equal(before.reason, "period_not_elapsed");
+
+  // exactly at period: permitted
+  const at = proposeCharge(s, last + period, "n_2");
+  assert.equal(at.ok, true);
+
+  // 1 unit past period: permitted
+  const after = proposeCharge(s, last + period + 1, "n_3");
+  assert.equal(after.ok, true);
+});
+
+test("fail-closed: missing or malformed status refuses charge", () => {
+  for (const badStatus of [null, undefined, "", "canceled", "unknown", 123]) {
+    const r = proposeCharge(sub({ status: badStatus }), 9e9, "n_1");
+    assert.equal(r.ok, false, `Expected bad status ${badStatus} to fail-closed`);
+    assert.equal(r.reason, "not_active");
+  }
+});

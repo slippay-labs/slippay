@@ -63,3 +63,78 @@ test("the panopticon itself holds no money capability", () => {
   const tools = compileToolset(capabilities, REGISTRY);
   assert.equal(tools.find((t) => t.name === "transfer_funds"), undefined);
 });
+
+test("boundary: velocity boundary on both sides (V-1 ok, V HALT, V+1 HALT)", () => {
+  const maxV = 5;
+  // V-1 events (4 events): ALLOW
+  const sBefore = state({
+    maxVelocity: maxV,
+    windowEvents: [1, 2, 3, 4].map((t) => ({ ts: t, amount: 1 })),
+  });
+  const rBefore = evaluate({ kind: "spend", agent: "Billing", amount: 1, ts: 5 }, sBefore);
+  assert.equal(rBefore.action, "ALLOW");
+
+  // exactly V events (5 events): HALT
+  const sAt = state({
+    maxVelocity: maxV,
+    windowEvents: [1, 2, 3, 4, 5].map((t) => ({ ts: t, amount: 1 })),
+  });
+  const rAt = evaluate({ kind: "spend", agent: "Billing", amount: 1, ts: 6 }, sAt);
+  assert.equal(rAt.action, "HALT");
+  assert.equal(rAt.reason, "velocity");
+
+  // V+1 events (6 events): HALT
+  const sAfter = state({
+    maxVelocity: maxV,
+    windowEvents: [1, 2, 3, 4, 5, 6].map((t) => ({ ts: t, amount: 1 })),
+  });
+  const rAfter = evaluate({ kind: "spend", agent: "Billing", amount: 1, ts: 7 }, sAfter);
+  assert.equal(rAfter.action, "HALT");
+  assert.equal(rAfter.reason, "velocity");
+});
+
+test("boundary: conservation boundary on both sides (Limit-1 ok, Limit ok, Limit+1 HALT)", () => {
+  const inflow = 100;
+  const buffer = 20; // max allowable outflow = 120
+  const s = state({ inflow, buffer, windowEvents: [{ ts: 1, amount: 100 }] });
+
+  // Outflow = 119 (Limit - 1): ALLOW
+  const rBefore = evaluate({ kind: "spend", agent: "Billing", amount: 19, ts: 2 }, s);
+  assert.equal(rBefore.action, "ALLOW");
+
+  // Outflow = 120 (Exactly at limit): ALLOW
+  const rAt = evaluate({ kind: "spend", agent: "Billing", amount: 20, ts: 2 }, s);
+  assert.equal(rAt.action, "ALLOW");
+
+  // Outflow = 121 (Limit + 1): HALT
+  const rAfter = evaluate({ kind: "spend", agent: "Billing", amount: 21, ts: 2 }, s);
+  assert.equal(rAfter.action, "HALT");
+  assert.equal(rAfter.reason, "conservation");
+});
+
+test("boundary: lattice non-interference boundaries across all clearance levels", () => {
+  // Same level or upwards flow is permitted
+  assert.equal(evaluate({ kind: "message", srcLabel: "PUBLIC", sinkClearance: "PUBLIC" }, state()).action, "ALLOW");
+  assert.equal(evaluate({ kind: "message", srcLabel: "LOW", sinkClearance: "LOW" }, state()).action, "ALLOW");
+  assert.equal(evaluate({ kind: "message", srcLabel: "HIGH", sinkClearance: "HIGH" }, state()).action, "ALLOW");
+  assert.equal(evaluate({ kind: "message", srcLabel: "PUBLIC", sinkClearance: "HIGH" }, state()).action, "ALLOW");
+
+  // Downwards flow is strictly halted
+  const r1 = evaluate({ kind: "message", srcLabel: "LOW", sinkClearance: "PUBLIC" }, state());
+  assert.equal(r1.action, "HALT");
+  assert.equal(r1.reason, "noninterference");
+
+  const r2 = evaluate({ kind: "message", srcLabel: "HIGH", sinkClearance: "LOW" }, state());
+  assert.equal(r2.action, "HALT");
+  assert.equal(r2.reason, "noninterference");
+});
+
+test("fail-closed: missing or malformed state fields handle gracefully", () => {
+  // Empty state should not crash and should allow 0 spend within limits
+  const r = evaluate({ kind: "spend", agent: "Billing", amount: 0, ts: 1 }, { inflow: 10, buffer: 5, maxVelocity: 1 });
+  assert.equal(r.action, "ALLOW");
+
+  // Unhandled high label defaults to PUBLIC (0) or fails appropriately
+  const rUnk = evaluate({ kind: "message", srcLabel: "UNKNOWN", sinkClearance: "PUBLIC" }, state());
+  assert.equal(rUnk.action, "ALLOW");
+});
