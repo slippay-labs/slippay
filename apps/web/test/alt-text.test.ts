@@ -9,11 +9,12 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, extname } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const SRC_ROOT = new URL("../src/", import.meta.url).pathname;
+const SRC_ROOT = fileURLToPath(new URL("../src/", import.meta.url));
 
 /** Recursively collect every .tsx / .jsx / .ts file under SRC_ROOT. */
-function* walk(dir) {
+function* walk(dir: string): Generator<string> {
   for (const entry of readdirSync(dir)) {
     const full = join(dir, entry);
     const st = statSync(full);
@@ -29,10 +30,10 @@ function* walk(dir) {
 }
 
 /** Extract every <img ...> tag from a source file. */
-function extractImgTags(src) {
-  const tags = [];
+function extractImgTags(src: string): string[] {
+  const tags: string[] = [];
   // Match <img ...> including across newlines (multiline flag).
-  const re = /<img[^>]*>/g;
+  const re = /<img [^>]*>/g;
   for (const m of src.matchAll(re)) {
     tags.push(m[0]);
   }
@@ -40,7 +41,7 @@ function extractImgTags(src) {
 }
 
 /** Check whether an <img> tag has an `alt` attribute (even an empty one). */
-function hasAlt(imgTag) {
+function hasAlt(imgTag: string): boolean {
   // Match `alt="..."`, `alt=''`, `alt={...}` etc. — the attribute name
   // must be present.
   return /\balt\s*=/.test(imgTag);
@@ -55,21 +56,30 @@ describe("a11y: every <img> has an alt attribute (closes #86)", () => {
     return;
   }
 
+  let totalImgs = 0;
   for (const file of files) {
     const src = readFileSync(file, "utf-8");
     const imgs = extractImgTags(src);
     if (imgs.length === 0) continue;
+    totalImgs += imgs.length;
 
     describe(`\`${file.replace(SRC_ROOT, "src/")}\``, () => {
       for (let i = 0; i < imgs.length; i++) {
         it(`img #${i + 1} has an alt attribute`, () => {
-          expect(hasAlt(imgs[i])).toBe(true);
+          const tag = imgs[i]!;
+          expect(hasAlt(tag)).toBe(true);
           // Print the offending tag for easy debugging.
-          if (!hasAlt(imgs[i])) {
-            console.error(`Missing alt in ${file}: ${imgs[i]}`);
+          if (!hasAlt(tag)) {
+            console.error(`Missing alt in ${file}: ${tag}`);
           }
         });
       }
+    });
+  }
+
+  if (totalImgs === 0) {
+    it("no raw <img> tags found under src/", () => {
+      expect(files.length).toBeGreaterThan(0);
     });
   }
 });

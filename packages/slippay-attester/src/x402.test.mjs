@@ -9,6 +9,10 @@ import { sha256 } from "@noble/hashes/sha256";
 import { commitSurface, publicKeyHex } from "./oracle.mjs";
 import { attestX402, verifyX402, x402ActionHash } from "./x402.mjs";
 
+if (!process.env.SLIPPAY_ATTESTER_DATA) {
+  process.env.SLIPPAY_ATTESTER_DATA = "/tmp/slippay-x402-test.json";
+}
+
 const priv = sha256(new TextEncoder().encode("slippay-x402-test-seed")); // 32 bytes
 let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) { pass++; console.log("  ✓", m); } else { fail++; console.log("  ✗", m); } };
