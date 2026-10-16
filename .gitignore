@@ -8,6 +8,7 @@ supabase/.temp
 .fly
 *.tsbuildinfo
 
+
 # Env files — NEVER commit (audit L4). VITE_-prefixed values get inlined into
 # the world-readable bundle, and server .env holds secrets. Ignore all .env*
 # everywhere, but keep *.example templates tracked.
@@ -20,29 +21,35 @@ supabase/.temp
 !**/.env.example
 !**/.env.*.example
 
+
 # Rust / Soroban build artifacts
 target/
 **/target/
 *.wasm.opt
 Cargo.lock.bak
 
+
 # Test scaffolding
 /tmp/e2e-keys.json
 contracts/*/test_snapshots/
 
+
 # Hero image backups (local-only; kept out of git for size)
 apps/web/public/hero.png.bak*
 apps/web/public/hero.png.*_rejected
+
 
 # deploy secrets — never commit
 contracts/subscription/.mainnet-deploy.env
 contracts/*/.mainnet-deploy.env
 contracts/*/.testnet-deploy.env
 
+
 # build / deploy scratch artifacts
 *.err
 *.xdr
 **/_relayer_bringup.mjs
+
 
 # A2A testnet proof (local, zero-value testnet secrets)
 apps/listener/.a2a-testnet.json
@@ -50,3 +57,9 @@ apps/listener/a2a-registry.jsonl
 branch_structure.json
 temp_auto_push.bat
 temp_interactive_push.bat
+
+# Local planning / scratch files (never commit)
+*.local.md
+PLAN_*.md
+drafts/
+.scratch/
