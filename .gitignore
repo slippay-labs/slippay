@@ -50,3 +50,15 @@ apps/listener/a2a-registry.jsonl
 branch_structure.json
 temp_auto_push.bat
 temp_interactive_push.bat
+
+# Local planning, drafts, and scratch working files (issue #180)
+*.local.md
+**/*.local.md
+PLAN_*.md
+**/PLAN_*.md
+drafts/
+**/drafts/
+.drafts/
+**/.drafts/
+scratch/
+**/scratch/
