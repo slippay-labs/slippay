@@ -1,4 +1,31 @@
-# Slippay Subscription Contract — deployed
+# Slippay Subscription Contract — Deployed Versions & Semantics
+
+## 🌟 Version Comparison & Operational Semantics Matrix
+
+Three contract versions are historically recognized across mainnet and testnet. The current source repository represents **v0.4**:
+
+| Feature / Capability | v0.1 (Legacy Audit) | v0.2 (Legacy Production) | v0.4 (Current Production) |
+| :--- | :--- | :--- | :--- |
+| **Active Period** | 2026-05-10 | 2026-05-16 | 2026-06-05 onwards |
+| **Auth Requirement** | Buyer must sign every single cycle (`charge()` requires buyer auth) | Single pre-approval via SEP-41 `token.approve` | Single pre-approval via SEP-41 `token.approve` |
+| **Autonomous Scheduler** | ❌ No (requires interactive wallet prompt each cycle) | ✅ Yes (`autocharge()` via allowance) | ✅ Yes (`autocharge()` / `autocharge_attested()`) |
+| **Attestation Gate** | ❌ None | ❌ None | ✅ Inescapable on-chain Ed25519 gate |
+| **Attestation Single-Use** | N/A | N/A | ✅ Bound to contract monotonic `charges_done` |
+| **Domain Separation** | ❌ None | ❌ None | ✅ Bound at deploy (`DataKey::Domain`) |
+| **Platform Fee Split** | ❌ None (0%, merchant receives 100%) | ❌ None (0%, merchant receives 100%) | ✅ 2.97% (297 bp) immutable on-chain fee split |
+
+---
+
+## v0.4 · MAINNET (CURRENT PRODUCTION · 2026-06-05)
+
+- **Source Code**: [`contracts/subscription/src/lib.rs`](src/lib.rs)
+- **Unit & Security Tests**: [`contracts/subscription/src/test.rs`](src/test.rs) (26/26 tests passing)
+- **Key Enhancements**:
+  1. **Inescapable Platform Fee**: Platform fee (`fee_bps`, default 297 bps = 2.97%, max 1000 bps) and platform fee recipient address bound immutably at construction. Automatically deducted from autonomous charges (`autocharge` and `autocharge_attested`).
+  2. **Attestation Gate**: Autonomous charges require signed attestation from the merchant-registered Ed25519 attester key (`autocharge_attested`). Ungated charges fail with `Error::AttesterRequired` once an attester is bound.
+  3. **Domain Separation & Single-Use Enforcement**: Attestations bind domain commitment (32 bytes), subscription ID (32 bytes), current monotonic `charges_done` counter (4 bytes), and `not_after` ledger expiration (8 bytes), preventing replay attacks across subscriptions, cycles, and networks.
+
+---
 
 ## v0.2 · MAINNET (PRODUCTION · 2026-05-16)
 
