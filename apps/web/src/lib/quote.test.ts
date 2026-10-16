@@ -6,7 +6,12 @@ type QuoteModule = typeof import("./quote.ts");
 let quote: QuoteModule;
 
 const okFetch = (brlPerUsd: number) =>
-  vi.fn().mockResolvedValue({ json: async () => ({ rates: { BRL: brlPerUsd } }) });
+  vi.fn().mockResolvedValue({
+    ok: true,
+    status: 200,
+    headers: { get: (name: string) => (name.toLowerCase() === "content-type" ? "application/json" : null) },
+    json: async () => ({ rates: { BRL: brlPerUsd } }),
+  });
 
 beforeEach(async () => {
   vi.resetModules();
@@ -32,6 +37,7 @@ describe("quoteBRLtoUSDC — fee and rate math", () => {
     expect(q.marginUsd).toBe(0);
     expect(q.marginBrl).toBe(0);
     expect(q.stale).toBe(false);
+    expect(q.source).toBe("live");
   });
 
   it("applies the canonical platform fee (DEFAULT_PLATFORM_FEE_BP = 297)", async () => {
@@ -58,6 +64,28 @@ describe("quoteBRLtoUSDC — fee and rate math", () => {
 
     expect(q.spreadBps).toBe(190);
     expect(q.usdcOut.toFixed(7)).toBe("19.6270854");
+  });
+
+  describe("FX Spread Bounds & Startup Governance (Issue #234)", () => {
+    it("uses DEFAULT_FX_SPREAD_BPS (190) from shared constants as single source of truth", () => {
+      expect(quote.SPREAD_BPS).toBe(190);
+      expect(quote.SPREAD_PCT).toBe(1.9);
+    });
+
+    it("fails loudly when VITE_FX_SPREAD_BPS is non-numeric or out-of-range", async () => {
+      const { resolveFxSpreadBps } = await import("@slippay/shared");
+
+      expect(() => resolveFxSpreadBps("invalid-string")).toThrow(/must be a valid integer/);
+      expect(() => resolveFxSpreadBps("-10")).toThrow(/out of range/);
+      expect(() => resolveFxSpreadBps("10001")).toThrow(/out of range/);
+    });
+
+    it("logs the active spread configuration once on startup", async () => {
+      const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
+      vi.resetModules();
+      await import("./quote.ts");
+      expect(infoSpy).toHaveBeenCalledWith(expect.stringContaining("[SlipPay FX] Active spread configured: 190 bps"));
+    });
   });
 
   it("resolves USDC out to the 7-fraction limit without trailing drift", async () => {
@@ -108,35 +136,137 @@ describe("quoteBRLtoUSDC — guard rails", () => {
   });
 });
 
-describe("midRateBRLperUSD — live rate with fallback", () => {
-  it("marks the fallback rate stale when the fetch throws", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+describe("midRateBRLperUSD — live rate with fallback and HTTP response validation (Issue #235)", () => {
+  it("treats non-200 responses (e.g. 500, 404, 429) as failures even if body contains rates", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        headers: { get: () => "application/json" },
+        json: async () => ({ rates: { BRL: 9.99 } }),
+      })
+    );
 
-    const q = await quote.quoteBRLtoUSDC(54);
+    const res = await quote.midRateBRLperUSD();
+    expect(res.stale).toBe(true);
+    expect(res.source).toBe("fallback");
+    expect(res.rate).toBe(5.4);
+  });
 
-    expect(q.stale).toBe(true);
-    expect(q.midRate).toBe(5.4);
-    expect(q.usdcOut.toFixed(7)).toBe("9.8135427");
+  it("rejects non-JSON response (e.g. HTML error gateway page)", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => "text/html; charset=utf-8" },
+        json: async () => ({ rates: { BRL: 7.77 } }),
+      })
+    );
+
+    const res = await quote.midRateBRLperUSD();
+    expect(res.stale).toBe(true);
+    expect(res.source).toBe("fallback");
+    expect(res.rate).toBe(5.4);
+  });
+
+  it("fails fast on hanging upstream requests without leaving quote pending", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((_url, opts) => {
+        return new Promise((_, reject) => {
+          if (opts?.signal) {
+            opts.signal.addEventListener("abort", () => {
+              reject(new Error("aborted by timeout"));
+            });
+          }
+        });
+      })
+    );
+
+    const res = await quote.midRateBRLperUSD(10);
+    expect(res.stale).toBe(true);
+    expect(res.source).toBe("fallback");
+    expect(res.rate).toBe(5.4);
   });
 
   it("falls back when the upstream rate is not a usable positive number", async () => {
     vi.stubGlobal("fetch", okFetch(0));
 
-    const { rate, stale } = await quote.midRateBRLperUSD();
+    const { rate, stale, source } = await quote.midRateBRLperUSD();
 
     expect(stale).toBe(true);
+    expect(source).toBe("fallback");
     expect(rate).toBe(5.4);
   });
 
-  it("caches a good rate for the next 60s", async () => {
+  it("caches a good rate for the next 60s and tracks source: cache", async () => {
     const fetchMock = okFetch(5.25);
     vi.stubGlobal("fetch", fetchMock);
 
-    await quote.midRateBRLperUSD();
-    const again = await quote.midRateBRLperUSD();
+    const first = await quote.midRateBRLperUSD();
+    expect(first).toEqual({ rate: 5.25, stale: false, source: "live" });
 
-    expect(again).toEqual({ rate: 5.25, stale: false });
+    const again = await quote.midRateBRLperUSD();
+    expect(again).toEqual({ rate: 5.25, stale: false, source: "cache" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Refusing stale quote fallback without explicit opt-in (Issue #233)", () => {
+  it("refuses to quote and throws StaleRateError when upstream is offline unless allowStale is passed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    // Default call without options throws StaleRateError
+    await expect(quote.quoteBRLtoUSDC(100)).rejects.toThrow(quote.StaleRateError);
+    await expect(quote.quoteBRLtoUSDC(100)).rejects.toThrow(/Live FX rate unavailable/);
+
+    // Call with explicit allowStale: false also throws
+    await expect(quote.quoteBRLtoUSDC(100, { allowStale: false })).rejects.toThrow(quote.StaleRateError);
+  });
+
+  it("allows obtaining a quote with stale fallback when caller explicitly opts in", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    // Explicit opt-in succeeds
+    const q = await quote.quoteBRLtoUSDC(54, { allowStale: true });
+
+    expect(q.stale).toBe(true);
+    expect(q.source).toBe("fallback");
+    expect(q.midRate).toBe(5.4);
+    expect(q.usdcOut.toFixed(7)).toBe("9.8135427");
+  });
+
+  it("ensures fallback rate cannot produce a price more favourable than last live rate", async () => {
+    // 1. Initial live rate succeeds at 5.80 BRL/USD
+    const liveFetch = okFetch(5.8);
+    vi.stubGlobal("fetch", liveFetch);
+
+    const liveQuote = await quote.quoteBRLtoUSDC(100);
+    expect(liveQuote.midRate).toBe(5.8);
+    expect(liveQuote.stale).toBe(false);
+    expect(liveQuote.source).toBe("live");
+
+    // 2. Next upstream call fails (offline). Default fallback is 5.40.
+    // In BRL/USD, 5.40 is MORE favourable to the buyer (cheaper USD -> more USDC out).
+    // Conservative rule: Fallback must never be more favourable than the last live rate (5.80).
+    quote._resetQuoteCache(); // Clear time cache while keeping lastLiveRate
+    // Prime lastLiveRate by calling once
+    vi.stubGlobal("fetch", okFetch(5.8));
+    await quote.midRateBRLperUSD();
+
+    // Now fail upstream
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("gateway down")));
+    // Advance time past 60s
+    vi.setSystemTime(Date.now() + 61_000);
+
+    const fallbackRes = await quote.midRateBRLperUSD();
+    expect(fallbackRes.stale).toBe(true);
+    expect(fallbackRes.source).toBe("fallback");
+    // Must be at least 5.8, not reverting to 5.4
+    expect(fallbackRes.rate).toBe(5.8);
+    expect(fallbackRes.rate).toBeGreaterThanOrEqual(5.8);
   });
 });
 

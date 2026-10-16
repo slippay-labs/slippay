@@ -11,11 +11,33 @@
 // this is the pricing + measurement layer that makes the spread live the moment
 // the anchor is connected.
 
-const SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
+import {
+  DEFAULT_FX_SPREAD_BPS,
+  MIN_FX_SPREAD_BPS,
+  MAX_FX_SPREAD_BPS,
+  resolveFxSpreadBps,
+} from "@slippay/shared";
+
+export const SPREAD_BPS = resolveFxSpreadBps(import.meta.env?.VITE_FX_SPREAD_BPS);
+
+// Log active spread once at module startup (Acceptance criteria)
+if (typeof console !== "undefined" && typeof console.info === "function") {
+  console.info(`[SlipPay FX] Active spread configured: ${SPREAD_BPS} bps (${(SPREAD_BPS / 100).toFixed(2)}%)`);
+}
+
 const RATE_URL = "https://open.er-api.com/v6/latest/USD";
 const FALLBACK_BRL_PER_USD = 5.4;
+const DEFAULT_RATE_TIMEOUT_MS = 5000;
 
 export const SPREAD_PCT = SPREAD_BPS / 100;
+
+export type RateSource = "live" | "cache" | "fallback";
+
+export interface RateResult {
+  rate: number;
+  stale: boolean;
+  source: RateSource;
+}
 
 export interface Quote {
   brlIn: number;
@@ -27,32 +49,111 @@ export interface Quote {
   marginUsd: number;   // SlipPay's captured margin (USD)
   marginBrl: number;   // ...in BRL
   stale: boolean;      // live rate fetch failed -> fallback used
+  source: RateSource;  // origin that produced the rate ("live" | "cache" | "fallback")
   ts: string;
 }
 
-let cache: { rate: number; at: number } | null = null;
-
-export async function midRateBRLperUSD(): Promise<{ rate: number; stale: boolean }> {
-  if (cache && Date.now() - cache.at < 60_000) return { rate: cache.rate, stale: false };
-  try {
-    const r = await fetch(RATE_URL);
-    const j = await r.json();
-    const rate = Number(j?.rates?.BRL);
-    if (rate > 0) { cache = { rate, at: Date.now() }; return { rate, stale: false }; }
-  } catch { /* fall through to fallback */ }
-  return { rate: FALLBACK_BRL_PER_USD, stale: true };
+export interface QuoteOptions {
+  spreadBps?: number;
+  allowStale?: boolean; // Must be true to quote when upstream live rate is unavailable (Issue #233)
 }
 
-export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Promise<Quote> {
-  const { rate: midRate, stale } = await midRateBRLperUSD();
-  const quotedRate = midRate * (1 + spreadBps / 10000);
+export class StaleRateError extends Error {
+  constructor(message = "Live FX rate unavailable. Quoting with a stale fallback requires explicit opt-in ({ allowStale: true }).") {
+    super(message);
+    this.name = "StaleRateError";
+  }
+}
+
+let cache: { rate: number; at: number } | null = null;
+let lastLiveRate: number | null = null;
+
+export function _resetQuoteCache(): void {
+  cache = null;
+  lastLiveRate = null;
+}
+
+export async function midRateBRLperUSD(timeoutMs = DEFAULT_RATE_TIMEOUT_MS): Promise<RateResult> {
+  if (cache && Date.now() - cache.at < 60_000) {
+    return { rate: cache.rate, stale: false, source: "cache" };
+  }
+
+  try {
+    const signal = typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function"
+      ? AbortSignal.timeout(timeoutMs)
+      : undefined;
+
+    const r = await fetch(RATE_URL, signal ? { signal } : undefined);
+
+    // Assert r.ok: treat non-200/non-OK HTTP status as failure
+    if (r.ok !== undefined && !r.ok) {
+      throw new Error(`Upstream rate response not OK: status ${r.status}`);
+    }
+
+    // Assert content-type is JSON before parsing
+    const contentType = r.headers?.get?.("content-type");
+    if (contentType && !contentType.toLowerCase().includes("application/json")) {
+      throw new Error(`Upstream rate response content-type is not JSON: ${contentType}`);
+    }
+
+    const j = await r.json();
+    const rate = Number(j?.rates?.BRL);
+    if (Number.isFinite(rate) && rate > 0) {
+      cache = { rate, at: Date.now() };
+      lastLiveRate = rate;
+      return { rate, stale: false, source: "live" };
+    }
+  } catch {
+    /* fall through to fallback */
+  }
+
+  // The fallback cannot produce a price more favourable than the last live rate (Issue #233)
+  // In BRL/USD (buying USDC with BRL), a lower rate is more favourable to the buyer.
+  // Therefore, the conservative fallback must be at least as high as lastLiveRate.
+  const fallbackRate = lastLiveRate !== null
+    ? Math.max(lastLiveRate, FALLBACK_BRL_PER_USD)
+    : FALLBACK_BRL_PER_USD;
+
+  return { rate: fallbackRate, stale: true, source: "fallback" };
+}
+
+export async function quoteBRLtoUSDC(
+  brlIn: number,
+  optionsOrSpread: QuoteOptions | number = SPREAD_BPS
+): Promise<Quote> {
+  const options: QuoteOptions = typeof optionsOrSpread === "number"
+    ? { spreadBps: optionsOrSpread, allowStale: false }
+    : {
+        spreadBps: optionsOrSpread.spreadBps ?? SPREAD_BPS,
+        allowStale: optionsOrSpread.allowStale ?? false,
+      };
+
+  const { rate: midRate, stale, source } = await midRateBRLperUSD();
+
+  // Acceptance criteria: A caller cannot obtain a usable quote with stale: true unless it explicitly opts in.
+  if (stale && !options.allowStale) {
+    throw new StaleRateError(
+      `Live FX rate unavailable. Quoting with a stale fallback rate (${midRate}) requires explicit opt-in ({ allowStale: true }).`
+    );
+  }
+
+  const effectiveSpreadBps = options.spreadBps ?? SPREAD_BPS;
+  const quotedRate = midRate * (1 + effectiveSpreadBps / 10000);
   const usdcOut = brlIn > 0 ? brlIn / quotedRate : 0;
   const usdcAtMid = brlIn > 0 ? brlIn / midRate : 0;
   const marginUsd = usdcAtMid - usdcOut;
   return {
-    brlIn, midRate, quotedRate, spreadBps,
-    usdcOut, usdcAtMid, marginUsd, marginBrl: marginUsd * quotedRate,
-    stale, ts: new Date().toISOString(),
+    brlIn,
+    midRate,
+    quotedRate,
+    spreadBps: effectiveSpreadBps,
+    usdcOut,
+    usdcAtMid,
+    marginUsd,
+    marginBrl: marginUsd * quotedRate,
+    stale,
+    source,
+    ts: new Date().toISOString(),
   };
 }
 
