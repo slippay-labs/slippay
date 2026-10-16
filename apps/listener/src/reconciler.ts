@@ -20,8 +20,20 @@ export async function reconcileMatch(
     ? ["pending", "underpaid"]
     : ["pending"];
 
+  const orderPatch: Record<string, unknown> = {
+    status: newStatus,
+    tx_hash: txHash,
+    paid_at: newStatus === "paid" ? new Date().toISOString() : null,
+  };
+  if (outcome.outcome === "paid") {
+    if (outcome.received !== undefined) orderPatch.received_usdc = outcome.received;
+    if (outcome.surplus !== undefined) orderPatch.surplus_usdc = outcome.surplus;
+  } else if (outcome.outcome === "underpaid") {
+    if (outcome.received !== undefined) orderPatch.received_usdc = outcome.received;
+  }
+
   const { data, error } = await db.from("orders")
-    .update({ status: newStatus, tx_hash: txHash, paid_at: newStatus === "paid" ? new Date().toISOString() : null })
+    .update(orderPatch)
     .eq("id", order.id)
     .in("status", allowedPriorStatuses)
     .select("*").single();
@@ -68,6 +80,11 @@ export async function reconcileMatch(
       memo: order.memo,
       paid_at: data.paid_at,
       ...(outcome.outcome === "underpaid" ? { expected: outcome.expected, received: outcome.received } : {}),
+      ...(outcome.outcome === "paid" && outcome.surplus !== undefined ? {
+        expected: outcome.expected ?? data.usdc_amount,
+        received: outcome.received ?? data.usdc_amount,
+        surplus: outcome.surplus,
+      } : {}),
     },
   };
 
@@ -94,5 +111,6 @@ export async function reconcileMatch(
     subscription_id: subscriptionId,
     status: newStatus,
     tx_hash: txHash,
+    surplus: (outcome as any).surplus ?? null,
   });
 }

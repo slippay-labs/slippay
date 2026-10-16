@@ -57,4 +57,44 @@ describe("reconcileMatch", () => {
     // no throw, no error log assertion — surviving the call is the contract
     expect(mockDb.insert).toHaveBeenCalled();
   });
+
+  it("persists surplus_usdc and received_usdc and delivers surplus in webhook payload on overpayment (Issue #232)", async () => {
+    mockDb.single.mockResolvedValueOnce({
+      data: { id: "ord-1", external_ref: "ext-1", brl_amount: "10.00", usdc_amount: "1.7000000", paid_at: "2026-10-17T06:00:00Z" },
+      error: null,
+    });
+    const outcome = {
+      outcome: "paid" as const,
+      expected: "1.7000000",
+      received: "3.5000000",
+      surplus: "1.8000000",
+    };
+    await reconcileMatch(
+      mockDb,
+      { id: "ord-1", merchant_id: "m-1", memo: "ab".repeat(32), usdc_amount: "1.7000000", merchant_stellar_address: "G".padEnd(56,"A"), platform_fee_bp: 100 },
+      outcome,
+      "overpaid-tx",
+    );
+
+    // Verify order update contains received_usdc and surplus_usdc
+    expect(mockDb.update).toHaveBeenCalledWith(expect.objectContaining({
+      status: "paid",
+      tx_hash: "overpaid-tx",
+      received_usdc: "3.5000000",
+      surplus_usdc: "1.8000000",
+    }));
+
+    // Verify webhook payload includes surplus
+    expect(mockDb.insert).toHaveBeenCalledWith(expect.objectContaining({
+      order_id: "ord-1",
+      type: "order.paid",
+      payload: expect.objectContaining({
+        data: expect.objectContaining({
+          expected: "1.7000000",
+          received: "3.5000000",
+          surplus: "1.8000000",
+        }),
+      }),
+    }));
+  });
 });

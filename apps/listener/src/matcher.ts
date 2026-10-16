@@ -1,4 +1,7 @@
 import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
+import { log } from "./log.js";
+
+export const DEFAULT_OVERPAYMENT_ALERT_THRESHOLD_USDC = "1.0000000";
 
 export interface StellarPaymentEvent {
   memo_type: string;
@@ -20,7 +23,7 @@ export interface OrderForMatch {
 }
 
 export type MatchOutcome =
-  | { outcome: "paid" }
+  | { outcome: "paid"; expected?: string; received?: string; surplus?: string }
   | { outcome: "underpaid"; expected: string; received: string }
   | { outcome: "ignore"; reason?: string };
 
@@ -68,7 +71,47 @@ export function matchPaymentToOrder(
   // zero, so the merchant receives at most the mathematically correct amount.
   const expectedStroops = (totalStroops * BigInt(10_000 - order.platform_fee_bp)) / 10_000n;
   const expectedMerchantShare = stroopsToStellar(expectedStroops);
-  if (receivedStroops >= expectedStroops) return { outcome: "paid" };
+
+  // Overpayment Policy: Accept-and-Record Residual.
+  // See docs/reconciliation/overpayment-policy.md (Issue #232)
+  const surplusStroops = receivedStroops - expectedStroops;
+  const surplus = stroopsToStellar(surplusStroops >= 0n ? surplusStroops : 0n);
+
+  if (receivedStroops >= expectedStroops) {
+    if (surplusStroops > 0n) {
+      const thresholdUsdc = process.env.OVERPAYMENT_ALERT_THRESHOLD_USDC ?? DEFAULT_OVERPAYMENT_ALERT_THRESHOLD_USDC;
+      let thresholdStroops = 10_000_000n; // 1.0 USDC
+      try {
+        thresholdStroops = stellarToStroops(thresholdUsdc);
+      } catch {
+        thresholdStroops = 10_000_000n;
+      }
+
+      if (surplusStroops >= thresholdStroops) {
+        log("warn", "order_overpayment_alert", {
+          order_id: order.id,
+          expected: expectedMerchantShare,
+          received: ev.amount,
+          surplus,
+          threshold_usdc: thresholdUsdc,
+        });
+      } else {
+        log("info", "order_overpayment_recorded", {
+          order_id: order.id,
+          expected: expectedMerchantShare,
+          received: ev.amount,
+          surplus,
+        });
+      }
+    }
+
+    return {
+      outcome: "paid",
+      expected: expectedMerchantShare,
+      received: ev.amount,
+      surplus,
+    };
+  }
   return { outcome: "underpaid", expected: expectedMerchantShare, received: ev.amount };
 }
 

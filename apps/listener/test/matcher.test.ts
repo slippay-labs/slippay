@@ -24,7 +24,12 @@ describe("matchPaymentToOrder", () => {
   afterEach(() => { delete process.env.STELLAR_USDC_ISSUER_OVERRIDE; });
 
   it("matches valid USDC payment with correct memo + amount", () => {
-    expect(matchPaymentToOrder(validEvent, order, "TESTNET")).toEqual({ outcome: "paid" });
+    expect(matchPaymentToOrder(validEvent, order, "TESTNET")).toEqual({
+      outcome: "paid",
+      expected: "9.9000000",
+      received: "9.9000000",
+      surplus: "0.0000000",
+    });
   });
 
   it("returns underpaid when amount short", () => {
@@ -51,7 +56,12 @@ describe("matchPaymentToOrder", () => {
     const customIssuer = "GCUSTOM" + "X".repeat(49);
     process.env.STELLAR_USDC_ISSUER_OVERRIDE = customIssuer;
     const e = { ...validEvent, asset_issuer: customIssuer };
-    expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({ outcome: "paid" });
+    expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({
+      outcome: "paid",
+      expected: "9.9000000",
+      received: "9.9000000",
+      surplus: "0.0000000",
+    });
   });
 
   it("ignores when issuer doesnt match override", () => {
@@ -70,7 +80,45 @@ describe("matchPaymentToOrder", () => {
   it("BigInt path: exact expected stroop count is paid", () => {
     const o = { ...order, usdc_amount: "1.0000001", platform_fee_bp: 25 };
     const e = { ...validEvent, amount: "0.9975000" };
-    expect(matchPaymentToOrder(e, o, "TESTNET")).toEqual({ outcome: "paid" });
+    expect(matchPaymentToOrder(e, o, "TESTNET")).toEqual({
+      outcome: "paid",
+      expected: "0.9975000",
+      received: "0.9975000",
+      surplus: "0.0000000",
+    });
+  });
+
+  it("records surplus on overpaid order and calculates residual (Issue #232)", () => {
+    const e = { ...validEvent, amount: "12.5000000" }; // Expected 9.9000000
+    const res = matchPaymentToOrder(e, order, "TESTNET");
+    expect(res).toEqual({
+      outcome: "paid",
+      expected: "9.9000000",
+      received: "12.5000000",
+      surplus: "2.6000000",
+    });
+  });
+
+  it("distinguishes small surplus from large surplus exceeding alert threshold", () => {
+    // 1 stroop overpayment: surplus = 0.0000001
+    const smallOverpay = { ...validEvent, amount: "9.9000001" };
+    const smallRes = matchPaymentToOrder(smallOverpay, order, "TESTNET");
+    expect(smallRes).toEqual({
+      outcome: "paid",
+      expected: "9.9000000",
+      received: "9.9000001",
+      surplus: "0.0000001",
+    });
+
+    // Substantial overpayment: 10.0 USDC over
+    const largeOverpay = { ...validEvent, amount: "19.9000000" };
+    const largeRes = matchPaymentToOrder(largeOverpay, order, "TESTNET");
+    expect(largeRes).toEqual({
+      outcome: "paid",
+      expected: "9.9000000",
+      received: "19.9000000",
+      surplus: "10.0000000",
+    });
   });
 
   it("rejects malformed amount as ignore", () => {
