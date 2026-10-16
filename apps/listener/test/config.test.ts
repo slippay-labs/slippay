@@ -10,6 +10,7 @@ const ENV_KEYS = [
   "ALLOW_LOCAL_WEBHOOKS",
   "MERCHANT_POLL_MS",
   "STELLAR_USDC_ISSUER_OVERRIDE",
+  "PORT",
 ] as const;
 
 const ORIGINAL: Record<string, string | undefined> = {};
@@ -95,5 +96,10 @@ describe("config · webhook escape hatch and poll interval", () => {
   it("defaults MERCHANT_POLL_MS to 30s and honours an override", async () => {
     expect((await loadConfig(REQUIRED)).merchantPollMs).toBe(30_000);
     expect((await loadConfig({ ...REQUIRED, MERCHANT_POLL_MS: "5000" })).merchantPollMs).toBe(5_000);
+  });
+
+  it("defaults PORT to 8080 and honours an override", async () => {
+    expect((await loadConfig(REQUIRED)).port).toBe(8080);
+    expect((await loadConfig({ ...REQUIRED, PORT: "9000" })).port).toBe(9000);
   });
 });

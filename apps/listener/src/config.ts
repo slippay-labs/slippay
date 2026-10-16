@@ -23,4 +23,6 @@ export const config = {
   // targets so local mock servers work in tests. NEVER set in production.
   allowLocalWebhooks: (process.env.ALLOW_LOCAL_WEBHOOKS ?? "") === "1",
   merchantPollMs: Number(process.env.MERCHANT_POLL_MS ?? "30000"),
+  port: Number(process.env.PORT ?? "8080"),
 };
+

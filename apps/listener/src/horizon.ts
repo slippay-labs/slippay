@@ -93,6 +93,7 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
   let stopped = false;
   let lastAliveLog = 0;
   let consecutiveErrors = 0;
+  let lastPollAt: string | null = null;
 
   async function tick(): Promise<void> {
     if (stopped) return;
@@ -100,6 +101,7 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
       let builder = server.payments().forAccount(accountId).order("asc").limit(PAGE_LIMIT);
       if (cursor) builder = builder.cursor(cursor);
       const page = await builder.call();
+      lastPollAt = new Date().toISOString();
       for (const raw of page.records) {
         await processRecord(raw);
         cursor = raw.paging_token;
@@ -120,5 +122,12 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
   const iv = setInterval(() => { void tick(); }, POLL_MS);
   void tick();
 
-  return () => { stopped = true; clearInterval(iv); };
+  const stopFn = Object.assign(
+    () => { stopped = true; clearInterval(iv); },
+    {
+      getLastPollAt: () => lastPollAt,
+      getCursor: () => cursor,
+    },
+  );
+  return stopFn;
 }

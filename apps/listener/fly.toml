@@ -11,6 +11,7 @@ primary_region = "gru"           # São Paulo
 [env]
   STELLAR_NETWORK = "TESTNET"
   MERCHANT_POLL_MS = "30000"
+  PORT = "8080"
   NODE_ENV = "production"
 
 [processes]
@@ -21,8 +22,20 @@ primary_region = "gru"           # São Paulo
   memory = "256mb"
   cpus = 1
 
-# Listener has no HTTP surface; no [[services]] block.
-# Keep one machine running 24/7 — auto_stop disabled.
+[http_service]
+  internal_port = 8080
+  force_https = false
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[http_service.checks]]
+  grace_period = "15s"
+  interval = "30s"
+  method = "GET"
+  timeout = "5s"
+  path = "/health"
+
 [[restart]]
   policy = "always"
   max_restarts = 10

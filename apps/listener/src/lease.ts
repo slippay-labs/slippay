@@ -24,7 +24,12 @@ const DEFAULT_HEARTBEAT_S = 20;
 export const HOLDER_ID = process.env.LISTENER_HOLDER_ID ?? randomUUID();
 
 export type LeaseResult =
-  | { acquired: true; release: () => Promise<void> }
+  | {
+      acquired: true;
+      release: () => Promise<void>;
+      getExpiresAt?: () => string;
+      onLost?: (cb: () => void) => void;
+    }
   | { acquired: false; heldBy: string; expiresAt: string };
 
 export async function acquireLease(
@@ -76,15 +81,24 @@ export async function acquireLease(
   }
 
   let stopped = false;
+  let currentExpires = expires.toISOString();
+  const lostListeners = new Set<() => void>();
+
   const heartbeat = setInterval(async () => {
     if (stopped) return;
     const nextExpires = new Date(Date.now() + ttl * 1000).toISOString();
     const r = await db.from("listener_leases")
       .update({ expires_at: nextExpires })
       .eq("account_id", accountId)
-      .eq("holder_id", HOLDER_ID);
-    if (r.error) {
-      log("warn", "lease_heartbeat_failed", { account_id: accountId, error: r.error.message });
+      .eq("holder_id", HOLDER_ID)
+      .select("holder_id");
+    if (r.error || !r.data || (Array.isArray(r.data) && r.data.length === 0)) {
+      log("warn", "lease_heartbeat_failed", { account_id: accountId, error: r.error?.message ?? "lease_lost" });
+      for (const cb of lostListeners) {
+        try { cb(); } catch {}
+      }
+    } else {
+      currentExpires = nextExpires;
     }
   }, heartbeatMs);
   // Prevent the heartbeat timer from keeping the process alive after shutdown.
@@ -101,5 +115,10 @@ export async function acquireLease(
   };
 
   log("info", "lease_acquired", { account_id: accountId, holder_id: HOLDER_ID, ttl_s: ttl });
-  return { acquired: true, release };
+  return {
+    acquired: true,
+    release,
+    getExpiresAt: () => currentExpires,
+    onLost: (cb: () => void) => { lostListeners.add(cb); },
+  };
 }

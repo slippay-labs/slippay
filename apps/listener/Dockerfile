@@ -20,4 +20,5 @@ COPY --from=builder /app/apps/listener/dist ./apps/listener/dist
 COPY --from=builder /app/apps/listener/package.json ./apps/listener/
 WORKDIR /app/apps/listener
 USER node
+EXPOSE 8080
 CMD ["node", "dist/main.js"]
