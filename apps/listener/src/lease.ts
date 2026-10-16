@@ -24,7 +24,7 @@ const DEFAULT_HEARTBEAT_S = 20;
 export const HOLDER_ID = process.env.LISTENER_HOLDER_ID ?? randomUUID();
 
 export type LeaseResult =
-  | { acquired: true; release: () => Promise<void> }
+  | { acquired: true; release: () => Promise<void>; heartbeat?: () => Promise<void> }
   | { acquired: false; heldBy: string; expiresAt: string };
 
 export async function acquireLease(
@@ -76,23 +76,68 @@ export async function acquireLease(
   }
 
   let stopped = false;
-  const heartbeat = setInterval(async () => {
+  let inFlight = false;
+  let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastRecordedExpires = expires.toISOString();
+
+  const stepHeartbeat = async () => {
     if (stopped) return;
-    const nextExpires = new Date(Date.now() + ttl * 1000).toISOString();
-    const r = await db.from("listener_leases")
-      .update({ expires_at: nextExpires })
-      .eq("account_id", accountId)
-      .eq("holder_id", HOLDER_ID);
-    if (r.error) {
-      log("warn", "lease_heartbeat_failed", { account_id: accountId, error: r.error.message });
+    if (inFlight) {
+      log("warn", "lease_heartbeat_skipped", {
+        account_id: accountId,
+        holder_id: HOLDER_ID,
+        reason: "heartbeat_in_flight",
+      });
+      return;
     }
-  }, heartbeatMs);
-  // Prevent the heartbeat timer from keeping the process alive after shutdown.
-  if (typeof heartbeat.unref === "function") heartbeat.unref();
+    inFlight = true;
+    try {
+      const candidateDate = new Date(Date.now() + ttl * 1000);
+      let nextExpires = candidateDate.toISOString();
+      if (nextExpires < lastRecordedExpires) {
+        nextExpires = lastRecordedExpires;
+      }
+
+      // Monotonic conditional write:
+      // Only advance expires_at if the database expires_at is older than proposed nextExpires.
+      // This prevents slow/out-of-order writes from writing an older expires_at over a newer one.
+      const r = await db.from("listener_leases")
+        .update({ expires_at: nextExpires })
+        .eq("account_id", accountId)
+        .eq("holder_id", HOLDER_ID)
+        .lt("expires_at", nextExpires);
+
+      if (r.error) {
+        log("warn", "lease_heartbeat_failed", { account_id: accountId, error: r.error.message });
+      } else {
+        lastRecordedExpires = nextExpires;
+      }
+    } catch (err: any) {
+      log("warn", "lease_heartbeat_failed", { account_id: accountId, error: err?.message ?? String(err) });
+    } finally {
+      inFlight = false;
+      if (!stopped) {
+        scheduleNext();
+      }
+    }
+  };
+
+  const scheduleNext = () => {
+    if (stopped) return;
+    heartbeatTimer = setTimeout(stepHeartbeat, heartbeatMs);
+    if (typeof heartbeatTimer?.unref === "function") {
+      heartbeatTimer.unref();
+    }
+  };
+
+  scheduleNext();
 
   const release = async () => {
     stopped = true;
-    clearInterval(heartbeat);
+    if (heartbeatTimer) {
+      clearTimeout(heartbeatTimer);
+      heartbeatTimer = null;
+    }
     const r = await db.from("listener_leases")
       .delete()
       .eq("account_id", accountId)
@@ -101,5 +146,5 @@ export async function acquireLease(
   };
 
   log("info", "lease_acquired", { account_id: accountId, holder_id: HOLDER_ID, ttl_s: ttl });
-  return { acquired: true, release };
+  return { acquired: true, release, heartbeat: stepHeartbeat };
 }
