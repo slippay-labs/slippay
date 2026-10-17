@@ -13,6 +13,13 @@
 //!
 //! `from.require_auth()` — the payer authorizes the whole charge once; the two
 //! nested SEP-41 transfers settle atomically (Soroban reverts on any failure).
+//!
+//! # Configuration Invariants (Fixes #304)
+//! An unconfigured contract instance (deployed without constructor parameters or
+//! prior to initialization) will fail-closed on every configuration reader (`fee_bps`,
+//! `fee_to`, and `pay`) with `Error::BadConfig`. `fee_bps` will never return a silent 0 bp
+//! default when unconfigured, ensuring that a legitimately configured zero-fee contract
+//! is unambiguously distinguishable from an uninitialized, non-functional deployment.
 
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol};
 
@@ -73,13 +80,19 @@ impl Checkout {
     }
 
     pub fn fee_bps(env: Env) -> u32 {
-        env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
+        env.storage().instance().get(&DataKey::FeeBps)
+            .unwrap_or_else(|| panic_with(&env, Error::BadConfig))
     }
     pub fn fee_to(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::FeeTo).unwrap()
+        env.storage().instance().get(&DataKey::FeeTo)
+            .unwrap_or_else(|| panic_with(&env, Error::BadConfig))
     }
 }
 
 fn panic_with(env: &Env, e: Error) -> ! {
     soroban_sdk::panic_with_error!(env, e)
 }
+
+#[cfg(test)]
+mod test;
+
