@@ -4,7 +4,7 @@ import { CreateOrderInputSchema, UsdcAmountSchema, LimitQuerySchema, ORDER_DEFAU
 import { requireApiKey } from "../middleware/auth_apikey.ts";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
 import { generateMemo } from "../lib/memo.ts";
-import { getBrlPerUsdc } from "../lib/rate.ts";
+import { getBrlPerUsdcObservation } from "../lib/rate.ts";
 import { serviceClient } from "../lib/supabase.ts";
 import { signCheckoutToken, verifyCheckoutToken } from "../lib/checkout-token.ts";
 import { mapDbError } from "../lib/db-error.ts";
@@ -31,15 +31,22 @@ r.post("/", requireApiKey, async (c) => {
   let brl_amount: string | null = null;
   let usd_amount: string | null = null;
   let rate_brl_usdc: string | null = null;
+  let rate_source: string | null = null;
+  let rate_observed_at: string | null = null;
 
   if (input.usd_amount) {
     usd_amount = input.usd_amount;
     usdc = input.usd_amount;
+    rate_source = "usd_pegged_1to1";
+    rate_observed_at = new Date().toISOString();
   } else {
     brl_amount = input.brl_amount!;
-    const rate = await getBrlPerUsdc();
+    const obs = await getBrlPerUsdcObservation(sb);
+    const rate = obs.rate;
     usdc = (parseFloat(input.brl_amount!) / rate).toFixed(7);
     rate_brl_usdc = rate.toFixed(7);
+    rate_source = obs.source;
+    rate_observed_at = obs.observedAt;
   }
 
   try {
@@ -70,6 +77,8 @@ r.post("/", requireApiKey, async (c) => {
     usd_amount,
     usdc_amount: usdc,
     rate_brl_usdc,
+    rate_source,
+    rate_observed_at,
     memo: m,
     expires_at: expiresAt,
     platform_fee_bp: feeBp,
