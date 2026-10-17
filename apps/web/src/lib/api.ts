@@ -41,8 +41,22 @@ export async function fetchOrder(id: string, token?: string): Promise<PublicOrde
     t = new URLSearchParams(window.location.search).get("t") ?? undefined;
   }
   const qs = t ? `?t=${encodeURIComponent(t)}` : "";
-  const r = await fetch(`${API_BASE}/v1/orders/${id}${qs}`);
+  const r = await fetch(`${API_BASE}/v1/orders/${id}${qs}`, {
+    credentials: "include",
+  });
   if (!r.ok) throw new Error(`fetch_order_${r.status}`);
+
+  // Issue #206: Strip ?t= from the customer's browser URL and history
+  // once the initial token exchange is completed. Subsequent calls and
+  // page reloads rely on the HttpOnly cookie.
+  if (t && typeof window !== "undefined" && window.location.search.includes("t=")) {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("t");
+      window.history.replaceState({}, "", url.pathname + (url.search ? url.search : ""));
+    } catch {}
+  }
+
   const j = await r.json() as { order: PublicOrder };
   return j.order;
 }

@@ -38,8 +38,9 @@ export const DEFAULT_MAX_BUCKETS = 10_000;
 const SWEEP_INTERVAL_MS = 60_000;
 const BUCKET_TTL_MS = 5 * 60_000;
 
-// Module-level LRU map preserving insertion/access order.
+// Module-level map of active buckets.
 const buckets: Map<string, Bucket> = new Map();
+let capacityRejectionsTotal = 0;
 let lastSweep = Date.now();
 let sweepTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -104,16 +105,11 @@ export function rateLimit(cfg: LimiterConfig) {
       // Re-insert to refresh position to most-recently used (MRU)
       buckets.delete(id);
     } else {
-      // If at capacity, evict the least recently used (first in Map)
+      // Admission control (Issue #192): reject new keys when table is at capacity
+      // instead of evicting least-recently-used buckets. Evicting LRU allowed an attacker
+      // to flood with spoofed keys to evict their own spent bucket and reset their limit.
       if (buckets.size >= maxBuckets) {
-        const oldestKey = buckets.keys().next().value;
-        if (oldestKey && oldestKey !== id) {
-          buckets.delete(oldestKey);
-        }
-      }
-
-      // If still at capacity (e.g. maxBuckets === 0), fail closed with 429
-      if (buckets.size >= maxBuckets) {
+        capacityRejectionsTotal++;
         return c.json(
           { error: "rate_limited", scope, reason: "capacity_exceeded", retry_after_sec: 1 },
           429,
@@ -150,9 +146,14 @@ export function merchantKey(c: Context): string {
   return m?.id ?? defaultKey(c);
 }
 
-/** Visible for tests. */
+/** Visible for tests and metrics. */
+export function getCapacityRejectionsTotal(): number {
+  return capacityRejectionsTotal;
+}
+
 export function __resetBuckets() {
   buckets.clear();
+  capacityRejectionsTotal = 0;
   lastSweep = Date.now();
   if (sweepTimer !== null) {
     clearInterval(sweepTimer);
