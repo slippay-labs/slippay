@@ -73,13 +73,23 @@ impl Checkout {
     }
 
     pub fn fee_bps(env: Env) -> u32 {
-        env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
+        env.storage()
+            .instance()
+            .get(&DataKey::FeeBps)
+            .unwrap_or_else(|| panic_with(&env, Error::BadConfig))
     }
     pub fn fee_to(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::FeeTo).unwrap()
+        env.storage()
+            .instance()
+            .get(&DataKey::FeeTo)
+            .unwrap_or_else(|| panic_with(&env, Error::BadConfig))
     }
 }
 
 fn panic_with(env: &Env, e: Error) -> ! {
     soroban_sdk::panic_with_error!(env, e)
 }
+
+#[cfg(test)]
+mod test;
+
