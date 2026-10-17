@@ -36,3 +36,11 @@ export const DEFAULT_PLATFORM_FEE_BP = 297; // 2.97%
 export const ORDER_DEFAULT_EXPIRY_MINUTES = 30;
 export const API_KEY_PREFIX = "sk_live_";
 export const API_KEY_BYTES = 32;
+
+// FX rate fetch & resilience constants
+export const DEFAULT_FALLBACK_BRL_PER_USDC = 5.4;
+export const DEFAULT_RATE_FETCH_TIMEOUT_MS = 5_000;
+export const DEFAULT_RATE_FETCH_MAX_RETRIES = 2;
+export const DEFAULT_RATE_CACHE_TTL_MS = 60_000;
+export const RATE_COINGECKO_URL = "https://api.coingecko.com/api/v3/simple/price?ids=usd-coin&vs_currencies=brl";
+

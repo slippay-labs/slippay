@@ -25,6 +25,7 @@ api.use("*", cors({
   origin: (origin) => (origin && ALLOWED_ORIGINS_SET.has(origin)) ? origin : "",
   allowMethods: ["GET", "POST", "PATCH", "OPTIONS"],
   allowHeaders: ["authorization", "content-type"],
+  credentials: true,
 }));
 // Audit-004 · C6: global token-bucket per IP applied to every /api/* request
 // as the outer guardrail. Per-route limiters (e.g. /v1/ask) compose on top.

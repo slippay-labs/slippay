@@ -5,6 +5,7 @@ import {
   __resetBuckets,
   __getBucketCount,
   __hasBucket,
+  getCapacityRejectionsTotal,
 } from "../middleware/rate_limit.ts";
 
 function createMockApp(maxBuckets = 50, capacity = 10, refillPerSec = 1) {
@@ -23,57 +24,87 @@ function createMockApp(maxBuckets = 50, capacity = 10, refillPerSec = 1) {
   return app;
 }
 
-Deno.test("rate_limiter enforces hard maximum bucket count with LRU eviction", async () => {
+Deno.test("rate_limiter enforces admission control and rejects new keys at capacity (Issue #192)", async () => {
   __resetBuckets();
   const maxBuckets = 20;
   const app = createMockApp(maxBuckets, 10, 1);
 
-  // Send requests from 50 distinct keys (exceeding maxBuckets of 20)
-  for (let i = 0; i < 50; i++) {
+  // Send requests from 20 distinct keys -> all 20 accepted
+  for (let i = 0; i < 20; i++) {
     const res = await app.request("/ping", {
       headers: { "x-client-id": `client_${i}` },
     });
     assertEquals(res.status, 200);
   }
 
-  // Assert that total tracked buckets never exceeds the configured cap
+  // Next 30 requests from new keys -> all rejected with 429 capacity_exceeded
+  for (let i = 20; i < 50; i++) {
+    const res = await app.request("/ping", {
+      headers: { "x-client-id": `client_${i}` },
+    });
+    assertEquals(res.status, 429);
+    const body = await res.json();
+    assertEquals(body.error, "rate_limited");
+    assertEquals(body.reason, "capacity_exceeded");
+  }
+
+  // Assert that total tracked buckets equals maxBuckets
   const count = __getBucketCount();
-  assertEquals(count <= maxBuckets, true);
   assertEquals(count, maxBuckets);
 
-  // Oldest clients (e.g. client_0) should have been evicted
-  assertEquals(__hasBucket("test:client_0"), false);
-  assertEquals(__hasBucket("test:client_1"), false);
+  // Original clients should NOT have been evicted!
+  assertEquals(__hasBucket("test:client_0"), true);
+  assertEquals(__hasBucket("test:client_1"), true);
+  assertEquals(__hasBucket("test:client_19"), true);
 
-  // Most recent clients should still be present
-  assertEquals(__hasBucket("test:client_49"), true);
-  assertEquals(__hasBucket("test:client_48"), true);
+  // Rejected clients were never tracked
+  assertEquals(__hasBucket("test:client_20"), false);
+  assertEquals(__hasBucket("test:client_49"), false);
+
+  // Metric counts all 30 capacity rejections
+  assertEquals(getCapacityRejectionsTotal(), 30);
 
   __resetBuckets();
 });
 
-Deno.test("rate_limiter does not evict the currently-active bucket during burst from other keys", async () => {
+Deno.test("flooding with new keys cannot restore an existing key's spent budget (Issue #192)", async () => {
   __resetBuckets();
   const maxBuckets = 10;
-  const app = createMockApp(maxBuckets, 10, 1);
+  const app = createMockApp(maxBuckets, 2, 0.01); // 2 tokens capacity, slow refill
 
-  // Client A is active
-  await app.request("/ping", { headers: { "x-client-id": "client_A" } });
-  assertEquals(__hasBucket("test:client_A"), true);
+  // Client A exhausts their 2 tokens
+  const res1 = await app.request("/ping", { headers: { "x-client-id": "client_A" } });
+  assertEquals(res1.status, 200);
+  const res2 = await app.request("/ping", { headers: { "x-client-id": "client_A" } });
+  assertEquals(res2.status, 200);
+  const res3 = await app.request("/ping", { headers: { "x-client-id": "client_A" } });
+  assertEquals(res3.status, 429); // Client A is now rate-limited
 
-  // Flood with other distinct clients, but keep touching client_A periodically
-  for (let i = 0; i < 30; i++) {
-    await app.request("/ping", { headers: { "x-client-id": `flood_${i}` } });
-    if (i % 3 === 0) {
-      // Re-access client_A to refresh its LRU position
-      const res = await app.request("/ping", { headers: { "x-client-id": "client_A" } });
-      assertEquals(res.status, 200);
-    }
+  // Fill up table to capacity (maxBuckets = 10) with 9 other clients
+  for (let i = 0; i < 9; i++) {
+    const res = await app.request("/ping", { headers: { "x-client-id": `legit_${i}` } });
+    assertEquals(res.status, 200);
+  }
+  assertEquals(__getBucketCount(), maxBuckets);
+
+  // Flood attack with 50 spoofed distinct keys attempting to evict client_A
+  for (let i = 0; i < 50; i++) {
+    const res = await app.request("/ping", { headers: { "x-client-id": `spoof_${i}` } });
+    assertEquals(res.status, 429);
+    const body = await res.json();
+    assertEquals(body.reason, "capacity_exceeded");
   }
 
-  // client_A must NOT have been evicted despite flood exceeding maxBuckets by 3x
+  // Client A requests again: client_A must NOT have been evicted or reset!
+  const resA = await app.request("/ping", { headers: { "x-client-id": "client_A" } });
+  assertEquals(resA.status, 429);
+  const bodyA = await resA.json();
+  assertEquals(bodyA.error, "rate_limited");
+  assertEquals(bodyA.reason, undefined); // Standard rate limit, not capacity_exceeded
+
+  // Table remains bound to maxBuckets and client_A is still tracked
   assertEquals(__hasBucket("test:client_A"), true);
-  assertEquals(__getBucketCount() <= maxBuckets, true);
+  assertEquals(__getBucketCount(), maxBuckets);
 
   __resetBuckets();
 });
