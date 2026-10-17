@@ -1,12 +1,19 @@
 import { supabase } from "./auth.tsx";
+import { resolveApiBase } from "./endpointSecurity.ts";
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:54321/functions/v1/api";
+export function getApiBase(): string {
+  return resolveApiBase(import.meta.env.VITE_API_BASE);
+}
+
+export const API_BASE = resolveApiBase(import.meta.env.VITE_API_BASE);
 
 export async function authFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const { data } = await supabase.auth.getSession();
   const jwt = data.session?.access_token;
-  return fetch(`${API_BASE}${path}`, {
+  const base = getApiBase();
+  return fetch(`${base}${path}`, {
     ...init,
     headers: { ...init.headers, ...(jwt ? { authorization: `Bearer ${jwt}` } : {}) },
   });
 }
+

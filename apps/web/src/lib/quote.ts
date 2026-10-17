@@ -11,6 +11,8 @@
 // this is the pricing + measurement layer that makes the spread live the moment
 // the anchor is connected.
 
+import { resolveRelayerBase } from "./endpointSecurity.ts";
+
 const SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
 const RATE_URL = "https://open.er-api.com/v6/latest/USD";
 const FALLBACK_BRL_PER_USD = 5.4;
@@ -60,7 +62,7 @@ export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Pro
 // revenue is measured per conversion. Lands in the backend ledger when the route
 // exists; silently no-ops otherwise (measurement must never block the flow).
 export async function recordConversionIntent(q: Quote, walletId?: string): Promise<void> {
-  const base = (import.meta.env.VITE_RELAYER_BASE as string | undefined) ?? "https://api.slippay.cc/api/v1/relayer";
+  const base = resolveRelayerBase(import.meta.env.VITE_RELAYER_BASE as string | undefined);
   try {
     await fetch(`${base.replace(/\/relayer$/, "")}/onramp/intent`, {
       method: "POST",
