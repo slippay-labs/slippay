@@ -49,6 +49,55 @@ r.post("/", requireApiKey, async (c) => {
     return c.json({ error: "validation_error", issues }, 400);
   }
 
+  const rawIdempotencyKey = c.req.header("idempotency-key")?.trim();
+  const idempotencyKey = rawIdempotencyKey && rawIdempotencyKey.length > 0
+    ? rawIdempotencyKey.slice(0, 128)
+    : null;
+
+  const findExistingOrder = async (): Promise<Record<string, unknown> | null> => {
+    if (idempotencyKey) {
+      const { data } = await sb
+        .from("orders")
+        .select("*")
+        .eq("merchant_id", merchant.id)
+        .eq("idempotency_key", idempotencyKey)
+        .maybeSingle();
+      if (data) return data;
+    }
+    if (input.external_ref) {
+      const { data } = await sb
+        .from("orders")
+        .select("*")
+        .eq("merchant_id", merchant.id)
+        .eq("external_ref", input.external_ref)
+        .maybeSingle();
+      if (data) return data;
+    }
+    return null;
+  };
+
+  // Idempotency pre-check: if order already exists under this idempotency-key or external_ref, replay it
+  if (idempotencyKey || input.external_ref) {
+    const existing = await findExistingOrder();
+    if (existing) {
+      const token = await signCheckoutToken(existing.id as string);
+      const gross = existing.usdc_amount as string;
+      const fee = existing.fee_usdc as string;
+      const net = (existing.net_usdc as string | undefined) ?? (parseFloat(gross) - parseFloat(fee)).toFixed(7);
+      return c.json({
+        order: existing,
+        checkout_url: `${CHECKOUT_BASE}/checkout/${existing.id}?t=${token}`,
+        fee: {
+          platform_fee_bp: existing.platform_fee_bp,
+          gross_usdc: gross,
+          fee_usdc: fee,
+          net_usdc: net,
+        },
+        idempotent_replay: true,
+      }, 200);
+    }
+  }
+
   let memo = await generateMemo();
   const minutes = input.expires_in_minutes ?? ORDER_DEFAULT_EXPIRY_MINUTES;
   const expiresAt = new Date(Date.now() + minutes * 60_000).toISOString();
@@ -66,6 +115,7 @@ r.post("/", requireApiKey, async (c) => {
     merchant_id: merchant.id,
     merchant_stellar_address: merchant.stellar_address ?? null,
     external_ref: input.external_ref ?? null,
+    idempotency_key: idempotencyKey,
     brl_amount,
     usd_amount,
     usdc_amount: usdc,
@@ -74,11 +124,36 @@ r.post("/", requireApiKey, async (c) => {
     expires_at: expiresAt,
     platform_fee_bp: feeBp,
     fee_usdc: feeUsdc,
+    net_usdc: netUsdc,
   });
 
   let insertRes = await sb.from("orders").insert(insertPayload(memo)).select("*").single();
-  // Audit #71: Explicit collision retry for unique memo constraint
+
+  // Collision handling (23505 unique constraint violation):
   if (insertRes.error && (insertRes.error as { code?: string }).code === "23505") {
+    // 1. Check if collision was caused by concurrent double-submit with same idempotency_key or external_ref
+    if (idempotencyKey || input.external_ref) {
+      const existingAfterRace = await findExistingOrder();
+      if (existingAfterRace) {
+        const token = await signCheckoutToken(existingAfterRace.id as string);
+        const gross = existingAfterRace.usdc_amount as string;
+        const fee = existingAfterRace.fee_usdc as string;
+        const net = (existingAfterRace.net_usdc as string | undefined) ?? (parseFloat(gross) - parseFloat(fee)).toFixed(7);
+        return c.json({
+          order: existingAfterRace,
+          checkout_url: `${CHECKOUT_BASE}/checkout/${existingAfterRace.id}?t=${token}`,
+          fee: {
+            platform_fee_bp: existingAfterRace.platform_fee_bp,
+            gross_usdc: gross,
+            fee_usdc: fee,
+            net_usdc: net,
+          },
+          idempotent_replay: true,
+        }, 200);
+      }
+    }
+
+    // 2. Otherwise it's a memo collision — retry once with fresh memo
     memo = await generateMemo();
     insertRes = await sb.from("orders").insert(insertPayload(memo)).select("*").single();
   }

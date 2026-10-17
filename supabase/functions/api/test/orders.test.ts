@@ -288,4 +288,73 @@ Deno.test("GET /v1/x402/:slug sets platform_fee_bp and fee_usdc on order insert"
   assertEquals(orderData.fee_usdc, "0.1485000"); // 5.0 * 297 / 10000
 });
 
+Deno.test("POST /v1/orders is idempotent under retry with Idempotency-Key (Issue #200)", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const m = await createMerchant();
+  const idempotencyKey = "idem-" + crypto.randomUUID();
+
+  // 1. First submission -> 201 Created
+  const res1 = await req("/v1/orders", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${m.api_key}`,
+      "content-type": "application/json",
+      "idempotency-key": idempotencyKey,
+    },
+    body: JSON.stringify({ brl_amount: "50.00" }),
+  });
+  assertEquals(res1.status, 201);
+  const data1 = await res1.json();
+  assert(data1.order.id);
+  assert(data1.checkout_url);
+
+  // 2. Retry with identical Idempotency-Key -> 200 OK with original order and checkout_url
+  const res2 = await req("/v1/orders", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${m.api_key}`,
+      "content-type": "application/json",
+      "idempotency-key": idempotencyKey,
+    },
+    body: JSON.stringify({ brl_amount: "50.00" }),
+  });
+  assertEquals(res2.status, 200);
+  const data2 = await res2.json();
+  assertEquals(data2.idempotent_replay, true);
+  assertEquals(data2.order.id, data1.order.id);
+  assertEquals(data2.order.memo, data1.order.memo);
+  assertEquals(data2.checkout_url, data1.checkout_url);
+});
+
+Deno.test("POST /v1/orders is idempotent under retry with external_ref (Issue #200)", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const m = await createMerchant();
+  const externalRef = "ext-" + crypto.randomUUID();
+
+  // 1. First submission -> 201 Created
+  const res1 = await req("/v1/orders", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${m.api_key}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ brl_amount: "75.00", external_ref: externalRef }),
+  });
+  assertEquals(res1.status, 201);
+  const data1 = await res1.json();
+
+  // 2. Retry with identical external_ref -> 200 OK with original order
+  const res2 = await req("/v1/orders", {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${m.api_key}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ brl_amount: "75.00", external_ref: externalRef }),
+  });
+  assertEquals(res2.status, 200);
+  const data2 = await res2.json();
+  assertEquals(data2.idempotent_replay, true);
+  assertEquals(data2.order.id, data1.order.id);
+  assertEquals(data2.order.memo, data1.order.memo);
+});
+
 
