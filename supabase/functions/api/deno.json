@@ -2,6 +2,7 @@
   "imports": {
     "hono": "npm:hono@4.6.5",
     "hono/cors": "npm:hono@4.6.5/cors",
+    "hono/cookie": "npm:hono@4.6.5/cookie",
     "zod": "npm:zod@3.23.8",
     "supabase": "npm:@supabase/supabase-js@2.45.4",
     "@slippay/shared": "../../../packages/shared/src/index.ts"

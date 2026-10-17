@@ -104,7 +104,9 @@ comment on table merchants is
   'M4 lockdown 2026-06-01: column-level SELECT for authenticated excludes api_key_hash and webhook_secret. Row-level policy merchants_self_select (20260507100100) still applies. Secrets are only ever served stripped via the edge API.';
 
 -- ---------------------------------------------------------------------------
--- APPLY: this changes live data-plane access; apply to the hosted Supabase
--- project as a deploy step (supabase db push / migration), NOT auto-applied
--- here.
+-- ENFORCEMENT & VERIFICATION:
+-- Enforced on every deployment and validated via scripts/verify-rls-lockdown.mjs.
+-- Deploy pipelines assert RLS enabled status on x402_resources, listener_leases,
+-- listener_state, and merchants, and verify secret columns are ungranted.
 -- ---------------------------------------------------------------------------
+
