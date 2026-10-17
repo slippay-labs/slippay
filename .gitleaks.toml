@@ -1,0 +1,42 @@
+# Gitleaks Configuration for SlipPay
+# Docs: https://github.com/gitleaks/gitleaks
+
+title = "SlipPay Gitleaks Rules"
+
+[extend]
+# Inherit default gitleaks rules
+
+[[rules]]
+id = "slippay-live-api-key"
+description = "SlipPay Live API Key (sk_live_...)"
+regex = '''sk_live_[0-9a-zA-Z]{24,}'''
+secretGroup = 0
+keywords = ["sk_live_"]
+
+[[rules]]
+id = "stellar-secret-seed"
+description = "Stellar Secret Seed (S...)"
+regex = '''\bS[A-Z2-7]{55}\b'''
+secretGroup = 0
+keywords = ["S"]
+
+[[rules]]
+id = "evm-private-key"
+description = "EVM / Base 64-hex Private Key"
+regex = '''(?i)\b(?:0x)?[0-9a-f]{64}\b'''
+secretGroup = 0
+
+[allowlist]
+description = "Allowlist for synthetic test fixtures and public local development placeholders"
+paths = [
+  '''^\.env\.local\.ci\.example$''',
+  '''^apps/web/\.env\.production\.example$''',
+  '''^supabase/seed\.sql$''',
+  '''^.*\.test\.[tj]sx?$''',
+  '''^packages/shared/src/vectors/.*\.json$''',
+  '''^\.gitleaks\.toml$'''
+]
+regexes = [
+  '''ci-test-[a-zA-Z0-9_-]+''',
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpc3MiOiJzdXBhYmFzZS1kZW1vI[a-zA-Z0-9_.-]+'''
+]
