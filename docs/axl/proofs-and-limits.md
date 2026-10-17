@@ -66,7 +66,7 @@ to catch drift between a deployed bound and its proof.
 
 This is the load-bearing section. The certificate machinery is real and the tests
 are green, but the moat thesis around it does not hold today. The summary below
-follows the `axl-compiler/MOAT_EVOLUTION_2026_06_02.md` synthesis.
+follows the `docs/design/MOAT_EVOLUTION_2026_06_02.md` synthesis.
 
 **The proof is not the moat.** The z3 model is roughly 40 lines of SMT. A
 competent formal-verification engineer ports it in engineer-weeks. There is no
