@@ -60,7 +60,14 @@ impl Checkout {
         let net: i128 = amount - fee;
 
         let client = token::Client::new(&env, &token);
-        client.transfer(&from, &merchant, &net);
+        // Guard both transfer legs symmetrically against zero-amount transfers.
+        // Diverse SEP-41 implementations exist: while some accept zero-amount transfers,
+        // others revert unconditionally on zero-value transfers. Skipping zero-value legs
+        // guarantees atomic settlement without configuration-dependent reverts when fee == 0
+        // (zero fee rate) or net == 0 (maximum fee rate / micro-payments below fee floor).
+        if net > 0 {
+            client.transfer(&from, &merchant, &net);
+        }
         if fee > 0 {
             client.transfer(&from, &fee_to, &fee);
         }
@@ -83,3 +90,7 @@ impl Checkout {
 fn panic_with(env: &Env, e: Error) -> ! {
     soroban_sdk::panic_with_error!(env, e)
 }
+
+#[cfg(test)]
+mod test;
+
