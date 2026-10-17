@@ -4,7 +4,7 @@ import { CreateOrderInputSchema, UsdcAmountSchema, LimitQuerySchema, ORDER_DEFAU
 import { requireApiKey } from "../middleware/auth_apikey.ts";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
 import { generateMemo } from "../lib/memo.ts";
-import { getBrlPerUsdc } from "../lib/rate.ts";
+import { getBrlPerUsdc, getBrlPerUsdcWithSource, RateOutOfRangeError } from "../lib/rate.ts";
 import { serviceClient } from "../lib/supabase.ts";
 import { signCheckoutToken, verifyCheckoutToken } from "../lib/checkout-token.ts";
 import { mapDbError } from "../lib/db-error.ts";
@@ -37,9 +37,17 @@ r.post("/", requireApiKey, async (c) => {
     usdc = input.usd_amount;
   } else {
     brl_amount = input.brl_amount!;
-    const rate = await getBrlPerUsdc();
-    usdc = (parseFloat(input.brl_amount!) / rate).toFixed(7);
-    rate_brl_usdc = rate.toFixed(7);
+    try {
+      const rateRes = await getBrlPerUsdcWithSource();
+      const rate = rateRes.rate;
+      usdc = (parseFloat(input.brl_amount!) / rate).toFixed(7);
+      rate_brl_usdc = rate.toFixed(7);
+    } catch (e: unknown) {
+      if (e instanceof RateOutOfRangeError) {
+        return c.json({ error: "rate_out_of_range", message: e.message }, 502);
+      }
+      throw e;
+    }
   }
 
   try {

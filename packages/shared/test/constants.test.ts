@@ -9,6 +9,8 @@ import {
   MEMO_HASH_HEX_LENGTH,
   ASSET_CODES,
   USDC_ASSET_CODE,
+  MIN_BRL_PER_USDC,
+  MAX_BRL_PER_USDC,
 } from "../src/index.ts";
 
 describe("packages/shared constants invariants", () => {
@@ -89,6 +91,14 @@ describe("packages/shared constants invariants", () => {
       expect(MEMO_HASH_HEX_LENGTH).toBe(64);
       expect(ASSET_CODES.USDC).toBe("USDC");
       expect(USDC_ASSET_CODE).toBe("USDC");
+    });
+  });
+
+  describe("BRL/USDC exchange rate bounds (Issue #194)", () => {
+    it("defines sane exchange rate boundaries", () => {
+      expect(MIN_BRL_PER_USDC).toBe(0.5);
+      expect(MAX_BRL_PER_USDC).toBe(20.0);
+      expect(MIN_BRL_PER_USDC).toBeLessThan(MAX_BRL_PER_USDC);
     });
   });
 });
