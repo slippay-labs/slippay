@@ -14,6 +14,7 @@ import ramp from "./routes/ramp.ts";
 import offramp from "./routes/offramp.ts";
 import { ALLOWED_ORIGINS_SET } from "@slippay/shared";
 import fourp from "./routes/fourp.ts";
+import { securityHeadersMiddleware } from "./middleware/security_headers.ts";
 
 const api = new Hono().basePath("/api");
 api.use("*", errorMiddleware);
@@ -52,6 +53,8 @@ api.route("/v1/offramp", offramp);
 api.route("/v1/4p", fourp);
 
 const app = new Hono();
+// Security headers across all routes and static assets (Issue #185)
+app.use("*", securityHeadersMiddleware);
 app.route("/", api);
 
 // Shopify connector (PM2 slippay-shopify on :4001) — reverse-proxied here so
