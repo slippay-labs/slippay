@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import type { SupabaseClient } from "supabase";
-import { CreateOrderInputSchema, UsdcAmountSchema, LimitQuerySchema, ORDER_DEFAULT_EXPIRY_MINUTES, DEFAULT_PLATFORM_FEE_BP } from "@slippay/shared";
+import { CreateOrderInputSchema, UsdcAmountSchema, LimitQuerySchema, ORDER_DEFAULT_EXPIRY_MINUTES, DEFAULT_PLATFORM_FEE_BP, calculateFeeSplitStellar } from "@slippay/shared";
+
+
 import { requireApiKey } from "../middleware/auth_apikey.ts";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
 import { generateMemo } from "../lib/memo.ts";
@@ -54,13 +56,12 @@ r.post("/", requireApiKey, async (c) => {
   const expiresAt = new Date(Date.now() + minutes * 60_000).toISOString();
 
   // Platform fee. `usdc` (gross) is what the buyer pays; merchant net = gross −
-  // fee; fee_usdc is SlipPay's 0.98% cut, persisted per order so capture model A
-  // (off-chain invoice) has a ledger to bill from. Persisting is the accounting —
-  // capture routes fee_usdc to SlipPay via the monthly invoice.
+  // fee; fee_usdc is SlipPay's cut, persisted per order so capture model A
+  // (off-chain invoice) has a ledger to bill from. Persisting is the accounting.
+  // Integer floor division matches contracts/checkout/src/lib.rs line 59 and apps/listener/src/matcher.ts (Issue #219).
   const feeBp = Number((merchant as { platform_fee_bp?: number }).platform_fee_bp ?? DEFAULT_PLATFORM_FEE_BP);
-  const grossUsdc = parseFloat(usdc);
-  const feeUsdc = (grossUsdc * feeBp / 10_000).toFixed(7);
-  const netUsdc = (grossUsdc - parseFloat(feeUsdc)).toFixed(7);
+  const { feeStellar: feeUsdc, netStellar: netUsdc } = calculateFeeSplitStellar(usdc, feeBp);
+
 
   const insertPayload = (m: string) => ({
     merchant_id: merchant.id,

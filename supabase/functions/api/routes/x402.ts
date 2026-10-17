@@ -26,7 +26,8 @@
 import { Hono, type Context } from "hono";
 import type { SupabaseClient } from "supabase";
 import { z } from "zod";
-import { NETWORK, ORDER_DEFAULT_EXPIRY_MINUTES, DEFAULT_PLATFORM_FEE_BP } from "@slippay/shared";
+import { NETWORK, ORDER_DEFAULT_EXPIRY_MINUTES, DEFAULT_PLATFORM_FEE_BP, calculateFeeSplitStellar } from "@slippay/shared";
+
 import { requireApiKey } from "../middleware/auth_apikey.ts";
 import { rateLimit } from "../middleware/rate_limit.ts";
 import { serviceClient } from "../lib/supabase.ts";
@@ -213,8 +214,8 @@ r.get("/:slug", async (c) => {
     }
 
     const feeBp = Number(merchantRel?.platform_fee_bp ?? DEFAULT_PLATFORM_FEE_BP);
-    const grossUsdc = parseFloat(res.usd_amount);
-    const feeUsdc = (grossUsdc * feeBp / 10_000).toFixed(7);
+    const { feeStellar: feeUsdc } = calculateFeeSplitStellar(res.usd_amount, feeBp);
+
 
     memo = await generateMemo();
     const expiresAt = new Date(Date.now() + ORDER_DEFAULT_EXPIRY_MINUTES * 60_000).toISOString();

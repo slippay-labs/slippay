@@ -9,7 +9,8 @@ import {
   TransactionBuilder,
   BASE_FEE,
 } from "@stellar/stellar-sdk";
-import { USDC_ASSET_CODE } from "@slippay/shared";
+import { USDC_ASSET_CODE, calculateFeeSplitStellar } from "@slippay/shared";
+
 
 const HORIZON: Record<string, string> = {
   TESTNET: "https://horizon-testnet.stellar.org",
@@ -111,9 +112,8 @@ export interface BuildAtomicTxArgs {
 export async function buildAtomicTx(args: BuildAtomicTxArgs): Promise<string> {
   const total = Number(args.usdcAmount);
   if (!isFinite(total) || total <= 0) throw new Error("invalid_amount");
-  const fee = total * (args.platformFeeBp / 10_000);
-  const merchantShare = (total - fee).toFixed(7);
-  const feeShare = fee.toFixed(7);
+  const { feeStellar: feeShare, netStellar: merchantShare } = calculateFeeSplitStellar(args.usdcAmount, args.platformFeeBp);
+
 
   const issuer = ISSUERS[args.network];
   const usdc = new Asset(USDC_ASSET_CODE, issuer);

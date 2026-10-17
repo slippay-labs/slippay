@@ -1,5 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { matchPaymentToOrder, stellarToStroops, stroopsToStellar, type StellarPaymentEvent } from "../src/matcher.js";
+import { FEE_VECTORS } from "@slippay/shared";
+
 
 const order = {
   id: "ord-1",
@@ -62,16 +64,17 @@ describe("matchPaymentToOrder", () => {
 
   it("BigInt path: 1 stroop short is underpaid (FP would round to paid)", () => {
     const o = { ...order, usdc_amount: "1.0000001", platform_fee_bp: 25 };
-    // expected = 10000001 * 9975 / 10000 = 9975000 (truncated). Send 1 stroop less.
-    const e = { ...validEvent, amount: "0.9974999" };
+    // Canonical fee = 10000001 * 25 / 10000 = 25000 stroops; expected net = 10000001 - 25000 = 9975001. Send 1 stroop less.
+    const e = { ...validEvent, amount: "0.9975000" };
     expect(matchPaymentToOrder(e, o, "TESTNET").outcome).toBe("underpaid");
   });
 
   it("BigInt path: exact expected stroop count is paid", () => {
     const o = { ...order, usdc_amount: "1.0000001", platform_fee_bp: 25 };
-    const e = { ...validEvent, amount: "0.9975000" };
+    const e = { ...validEvent, amount: "0.9975001" };
     expect(matchPaymentToOrder(e, o, "TESTNET")).toEqual({ outcome: "paid" });
   });
+
 
   it("rejects malformed amount as ignore", () => {
     const e = { ...validEvent, amount: "10.99999999" }; // 8 fractional digits
@@ -117,3 +120,34 @@ describe("stellarToStroops · stroopsToStellar", () => {
     expect(() => stellarToStroops("1.00000001")).toThrow();
   });
 });
+
+describe("shared fee vectors matchPaymentToOrder parity (Issue #221)", () => {
+  it("correctly matches exact net payments for all canonical vectors", () => {
+    for (const vec of FEE_VECTORS) {
+      const o = {
+        id: `ord-${vec.id}`,
+        memo: "ab".repeat(32),
+        usdc_amount: vec.amount_stellar,
+        merchant_stellar_address: "G" + "M".repeat(55),
+        platform_fee_bp: vec.fee_bps,
+      };
+      const ev: StellarPaymentEvent = {
+        memo_type: "hash",
+        memo_b64: Buffer.from("ab".repeat(32), "hex").toString("base64"),
+        successful: true,
+        asset_code: "USDC",
+        asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+        to: o.merchant_stellar_address,
+        amount: vec.expected_net_stellar,
+        hash: "tx_hash",
+      };
+      const res = matchPaymentToOrder(ev, o, "TESTNET");
+      if (vec.fee_bps < 10_000) {
+        expect(res.outcome).toBe("paid");
+      } else {
+        expect(res.outcome).toBe("ignore");
+      }
+    }
+  });
+});
+
