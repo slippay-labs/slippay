@@ -17,23 +17,30 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
-    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-    - name: Install z3 (SMT solver — the proof is discharged, not trusted)
-      run: sudo apt-get update && sudo apt-get install -y z3
-    - name: Cache cargo
-      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+    - name: Set up Rust toolchain
+      uses: actions-rust-lang/setup-rust-toolchain@11df97af8e8102fd60b60a77dfbf58d40cd843b8 # v1.10.1
       with:
-        path: '~/.cargo/registry
-
+        toolchain: stable
+    - name: Install z3 (SMT solver — the proof is discharged, not trusted)
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y z3=4.8.12* || sudo apt-get install -y z3
+        z3 --version
+    - name: Cache cargo
+      uses: actions/cache@1bd1e32a3bdc45362d1e726936510720a7c30a57 # v4.2.0
+      with:
+        path: |
+          ~/.cargo/registry
           ~/.cargo/git
-
           axl-compiler/target
-
-          '
-        key: axl-cargo-${{ runner.os }}-${{ hashFiles('axl-compiler/Cargo.toml') }}
+        key: axl-cargo-v1-${{ runner.os }}-${{ hashFiles('axl-compiler/Cargo.lock', 'axl-compiler/Cargo.toml') }}
+        restore-keys: |
+          axl-cargo-v1-${{ runner.os }}-
     - name: Build axlc (release)
       run: cd axl-compiler && cargo build --release
     - name: Compiler tests (parse, SMT, discharge, certify, drift)
       run: cd axl-compiler && cargo test --release
     - name: Conformance gate (proof == policy == certificate == on-chain bound)
       run: axl-compiler/scripts/axl-gate.sh
+
