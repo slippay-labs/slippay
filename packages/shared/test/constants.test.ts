@@ -9,6 +9,7 @@ import {
   MEMO_HASH_HEX_LENGTH,
   ASSET_CODES,
   USDC_ASSET_CODE,
+  DEFAULT_LEGACY_API_KEY_SUNSET,
 } from "../src/index.ts";
 
 describe("packages/shared constants invariants", () => {
@@ -89,6 +90,15 @@ describe("packages/shared constants invariants", () => {
       expect(MEMO_HASH_HEX_LENGTH).toBe(64);
       expect(ASSET_CODES.USDC).toBe("USDC");
       expect(USDC_ASSET_CODE).toBe("USDC");
+    });
+  });
+
+  describe("API key sunset deadline (Issue #193)", () => {
+    it("defines valid ISO-8601 legacy sunset timestamp", () => {
+      expect(DEFAULT_LEGACY_API_KEY_SUNSET).toBe("2026-11-01T00:00:00Z");
+      const ms = Date.parse(DEFAULT_LEGACY_API_KEY_SUNSET);
+      expect(isNaN(ms)).toBe(false);
+      expect(ms).toBeGreaterThan(0);
     });
   });
 });

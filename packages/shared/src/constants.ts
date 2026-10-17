@@ -36,3 +36,7 @@ export const DEFAULT_PLATFORM_FEE_BP = 297; // 2.97%
 export const ORDER_DEFAULT_EXPIRY_MINUTES = 30;
 export const API_KEY_PREFIX = "sk_live_";
 export const API_KEY_BYTES = 32;
+
+// Legacy unpeppered API key sunset date (Issue #193)
+export const DEFAULT_LEGACY_API_KEY_SUNSET = "2026-11-01T00:00:00Z";
+
