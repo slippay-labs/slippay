@@ -1,10 +1,28 @@
 #![no_std]
 //! SlipPay Checkout — the "Stripe of stablecoin" revenue primitive.
 //!
-//! A single, atomic payment that splits on-chain: the merchant receives the net,
-//! SlipPay receives its fee — and the fee is INESCAPABLE. The fee recipient and
-//! basis points are fixed at deploy (constructor) and read from storage on every
-//! pay; the caller cannot route around them. Either both legs settle or none does.
+//! # Fee Semantics, Rounding & Rate Bounds
+//!
+//! - **Rate Unit & Bounds**: Fee rate is configured in basis points (`fee_bps`: 1 bp = 0.01% = 0.0001).
+//!   Permitted deploy range is `0..=10_000` bps (0% to 100%), enforced immutably by `__constructor`.
+//! - **Arithmetic & Rounding Direction**:
+//!   `fee = amount * fee_bps / 10_000`
+//!   `net = amount - fee`
+//!   Integer division strictly **truncates toward zero** (floor division). Fractional dust remainders
+//!   (`(amount * fee_bps) % 10_000`) are discarded from the platform fee and retained by the merchant,
+//!   benefiting the merchant by up to 1 stroop ($10^{-7}$ token units) and ensuring SlipPay never overcharges.
+//! - **Conservation Identity**: `net + fee == amount` holds invariant across all valid amounts.
+//! - **Off-Chain Ledger Mapping**: On-chain stroops map directly to the off-chain invoice column
+//!   `orders.fee_usdc` (`numeric(20,7)`) via `fee_usdc = fee_stroops / 10^7`.
+//! - **Zero-Net & Zero-Fee Transfer Handling**:
+//!   - If `fee == 0` (0 bps rate or sub-basis-point micro-payment), the platform fee transfer leg is skipped.
+//!   - If `net == 0` (10,000 bps maximum fee), the merchant transfer leg is skipped.
+//!   Skipping zero-value transfers eliminates configuration-dependent atomic reverts on SEP-41 tokens
+//!   that reject zero-amount transfers.
+//! - **Atomicity & Revert Safety**: Both legs settle atomically within the invocation transaction.
+//!   If any SEP-41 token transfer fails or reverts (e.g. insufficient payer balance, frozen asset, or invalid auth),
+//!   the entire transaction rolls back atomically, guaranteeing neither party is credited partially.
+//! - **Canonical Specification**: For the platform-wide fee specification, see [`docs/fees.md`](../../docs/fees.md).
 //!
 //! pay(from, merchant, token, amount):
 //!   fee = amount * fee_bps / 10_000
