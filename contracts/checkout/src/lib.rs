@@ -37,7 +37,7 @@ pub struct Checkout;
 impl Checkout {
     /// Set the SlipPay fee recipient + basis points once, at deploy. Immutable.
     pub fn __constructor(env: Env, fee_to: Address, fee_bps: u32) {
-        if fee_bps > 10_000 {
+        if fee_bps > 10_000 || fee_to == env.current_contract_address() {
             panic_with(&env, Error::BadConfig);
         }
         env.storage().instance().set(&DataKey::FeeTo, &fee_to);
@@ -55,6 +55,12 @@ impl Checkout {
             .unwrap_or_else(|| panic_with(&env, Error::BadConfig));
         let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps)
             .unwrap_or_else(|| panic_with(&env, Error::BadConfig));
+
+        // Guard against recipient identity collapse: merchant must not equal fee recipient.
+        // A payment where merchant == fee_to collapses the split and prevents legitimate platform collection.
+        if merchant == fee_to {
+            panic_with(&env, Error::BadConfig);
+        }
 
         let fee: i128 = amount * (fee_bps as i128) / 10_000;
         let net: i128 = amount - fee;
@@ -83,3 +89,7 @@ impl Checkout {
 fn panic_with(env: &Env, e: Error) -> ! {
     soroban_sdk::panic_with_error!(env, e)
 }
+
+#[cfg(test)]
+mod test;
+
