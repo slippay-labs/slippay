@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { __getBucketCount, getCapacityRejectionsTotal } from "../middleware/rate_limit.ts";
 
 // Public subscription-intelligence snapshot, sourced from the SlipPay Dune
 // dashboard (dune.com/slippay/subscription-intelligence). Public on purpose —
@@ -77,6 +78,14 @@ r.get("/dune-snapshot", async (c) => {
   };
   cache = { at: Date.now(), body };
   return c.json(body);
+});
+
+// GET /v1/metrics/rate-limiter — expose admission control and capacity metrics (Issue #192)
+r.get("/rate-limiter", (c) => {
+  return c.json({
+    tracked_buckets: __getBucketCount(),
+    capacity_rejections_total: getCapacityRejectionsTotal(),
+  });
 });
 
 export default r;

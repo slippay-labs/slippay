@@ -35,11 +35,11 @@ async function p256Pair() {
 }
 
 async function signDer(privateKey: CryptoKey, msg: Uint8Array): Promise<Uint8Array> {
-  return rawToDer(new Uint8Array(await subtle.sign({ name: "ECDSA", hash: "SHA-256" }, privateKey, msg)));
+  return rawToDer(new Uint8Array(await subtle.sign({ name: "ECDSA", hash: "SHA-256" }, privateKey, msg as BufferSource)));
 }
 
 function verifyP256(pub: CryptoKey, raw64: Uint8Array, msg: Uint8Array): Promise<boolean> {
-  return subtle.verify({ name: "ECDSA", hash: "SHA-256" }, pub, raw64, msg);
+  return subtle.verify({ name: "ECDSA", hash: "SHA-256" }, pub, raw64 as BufferSource, msg as BufferSource);
 }
 
 afterEach(() => {

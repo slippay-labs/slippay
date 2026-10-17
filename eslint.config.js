@@ -14,8 +14,16 @@ export default tseslint.config(
   // Base JS recommended rules
   js.configs.recommended,
 
-  // TypeScript recommended rules (type-aware)
-  ...tseslint.configs.recommended,
+  // TypeScript recommended rules (actually type-aware, fixes #165)
+  ...tseslint.configs.recommendedTypeChecked,
+  {
+    languageOptions: {
+      parserOptions: {
+        projectService: true,
+        tsconfigRootDir: import.meta.dirname,
+      },
+    },
+  },
 
   // React Hooks + Refresh
   {
@@ -26,7 +34,7 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": [
-        "warn",
+        "error",
         { allowConstantExport: true },
       ],
     },
@@ -50,7 +58,8 @@ export default tseslint.config(
     rules: {
       "jsx-a11y/alt-text": "error",
       // Strict: also enforce that long alt text is not just the file name.
-      "jsx-a11y/no-redundant-roles": "warn",
+      // Ratchet: fail on warnings by setting severity to error (fixes #166)
+      "jsx-a11y/no-redundant-roles": "error",
     },
   },
 
