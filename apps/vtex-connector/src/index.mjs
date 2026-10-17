@@ -15,23 +15,23 @@
 import http from "node:http";
 import { randomUUID } from "node:crypto";
 
-const PORT = Number(process.env.PORT ?? 4000);
-const SLIPPAY_API_BASE = process.env.SLIPPAY_API_BASE ?? "https://api.slippay.cc";
+export const PORT = Number(process.env.PORT ?? 4000);
+export const SLIPPAY_API_BASE = process.env.SLIPPAY_API_BASE ?? "https://api.slippay.cc";
 // Per-merchant key normally comes from VTEX `merchantSettings`; env is the
 // fallback used for local/standalone testing.
-const FALLBACK_KEY = process.env.SLIPPAY_API_KEY ?? "";
+export const FALLBACK_KEY = process.env.SLIPPAY_API_KEY ?? "";
 
-// paymentId → { slippayOrderId, callbackUrl, status }. In-memory for the
+// paymentId → { slippayOrderId, callbackUrl, status, checkoutUrl }. In-memory for the
 // scaffold; production persists this (Supabase table) so callbacks survive
 // restarts.
-const payments = new Map();
+export const payments = new Map();
 
-const json = (res, code, body) => {
+export const json = (res, code, body) => {
   res.writeHead(code, { "content-type": "application/json" });
   res.end(JSON.stringify(body));
 };
 
-async function readBody(req) {
+export async function readBody(req) {
   const chunks = [];
   for await (const c of req) chunks.push(c);
   if (!chunks.length) return {};
@@ -40,8 +40,8 @@ async function readBody(req) {
 }
 
 // VTEX → SlipPay: create an order, return its hosted checkout_url.
-async function createSlippayOrder({ apiKey, value, reference }) {
-  const r = await fetch(`${SLIPPAY_API_BASE}/api/v1/orders`, {
+export async function createSlippayOrder({ apiKey, value, reference, apiBase = SLIPPAY_API_BASE }) {
+  const r = await fetch(`${apiBase}/api/v1/orders`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
     body: JSON.stringify({ brl_amount: Number(value).toFixed(2), reference }),
@@ -51,81 +51,120 @@ async function createSlippayOrder({ apiKey, value, reference }) {
   return data; // { order: {...}, checkout_url }
 }
 
-const server = http.createServer(async (req, res) => {
+export function getManifest() {
+  return {
+    paymentMethods: [{ name: "SlipPay", allowsSplit: "disabled" }],
+  };
+}
+
+export async function handlePaymentCreate(b, { paymentsMap = payments, apiKeyFallback = FALLBACK_KEY, createOrderFn = createSlippayOrder } = {}) {
+  const paymentId = b.paymentId ?? randomUUID();
+
+  // Idempotency: same paymentId returns the same result.
+  if (paymentsMap.has(paymentId)) {
+    const p = paymentsMap.get(paymentId);
+    return {
+      status: 200,
+      body: { paymentId, status: p.status, tid: p.slippayOrderId, paymentUrl: p.checkoutUrl },
+    };
+  }
+
+  const apiKey = b.merchantSettings?.api_key || apiKeyFallback;
+  if (!apiKey) {
+    return {
+      status: 200,
+      body: { paymentId, status: "denied", message: "missing SlipPay api_key (merchantSettings)" },
+    };
+  }
+
+  try {
+    const { order, checkout_url } = await createOrderFn({
+      apiKey, value: b.value, reference: paymentId,
+    });
+    paymentsMap.set(paymentId, {
+      slippayOrderId: order.id, callbackUrl: b.callbackUrl, status: "undefined", checkoutUrl: checkout_url,
+    });
+    // status "undefined" = pending/async; VTEX redirects the buyer to
+    // paymentUrl and waits for our callback to finalize.
+    return {
+      status: 200,
+      body: {
+        paymentId, status: "undefined", tid: order.id,
+        paymentUrl: checkout_url,
+        message: `SlipPay order ${order.id} created (${order.brl_amount} BRL → ${order.usdc_amount} USDC)`,
+      },
+    };
+  } catch (e) {
+    return {
+      status: 200,
+      body: { paymentId, status: "denied", message: String(e.message ?? e) },
+    };
+  }
+}
+
+export async function handleSlippayWebhook(b, { paymentsMap = payments, fetchFn = fetch } = {}) {
+  const orderId = b.order?.id ?? b.order_id ?? b.id;
+  const paid = (b.event ?? b.order?.status) === "order.paid" || b.order?.status === "paid";
+  const entry = [...paymentsMap.entries()].find(([, p]) => p.slippayOrderId === orderId);
+  if (entry && paid && entry[1].callbackUrl) {
+    const [paymentId, p] = entry;
+    p.status = "approved";
+    await fetchFn(p.callbackUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ paymentId, status: "approved", tid: p.slippayOrderId, authorizationId: p.slippayOrderId }),
+    }).catch(() => {});
+  }
+  return { status: 200, body: { received: true } };
+}
+
+export function handleCancellation(paymentId) {
+  return { paymentId, cancellationId: randomUUID(), code: "cancel-manually", message: "non-custodial settlement; cancellation is informational" };
+}
+
+export function handleSettlement(paymentId, value) {
+  return { paymentId, settleId: randomUUID(), value, code: "settled-on-chain", message: "funds settle to merchant wallet on-chain at payment time" };
+}
+
+export function handleRefund(paymentId, value) {
+  return { paymentId, refundId: randomUUID(), value, code: "refund-manually", message: "refunds handled off-protocol (non-custodial)" };
+}
+
+export const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname;
 
   // 1. Manifest — declares the payment method VTEX will offer.
   if (req.method === "GET" && path === "/manifest") {
-    return json(res, 200, {
-      paymentMethods: [{ name: "SlipPay", allowsSplit: "disabled" }],
-    });
+    return json(res, 200, getManifest());
   }
 
   // 2. Create Payment — idempotent. Maps to a SlipPay order + checkout_url.
   if (req.method === "POST" && path === "/payments") {
     const b = await readBody(req);
-    const paymentId = b.paymentId ?? randomUUID();
-
-    // Idempotency: same paymentId returns the same result.
-    if (payments.has(paymentId)) {
-      const p = payments.get(paymentId);
-      return json(res, 200, { paymentId, status: p.status, tid: p.slippayOrderId, paymentUrl: p.checkoutUrl });
-    }
-
-    const apiKey = b.merchantSettings?.api_key || FALLBACK_KEY;
-    if (!apiKey) return json(res, 200, { paymentId, status: "denied", message: "missing SlipPay api_key (merchantSettings)" });
-
-    try {
-      const { order, checkout_url } = await createSlippayOrder({
-        apiKey, value: b.value, reference: paymentId,
-      });
-      payments.set(paymentId, {
-        slippayOrderId: order.id, callbackUrl: b.callbackUrl, status: "undefined", checkoutUrl: checkout_url,
-      });
-      // status "undefined" = pending/async; VTEX redirects the buyer to
-      // paymentUrl and waits for our callback to finalize.
-      return json(res, 200, {
-        paymentId, status: "undefined", tid: order.id,
-        paymentUrl: checkout_url,
-        message: `SlipPay order ${order.id} created (${order.brl_amount} BRL → ${order.usdc_amount} USDC)`,
-      });
-    } catch (e) {
-      return json(res, 200, { paymentId, status: "denied", message: String(e.message ?? e) });
-    }
+    const result = await handlePaymentCreate(b);
+    return json(res, result.status, result.body);
   }
 
-  // 3. SlipPay webhook → VTEX callback. When SlipPay confirms the order paid,
-  //    notify VTEX so it finalizes the transaction.
+  // 3. SlipPay webhook → VTEX callback.
   if (req.method === "POST" && path === "/slippay-webhook") {
     const b = await readBody(req);
-    const orderId = b.order?.id ?? b.order_id ?? b.id;
-    const paid = (b.event ?? b.order?.status) === "order.paid" || b.order?.status === "paid";
-    const entry = [...payments.entries()].find(([, p]) => p.slippayOrderId === orderId);
-    if (entry && paid && entry[1].callbackUrl) {
-      const [paymentId, p] = entry;
-      p.status = "approved";
-      await fetch(p.callbackUrl, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ paymentId, status: "approved", tid: p.slippayOrderId, authorizationId: p.slippayOrderId }),
-      }).catch(() => {});
-    }
-    return json(res, 200, { received: true });
+    const result = await handleSlippayWebhook(b);
+    return json(res, result.status, result.body);
   }
 
   // 4-6. Cancel / Settle / Refund — protocol-valid scaffold responses.
   let m;
   if (req.method === "POST" && (m = path.match(/^\/payments\/([^/]+)\/cancellations$/))) {
-    return json(res, 200, { paymentId: m[1], cancellationId: randomUUID(), code: "cancel-manually", message: "non-custodial settlement; cancellation is informational" });
+    return json(res, 200, handleCancellation(m[1]));
   }
   if (req.method === "POST" && (m = path.match(/^\/payments\/([^/]+)\/settlements$/))) {
     const b = await readBody(req);
-    return json(res, 200, { paymentId: m[1], settleId: randomUUID(), value: b.value, code: "settled-on-chain", message: "funds settle to merchant wallet on-chain at payment time" });
+    return json(res, 200, handleSettlement(m[1], b.value));
   }
   if (req.method === "POST" && (m = path.match(/^\/payments\/([^/]+)\/refunds$/))) {
     const b = await readBody(req);
-    return json(res, 200, { paymentId: m[1], refundId: randomUUID(), value: b.value, code: "refund-manually", message: "refunds handled off-protocol (non-custodial)" });
+    return json(res, 200, handleRefund(m[1], b.value));
   }
 
   if (req.method === "GET" && path === "/health") return json(res, 200, { ok: true, slippay: SLIPPAY_API_BASE });
@@ -133,6 +172,8 @@ const server = http.createServer(async (req, res) => {
   json(res, 404, { error: "not_found", path });
 });
 
-server.listen(PORT, () => {
-  console.log(`SlipPay×VTEX connector on :${PORT} → ${SLIPPAY_API_BASE}`);
-});
+if (process.argv[1] && process.argv[1].replace(/\\/g, "/").endsWith("src/index.mjs")) {
+  server.listen(PORT, () => {
+    console.log(`SlipPay×VTEX connector on :${PORT} → ${SLIPPAY_API_BASE}`);
+  });
+}
