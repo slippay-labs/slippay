@@ -14,6 +14,7 @@ import ramp from "./routes/ramp.ts";
 import offramp from "./routes/offramp.ts";
 import { ALLOWED_ORIGINS_SET } from "@slippay/shared";
 import fourp from "./routes/fourp.ts";
+import { CORS_ALLOW_METHODS, CORS_ALLOW_HEADERS } from "./lib/cors.ts";
 
 const api = new Hono().basePath("/api");
 api.use("*", errorMiddleware);
@@ -23,8 +24,8 @@ api.use("*", errorMiddleware);
 // be invoked from random origins.
 api.use("*", cors({
   origin: (origin) => (origin && ALLOWED_ORIGINS_SET.has(origin)) ? origin : "",
-  allowMethods: ["GET", "POST", "PATCH", "OPTIONS"],
-  allowHeaders: ["authorization", "content-type"],
+  allowMethods: [...CORS_ALLOW_METHODS],
+  allowHeaders: [...CORS_ALLOW_HEADERS],
 }));
 // Audit-004 · C6: global token-bucket per IP applied to every /api/* request
 // as the outer guardrail. Per-route limiters (e.g. /v1/ask) compose on top.
