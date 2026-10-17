@@ -4,6 +4,7 @@ import { API_KEY_PREFIX, API_KEY_BYTES, bufToHex } from "@slippay/shared";
 // pepper, so a DB-only leak (Supabase breach, backup theft, support engineer
 // with read-only access) is not enough to brute-force a key. The pepper lives
 // in `API_KEY_PEPPER` env (≥32 bytes) and never touches the database.
+// Secret lifecycle & rotation runbook: docs/security/trust-model.md § 2
 //
 // We accept SHA-256 hashes too (legacy unsalted) on read to allow a graceful
 // rotation: once all merchants have rotated keys via /me/rotate-key, drop the

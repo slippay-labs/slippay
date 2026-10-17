@@ -1,4 +1,5 @@
 // Audit-005 · H1 — trustworthy client-IP derivation.
+// Architectural trust model & proxy hops: docs/security/trust-model.md
 //
 // THREAT: the previous code took `X-Forwarded-For.split(",")[0]` (the
 // LEFT-MOST hop). XFF is appended to by each proxy, so the left-most entry is
@@ -6,11 +7,9 @@
 // `X-Forwarded-For: <random>` on every request defeats every per-IP limiter
 // and mints unbounded pending orders. We must never trust the left-most hop.
 //
-// CORRECT MODEL: our own nginx is the only trusted proxy. nginx APPENDS the
-// real socket peer as the RIGHT-MOST hop of XFF. So with one trusted proxy,
-// the rightmost hop is the genuine client IP; everything to its left is
-// forgeable. We read a fixed depth from the RIGHT, configurable via
-// TRUSTED_PROXY_HOPS (default 1 = "nginx is the only proxy in front of us").
+// CORRECT MODEL: our own ingress proxy (nginx/Kong) is the trusted proxy.
+// See docs/security/trust-model.md § 1 for the multi-tier topology. We read a
+// fixed depth from the RIGHT, configurable via TRUSTED_PROXY_HOPS (default 1).
 //
 // BEST: when the server exposes the real connection remote address we use it
 // directly and ignore headers entirely. Deno's `Deno.serve` passes the

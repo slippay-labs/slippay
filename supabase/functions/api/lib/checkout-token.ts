@@ -3,6 +3,7 @@
 // `checkout_url` carries a signed HMAC token derived from the order id. The
 // token is generated at order creation and verified on every public read.
 // An attacker who guesses an order uuid cannot read it without the secret.
+// See docs/security/trust-model.md § 2 for rotation cadence and security bounds.
 //
 // Token is `?t=<base64url(hmac_sha256(secret, order_id))>`. Constant-time
 // compare on verify.

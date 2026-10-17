@@ -8,6 +8,7 @@
 // DNS rebinding between check and connect cannot redirect us.
 //
 // Audit reference: docs/security/audit-003.md · L1 (CVSS ~9.1).
+// Trust boundary & egress model: docs/security/trust-model.md § 3.1
 
 import { lookup } from "node:dns/promises";
 import { Agent, type Dispatcher } from "undici";
