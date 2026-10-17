@@ -83,6 +83,14 @@ function defaultKey(c: Context): string {
 
 export function rateLimit(cfg: LimiterConfig) {
   const { capacity, refillPerSec } = cfg;
+
+  if (typeof capacity !== "number" || !Number.isFinite(capacity) || capacity < 1) {
+    throw new Error(`rateLimit: capacity must be a finite number >= 1, got ${capacity}`);
+  }
+  if (typeof refillPerSec !== "number" || !Number.isFinite(refillPerSec) || refillPerSec <= 0) {
+    throw new Error(`rateLimit: refillPerSec must be a finite number > 0, got ${refillPerSec}`);
+  }
+
   const keyFn = cfg.key ?? defaultKey;
   const scope = cfg.scope ?? "default";
 
@@ -129,7 +137,8 @@ export function rateLimit(cfg: LimiterConfig) {
     bucket.lastRefill = now;
 
     if (bucket.tokens < 1) {
-      const retrySec = Math.ceil((1 - bucket.tokens) / refillPerSec);
+      const rawRetrySec = Math.ceil((1 - bucket.tokens) / refillPerSec);
+      const retrySec = Number.isFinite(rawRetrySec) && rawRetrySec > 0 ? rawRetrySec : 1;
       buckets.set(id, bucket);
       return c.json(
         { error: "rate_limited", scope, retry_after_sec: retrySec },
