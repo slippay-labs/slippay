@@ -1,10 +1,11 @@
 import { Hono } from "hono";
+import { getCookie, setCookie } from "hono/cookie";
 import type { SupabaseClient } from "supabase";
 import { CreateOrderInputSchema, UsdcAmountSchema, LimitQuerySchema, ORDER_DEFAULT_EXPIRY_MINUTES, DEFAULT_PLATFORM_FEE_BP } from "@slippay/shared";
 import { requireApiKey } from "../middleware/auth_apikey.ts";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
 import { generateMemo } from "../lib/memo.ts";
-import { getBrlPerUsdc } from "../lib/rate.ts";
+import { getBrlPerUsdc, RateUnavailableError } from "../lib/rate.ts";
 import { serviceClient } from "../lib/supabase.ts";
 import { signCheckoutToken, verifyCheckoutToken } from "../lib/checkout-token.ts";
 import { mapDbError } from "../lib/db-error.ts";
@@ -37,9 +38,20 @@ r.post("/", requireApiKey, async (c) => {
     usdc = input.usd_amount;
   } else {
     brl_amount = input.brl_amount!;
-    const rate = await getBrlPerUsdc();
-    usdc = (parseFloat(input.brl_amount!) / rate).toFixed(7);
-    rate_brl_usdc = rate.toFixed(7);
+    try {
+      const rate = await getBrlPerUsdc();
+      usdc = (parseFloat(input.brl_amount!) / rate).toFixed(7);
+      rate_brl_usdc = rate.toFixed(7);
+    } catch (err: unknown) {
+      if (err instanceof RateUnavailableError || (err as { code?: string })?.code === "rate_unavailable") {
+        c.header("Retry-After", "5");
+        return c.json({
+          error: "rate_unavailable",
+          message: "Upstream FX rate service temporarily unavailable. Please retry shortly.",
+        }, 503);
+      }
+      throw err;
+    }
   }
 
   try {
@@ -85,7 +97,7 @@ r.post("/", requireApiKey, async (c) => {
 
   const { data, error } = insertRes;
   if (error) return c.json({ error: "create_failed" }, 400);
-  const token = await signCheckoutToken(data.id as string);
+  const token = await signCheckoutToken(data.id as string, data.expires_at ?? expiresAt);
 
   return c.json({
     order: data,
@@ -121,18 +133,61 @@ r.get("/", requireApiKeyOrJwt, async (c) => {
   return c.json({ orders });
 });
 
-// Audit-004 · C2: this endpoint is reached by the customer's browser during
-// checkout, so it cannot require an API key. Instead, the order creator gets
-// a signed `?t=` token at order creation, and the customer can only read the
-// order if they have the token. Without it: 401. PII fields that the checkout
-// page does NOT need (merchant_id, external_ref, tx_hash) are stripped from
-// the response so a leaked token only reveals what the customer already needs
-// to pay.
-r.get("/:id", async (c) => {
+// Audit-004 · C2 / Issue #206: One-time token exchange endpoint.
+// Exchanges the query token ?t= for an HttpOnly, Secure, SameSite cookie,
+// then redirects (303 See Other) to strip ?t= from the customer's browser URL.
+r.get("/:id/exchange", async (c) => {
   const id = c.req.param("id");
   const token = c.req.query("t") ?? "";
   const ok = await verifyCheckoutToken(id, token);
   if (!ok) return c.json({ error: "unauthorized" }, 401);
+
+  setCookie(c, `checkout_token_${id}`, token, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "Lax",
+    path: "/",
+    maxAge: 3600,
+  });
+  c.header("Referrer-Policy", "no-referrer");
+
+  const redirectTarget = c.req.query("redirect") ?? `${CHECKOUT_BASE}/checkout/${id}`;
+  return c.redirect(redirectTarget, 303);
+});
+
+// Audit-004 · C2 & Issue #206: this endpoint is reached by the customer's browser during
+// checkout, so it cannot require an API key. To prevent bearer token leakage via URLs
+// (Referer headers, browser history, reverse proxy logs), this endpoint accepts the token
+// via an HttpOnly, Secure cookie (scoped to checkout path) or via ?t= on first exchange.
+// When passed via ?t=, it immediately sets the credential cookie so subsequent reads carry
+// no credential in the URL. A naked/captured URL without the cookie returns 401.
+// PII fields that the checkout page does NOT need (merchant_id, external_ref, tx_hash)
+// are stripped from the response so a leaked token only reveals what the customer already
+// needs to pay.
+r.get("/:id", async (c) => {
+  const id = c.req.param("id");
+  const cookieName = `checkout_token_${id}`;
+  const cookieToken = getCookie(c, cookieName) ?? getCookie(c, "checkout_token");
+  const queryToken = c.req.query("t");
+  const authHeader = c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
+
+  const token = cookieToken || queryToken || authHeader || "";
+  const ok = await verifyCheckoutToken(id, token);
+  if (!ok) return c.json({ error: "unauthorized" }, 401);
+
+  // If presented via query parameter (first visit / exchange), set HttpOnly cookie
+  if (queryToken && !cookieToken) {
+    setCookie(c, cookieName, queryToken, {
+      httpOnly: true,
+      secure: true,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: 3600,
+    });
+  }
+
+  // Ensure Referrer-Policy: no-referrer prevents order id / token leakage to embedded resources
+  c.header("Referrer-Policy", "no-referrer");
 
   const sb = serviceClient();
   const { data, error } = await sb.from("orders")

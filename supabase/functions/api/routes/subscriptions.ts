@@ -143,7 +143,7 @@ r.post("/:id/charge", requireApiKey, async (c) => {
     .gt("expires_at", new Date().toISOString())
     .order("created_at", { ascending: false }).limit(1).maybeSingle();
   if (openOrder) {
-    const openToken = await signCheckoutToken(openOrder.id as string);
+    const openToken = await signCheckoutToken(openOrder.id as string, openOrder.expires_at as string);
     return c.json({
       order: openOrder,
       checkout_url: `${CHECKOUT_BASE}/checkout/${openOrder.id}?t=${openToken}`,
@@ -184,7 +184,7 @@ r.post("/:id/charge", requireApiKey, async (c) => {
     next_charge_at: nextChargeAt,
   }).eq("id", id);
 
-  const orderToken = await signCheckoutToken(order.id as string);
+  const orderToken = await signCheckoutToken(order.id as string, (order.expires_at ?? expiresAt) as string);
   return c.json({
     order,
     checkout_url: `${CHECKOUT_BASE}/checkout/${order.id}?t=${orderToken}`,

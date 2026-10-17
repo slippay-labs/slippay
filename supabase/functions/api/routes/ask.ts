@@ -43,9 +43,9 @@ function tryReserveSpawn(): boolean {
 }
 
 // Token bucket: 5 req/min sustained, burst 5. Daily-ish cap via second
-// limiter below (smaller refill).
-r.use("*", rateLimit({ capacity: 5, refillPerSec: 5 / 60, scope: "ask_per_minute" }));
-r.use("*", rateLimit({ capacity: 100, refillPerSec: 100 / 86_400, scope: "ask_per_day" }));
+// limiter below (smaller refill). Fails closed to protect Claude model spend.
+r.use("*", rateLimit({ capacity: 5, refillPerSec: 5 / 60, scope: "ask_per_minute", failClosed: true }));
+r.use("*", rateLimit({ capacity: 100, refillPerSec: 100 / 86_400, scope: "ask_per_day", failClosed: true }));
 
 // POST /v1/ask — Ask Slippay AI chat widget endpoint.
 // Public (no auth required) — intended to be called from the landing page.

@@ -112,7 +112,8 @@ describe("SlippayMandate", () => {
       m.charge({ owner, mint, agent, ownerToken, recipientToken, amount: new BN(500) }),
     ).resolves.toBe("CHARGE_SIG");
 
-    expect(String(charge.mock.calls[0][0])).toBe("500");
+    const chargeCalls = charge.mock.calls as unknown as [unknown][];
+    expect(String(chargeCalls[0]?.[0])).toBe("500");
     expect(accounts).toHaveBeenCalledWith({
       agent, mandate: mandatePda(owner, mint), mint,
       ownerToken, recipientToken, tokenProgram: TOKEN_PROGRAM_ID,

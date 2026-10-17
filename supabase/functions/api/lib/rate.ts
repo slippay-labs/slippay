@@ -1,26 +1,33 @@
-let cache: { value: number; expires: number } | null = null;
-const TTL_MS = 60_000;
+import {
+  getBrlPerUsdc as sharedGetBrlPerUsdc,
+  _resetRateCacheForTest,
+  _resetRateInFlightForTest,
+  RateUnavailableError,
+  type RateResult,
+  type RateOptions,
+} from "@slippay/shared";
 
-export function _resetCacheForTest() { cache = null; }
+export { RateUnavailableError };
+export type { RateResult, RateOptions };
 
-export async function getBrlPerUsdc(): Promise<number> {
-  // Allow a fixed override in tests/CI to avoid hitting CoinGecko.
-  const override = Deno.env.get("RATE_BRL_USDC");
-  if (override) {
-    const v = parseFloat(override);
-    if (v > 0) return v;
-  }
-  if (cache && cache.expires > Date.now()) return cache.value;
-  const value = await fetchCoinGecko();
-  cache = { value, expires: Date.now() + TTL_MS };
-  return value;
+export function _resetCacheForTest(): void {
+  _resetRateCacheForTest();
+  _resetRateInFlightForTest();
 }
 
-async function fetchCoinGecko(): Promise<number> {
-  const r = await fetch("https://api.coingecko.com/api/v3/simple/price?ids=usd-coin&vs_currencies=brl");
-  if (!r.ok) throw new Error(`coingecko ${r.status}`);
-  const j = await r.json() as { "usd-coin"?: { brl?: number } };
-  const v = j["usd-coin"]?.brl;
-  if (typeof v !== "number" || v <= 0) throw new Error("bad rate response");
-  return v;
+/**
+ * Returns the current BRL per USDC mid-market rate.
+ * Leverages Singleflight stampede protection, bounded-latency timeouts,
+ * automatic exponential backoff retries, and graceful fallback downgrade.
+ */
+export async function getBrlPerUsdc(options?: RateOptions): Promise<number> {
+  const res = await sharedGetBrlPerUsdc(options);
+  return res.rate;
+}
+
+/**
+ * Returns full rate details including stale flag and rate source (env/live/cache/fallback).
+ */
+export async function getBrlPerUsdcDetail(options?: RateOptions): Promise<RateResult> {
+  return sharedGetBrlPerUsdc(options);
 }
