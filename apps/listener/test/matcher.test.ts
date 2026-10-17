@@ -1,5 +1,12 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { matchPaymentToOrder, stellarToStroops, stroopsToStellar, type StellarPaymentEvent } from "../src/matcher.js";
+import {
+  matchPaymentToOrder,
+  stellarToStroops,
+  stroopsToStellar,
+  STELLAR_MAX_INT64_STROOPS,
+  STELLAR_MAX_DECIMAL_AMOUNT,
+  type StellarPaymentEvent,
+} from "../src/matcher.js";
 
 const order = {
   id: "ord-1",
@@ -115,5 +122,39 @@ describe("stellarToStroops · stroopsToStellar", () => {
     expect(() => stellarToStroops("-1")).toThrow();
     expect(() => stellarToStroops("1e2")).toThrow();
     expect(() => stellarToStroops("1.00000001")).toThrow();
+  });
+
+  describe("Stellar int64 stroop boundaries (Issue #252)", () => {
+    it("accepts exactly the int64 maximum amount (922337203685.4775807)", () => {
+      expect(STELLAR_MAX_INT64_STROOPS).toBe(9223372036854775807n);
+      expect(STELLAR_MAX_DECIMAL_AMOUNT).toBe("922337203685.4775807");
+      expect(stellarToStroops(STELLAR_MAX_DECIMAL_AMOUNT)).toBe(STELLAR_MAX_INT64_STROOPS);
+      expect(stroopsToStellar(STELLAR_MAX_INT64_STROOPS)).toBe(STELLAR_MAX_DECIMAL_AMOUNT);
+    });
+
+    it("rejects maximum plus one stroop (922337203685.4775808) with amount_out_of_bounds", () => {
+      expect(() => stellarToStroops("922337203685.4775808")).toThrowError(/amount_out_of_bounds/);
+    });
+
+    it("rejects integers longer than 12 digits before multiplication", () => {
+      expect(() => stellarToStroops("1000000000000.0000000")).toThrowError(/amount_out_of_bounds/);
+      expect(() => stellarToStroops("99999999999999999999.0000000")).toThrowError(/amount_out_of_bounds/);
+    });
+
+    it("matchPaymentToOrder produces ignore outcome with amount_out_of_bounds reason on oversized order", () => {
+      const o = { ...order, usdc_amount: "922337203685.4775808" };
+      expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({
+        outcome: "ignore",
+        reason: "amount_out_of_bounds",
+      });
+    });
+
+    it("matchPaymentToOrder produces ignore outcome with amount_out_of_bounds reason on oversized event amount", () => {
+      const e = { ...validEvent, amount: "99999999999999999999.0000000" };
+      expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({
+        outcome: "ignore",
+        reason: "amount_out_of_bounds",
+      });
+    });
   });
 });

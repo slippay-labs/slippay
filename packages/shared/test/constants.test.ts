@@ -9,6 +9,8 @@ import {
   MEMO_HASH_HEX_LENGTH,
   ASSET_CODES,
   USDC_ASSET_CODE,
+  STELLAR_MAX_INT64_STROOPS,
+  STELLAR_MAX_DECIMAL_AMOUNT,
 } from "../src/index.ts";
 
 describe("packages/shared constants invariants", () => {
@@ -89,6 +91,11 @@ describe("packages/shared constants invariants", () => {
       expect(MEMO_HASH_HEX_LENGTH).toBe(64);
       expect(ASSET_CODES.USDC).toBe("USDC");
       expect(USDC_ASSET_CODE).toBe("USDC");
+    });
+
+    it("enforces Stellar signed 64-bit integer stroop bounds (Issue #252)", () => {
+      expect(STELLAR_MAX_INT64_STROOPS).toBe(9223372036854775807n);
+      expect(STELLAR_MAX_DECIMAL_AMOUNT).toBe("922337203685.4775807");
     });
   });
 });

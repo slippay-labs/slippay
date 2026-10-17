@@ -1,5 +1,14 @@
 import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
 
+/**
+ * Maximum representable amount in Stellar protocol (signed 64-bit integer stroops).
+ * 1 Stellar unit = 10,000,000 stroops (7 decimal places).
+ * Max stroops = 2^63 - 1 = 9,223,372,036,854,775,807.
+ * Max decimal = "922337203685.4775807".
+ */
+export const STELLAR_MAX_INT64_STROOPS = 9223372036854775807n; // 2^63 - 1
+export const STELLAR_MAX_DECIMAL_AMOUNT = "922337203685.4775807";
+
 export interface StellarPaymentEvent {
   memo_type: string;
   memo_b64: string;
@@ -51,7 +60,10 @@ export function matchPaymentToOrder(
   try {
     totalStroops = stellarToStroops(order.usdc_amount);
     receivedStroops = stellarToStroops(ev.amount);
-  } catch {
+  } catch (err) {
+    if (err instanceof Error && err.message.startsWith("amount_out_of_bounds")) {
+      return { outcome: "ignore", reason: "amount_out_of_bounds" };
+    }
     return { outcome: "ignore", reason: "amount_parse" };
   }
   if (
@@ -74,13 +86,26 @@ export function matchPaymentToOrder(
 
 /**
  * Parse a Stellar amount string ("1234.5678901") into BigInt stroops. Rejects
- * negatives, non-finite forms, and anything past 7 fractional digits.
+ * negatives, non-finite forms, anything past 7 fractional digits, and amounts
+ * exceeding the signed 64-bit integer stroop bound (max: 922337203685.4775807,
+ * corresponding to 2^63 - 1 = 9,223,372,036,854,775,807 stroops).
  */
 export function stellarToStroops(s: string): bigint {
   if (!/^\d+(\.\d{1,7})?$/.test(s)) throw new Error(`bad_amount:${s}`);
-  const [intPart, fracPartRaw = ""] = s.split(".");
+  const [intPartRaw, fracPartRaw = ""] = s.split(".");
+  // Strip leading zeros for cheap length check
+  const intPartClean = intPartRaw!.replace(/^0+(?!$)/, "");
+  // Max intPart is 922337203685 (12 digits). If clean intPart has >12 digits,
+  // it exceeds int64 bounds before the multiply.
+  if (intPartClean.length > 12) {
+    throw new Error(`amount_out_of_bounds:${s}`);
+  }
   const fracPart = fracPartRaw.padEnd(7, "0");
-  return BigInt(intPart!) * 10_000_000n + BigInt(fracPart);
+  const stroops = BigInt(intPartClean) * 10_000_000n + BigInt(fracPart);
+  if (stroops > STELLAR_MAX_INT64_STROOPS) {
+    throw new Error(`amount_out_of_bounds:${s}`);
+  }
+  return stroops;
 }
 
 export function stroopsToStellar(n: bigint): string {
