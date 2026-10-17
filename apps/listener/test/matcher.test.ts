@@ -62,16 +62,17 @@ describe("matchPaymentToOrder", () => {
 
   it("BigInt path: 1 stroop short is underpaid (FP would round to paid)", () => {
     const o = { ...order, usdc_amount: "1.0000001", platform_fee_bp: 25 };
-    // expected = 10000001 * 9975 / 10000 = 9975000 (truncated). Send 1 stroop less.
-    const e = { ...validEvent, amount: "0.9974999" };
+    // Canonical fee = 10000001 * 25 / 10000 = 25000 stroops; expected net = 10000001 - 25000 = 9975001. Send 1 stroop less.
+    const e = { ...validEvent, amount: "0.9975000" };
     expect(matchPaymentToOrder(e, o, "TESTNET").outcome).toBe("underpaid");
   });
 
   it("BigInt path: exact expected stroop count is paid", () => {
     const o = { ...order, usdc_amount: "1.0000001", platform_fee_bp: 25 };
-    const e = { ...validEvent, amount: "0.9975000" };
+    const e = { ...validEvent, amount: "0.9975001" };
     expect(matchPaymentToOrder(e, o, "TESTNET")).toEqual({ outcome: "paid" });
   });
+
 
   it("rejects malformed amount as ignore", () => {
     const e = { ...validEvent, amount: "10.99999999" }; // 8 fractional digits

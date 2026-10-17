@@ -6,7 +6,9 @@ import {
   LimitQuerySchema,
   ORDER_DEFAULT_EXPIRY_MINUTES,
   DEFAULT_PLATFORM_FEE_BP,
+  calculateFeeSplitStellar,
 } from "@slippay/shared";
+
 import { requireApiKey } from "../middleware/auth_apikey.ts";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
 import { generateMemo } from "../lib/memo.ts";
@@ -158,8 +160,8 @@ r.post("/:id/charge", requireApiKey, async (c) => {
   const nextChargeAt = new Date(Date.now() + sub.period_seconds * 1000).toISOString();
 
   const feeBp = Number((merchant as { platform_fee_bp?: number }).platform_fee_bp ?? DEFAULT_PLATFORM_FEE_BP);
-  const grossUsdc = parseFloat(usdc);
-  const feeUsdc = (grossUsdc * feeBp / 10_000).toFixed(7);
+  const { feeStellar: feeUsdc } = calculateFeeSplitStellar(usdc, feeBp);
+
 
   const { data: order, error: orderErr } = await sb.from("orders").insert({
     merchant_id: merchant.id,

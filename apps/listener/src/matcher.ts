@@ -1,4 +1,5 @@
-import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
+import { NETWORK, USDC_ASSET_CODE, calculateFeeSplit, stellarToStroops, stroopsToStellar } from "@slippay/shared";
+
 
 export interface StellarPaymentEvent {
   memo_type: string;
@@ -65,28 +66,13 @@ export function matchPaymentToOrder(
     return { outcome: "ignore", reason: "fee_bp_invalid" };
   }
   // Floor division here is conservative: integer division truncates toward
-  // zero, so the merchant receives at most the mathematically correct amount.
-  const expectedStroops = (totalStroops * BigInt(10_000 - order.platform_fee_bp)) / 10_000n;
+  // zero on the platform fee, matching contracts/checkout/src/lib.rs line 59,
+  // and the merchant receives the exact remainder net = total - fee.
+  const { netStroops: expectedStroops } = calculateFeeSplit(totalStroops, order.platform_fee_bp);
   const expectedMerchantShare = stroopsToStellar(expectedStroops);
   if (receivedStroops >= expectedStroops) return { outcome: "paid" };
   return { outcome: "underpaid", expected: expectedMerchantShare, received: ev.amount };
 }
 
-/**
- * Parse a Stellar amount string ("1234.5678901") into BigInt stroops. Rejects
- * negatives, non-finite forms, and anything past 7 fractional digits.
- */
-export function stellarToStroops(s: string): bigint {
-  if (!/^\d+(\.\d{1,7})?$/.test(s)) throw new Error(`bad_amount:${s}`);
-  const [intPart, fracPartRaw = ""] = s.split(".");
-  const fracPart = fracPartRaw.padEnd(7, "0");
-  return BigInt(intPart!) * 10_000_000n + BigInt(fracPart);
-}
+export { stellarToStroops, stroopsToStellar };
 
-export function stroopsToStellar(n: bigint): string {
-  const sign = n < 0n ? "-" : "";
-  const abs = n < 0n ? -n : n;
-  const intPart = abs / 10_000_000n;
-  const fracPart = abs % 10_000_000n;
-  return `${sign}${intPart}.${fracPart.toString().padStart(7, "0")}`;
-}

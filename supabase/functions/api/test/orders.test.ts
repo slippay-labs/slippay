@@ -288,4 +288,23 @@ Deno.test("GET /v1/x402/:slug sets platform_fee_bp and fee_usdc on order insert"
   assertEquals(orderData.fee_usdc, "0.1485000"); // 5.0 * 297 / 10000
 });
 
+Deno.test("Orders route platform fee calculation floors the fee and preserves net + fee == gross identity (Issue #219)", async () => {
+  const { calculateFeeSplitStellar } = await import("@slippay/shared");
+
+  // Test Case 1: 1.0000190 USDC at 297 bps
+  // Float toFixed(7) would round to 0.0297006. Floored stroop is 0.0297005.
+  const split1 = calculateFeeSplitStellar("1.0000190", 297);
+  assertEquals(split1.feeStellar, "0.0297005");
+  assertEquals(split1.netStellar, "0.9703185");
+  assertEquals(split1.feeStroops + split1.netStroops, 10000190n);
+
+  // Test Case 2: 0.0000019 USDC at 297 bps
+  // Float toFixed(7) would round to 0.0000001. Floored stroop is 0.0000000.
+  const split2 = calculateFeeSplitStellar("0.0000019", 297);
+  assertEquals(split2.feeStellar, "0.0000000");
+  assertEquals(split2.netStellar, "0.0000019");
+  assertEquals(split2.feeStroops + split2.netStroops, 19n);
+});
+
+
 
