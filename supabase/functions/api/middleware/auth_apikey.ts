@@ -10,6 +10,10 @@ async function legacyHashApiKey(plain: string): Promise<string> {
 }
 
 export async function requireApiKey(c: Context, next: Next) {
+  if (c.get("merchant")) {
+    await next();
+    return;
+  }
   const auth = c.req.header("authorization");
   if (!auth?.startsWith("Bearer sk_live_")) {
     return c.json({ error: "unauthenticated" }, 401);

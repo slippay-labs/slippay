@@ -36,3 +36,10 @@ export const DEFAULT_PLATFORM_FEE_BP = 297; // 2.97%
 export const ORDER_DEFAULT_EXPIRY_MINUTES = 30;
 export const API_KEY_PREFIX = "sk_live_";
 export const API_KEY_BYTES = 32;
+
+// Maximum order limits (Issue #208)
+export const DEFAULT_MAX_ORDER_USDC = 50_000; // 50,000 USDC default limit per order
+export const SYSTEM_MAX_ORDER_USDC = 250_000; // 250,000 USDC absolute system ceiling
+export const DEFAULT_MAX_ORDER_BRL = 300_000; // 300,000 BRL default limit per order
+export const SYSTEM_MAX_ORDER_BRL = 1_500_000; // 1,500,000 BRL absolute system ceiling
+

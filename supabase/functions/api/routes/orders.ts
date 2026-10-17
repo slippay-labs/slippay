@@ -1,6 +1,12 @@
 import { Hono } from "hono";
 import type { SupabaseClient } from "supabase";
-import { CreateOrderInputSchema, UsdcAmountSchema, LimitQuerySchema, ORDER_DEFAULT_EXPIRY_MINUTES, DEFAULT_PLATFORM_FEE_BP } from "@slippay/shared";
+import {
+  CreateOrderInputSchema,
+  UsdcAmountSchema,
+  LimitQuerySchema,
+  ORDER_DEFAULT_EXPIRY_MINUTES,
+  DEFAULT_PLATFORM_FEE_BP,
+} from "@slippay/shared";
 import { requireApiKey } from "../middleware/auth_apikey.ts";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
 import { generateMemo } from "../lib/memo.ts";
@@ -8,6 +14,7 @@ import { getBrlPerUsdc } from "../lib/rate.ts";
 import { serviceClient } from "../lib/supabase.ts";
 import { signCheckoutToken, verifyCheckoutToken } from "../lib/checkout-token.ts";
 import { mapDbError } from "../lib/db-error.ts";
+import { checkOrderLimits } from "../lib/order_limits.ts";
 
 type Vars = { merchant: { id: string; [k: string]: unknown }; supabase: SupabaseClient };
 const r = new Hono<{ Variables: Vars }>();
@@ -25,6 +32,24 @@ r.post("/", requireApiKey, async (c) => {
     return c.json({ error: "validation_error", issues }, 400);
   }
 
+  // Merchant-level configurable order limits (Issue #208)
+  const inputLimitCheck = checkOrderLimits(merchant as { max_order_usdc?: number | null; max_order_brl?: number | null }, {
+    usd_amount: input.usd_amount,
+    brl_amount: input.brl_amount,
+  });
+  if (!inputLimitCheck.allowed) {
+    return c.json(
+      {
+        error: "order_limit_exceeded",
+        currency: inputLimitCheck.currency,
+        amount: inputLimitCheck.amount,
+        max_allowed: inputLimitCheck.max_allowed,
+        message: inputLimitCheck.message,
+      },
+      422,
+    );
+  }
+
   // USD-denominated path: USDC is USD-pegged 1:1, no CoinGecko round trip.
   // BRL-denominated path: convert via current BRL/USDC rate.
   let usdc: string;
@@ -40,6 +65,22 @@ r.post("/", requireApiKey, async (c) => {
     const rate = await getBrlPerUsdc();
     usdc = (parseFloat(input.brl_amount!) / rate).toFixed(7);
     rate_brl_usdc = rate.toFixed(7);
+  }
+
+  const usdcLimitCheck = checkOrderLimits(merchant as { max_order_usdc?: number | null; max_order_brl?: number | null }, {
+    usdc_amount: usdc,
+  });
+  if (!usdcLimitCheck.allowed) {
+    return c.json(
+      {
+        error: "order_limit_exceeded",
+        currency: usdcLimitCheck.currency,
+        amount: usdcLimitCheck.amount,
+        max_allowed: usdcLimitCheck.max_allowed,
+        message: usdcLimitCheck.message,
+      },
+      422,
+    );
   }
 
   try {

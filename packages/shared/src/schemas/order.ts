@@ -1,12 +1,18 @@
 import { z } from "zod";
+import { SYSTEM_MAX_ORDER_BRL, SYSTEM_MAX_ORDER_USDC } from "../constants.ts";
 
-const fiatAmount = z.string().regex(/^\d{1,9}\.\d{2}$/, "must be string with 2 decimals");
+export const fiatAmount = z
+  .string()
+  .regex(/^\d{1,9}\.\d{2}$/, "must be string with 2 decimals")
+  .refine(v => parseFloat(v) > 0, "must be > 0")
+  .refine(v => parseFloat(v) <= SYSTEM_MAX_ORDER_BRL, `exceeds system maximum order limit of ${SYSTEM_MAX_ORDER_BRL} BRL`);
 
-// USDC amount schema: decimal-string with max 7 fractional places and > 0.
+// USDC amount schema: decimal-string with max 7 fractional places and > 0, bounded by system ceiling.
 export const UsdcAmountSchema = z
   .string()
   .regex(/^\d{1,9}(\.\d{1,7})?$/, "must be decimal string with at most 7 fractional places")
-  .refine(v => parseFloat(v) > 0, "must be > 0");
+  .refine(v => parseFloat(v) > 0, "must be > 0")
+  .refine(v => parseFloat(v) <= SYSTEM_MAX_ORDER_USDC, `exceeds system maximum order limit of ${SYSTEM_MAX_ORDER_USDC} USDC`);
 
 // Either brl_amount OR usd_amount must be set, not both. usd_amount lets
 // BR-export merchants invoice global customers in USD without going through
