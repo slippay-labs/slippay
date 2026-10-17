@@ -12,7 +12,7 @@ import metrics from "./routes/metrics.ts";
 import relayer from "./routes/relayer.ts";
 import ramp from "./routes/ramp.ts";
 import offramp from "./routes/offramp.ts";
-import { ALLOWED_ORIGINS_SET } from "@slippay/shared";
+import { ALLOWED_ORIGINS_SET, CANONICAL_REPO_URL } from "@slippay/shared";
 import fourp from "./routes/fourp.ts";
 
 const api = new Hono().basePath("/api");
@@ -115,12 +115,20 @@ app.get("*", async (c) => {
   // origin. GET / returns service-info JSON for crawlers / health checks.
   if (host === API_HOST || host.startsWith(API_HOST + ":")) {
     if (c.req.path === "/" || c.req.path === "/index.html") {
+      const commitSha =
+        Deno.env.get("DENO_DEPLOYMENT_ID") ??
+        Deno.env.get("GIT_SHA") ??
+        Deno.env.get("COMMIT_SHA") ??
+        "dev";
+
       return c.json({
         service: "slippay-api",
         status: "ok",
         canonical_app: APP_ORIGIN,
         health: "/api/health",
-        repo: "https://github.com/Galmanus/slippay",
+        repo: CANONICAL_REPO_URL,
+        revision: commitSha,
+        commit_sha: commitSha,
       });
     }
     // Any other non-/api/* path on api.slippay.cc → redirect to app origin.

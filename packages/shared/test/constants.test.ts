@@ -9,6 +9,7 @@ import {
   MEMO_HASH_HEX_LENGTH,
   ASSET_CODES,
   USDC_ASSET_CODE,
+  CANONICAL_REPO_URL,
 } from "../src/index.ts";
 
 describe("packages/shared constants invariants", () => {
@@ -89,6 +90,17 @@ describe("packages/shared constants invariants", () => {
       expect(MEMO_HASH_HEX_LENGTH).toBe(64);
       expect(ASSET_CODES.USDC).toBe("USDC");
       expect(USDC_ASSET_CODE).toBe("USDC");
+    });
+  });
+
+  describe("CANONICAL_REPO_URL", () => {
+    it("points strictly to the official slippay-labs/slippay repository", () => {
+      expect(CANONICAL_REPO_URL).toBe("https://github.com/slippay-labs/slippay");
+    });
+
+    it("fails if changed to any personal fork or unofficial repository", () => {
+      expect(CANONICAL_REPO_URL).not.toContain("Galmanus");
+      expect(CANONICAL_REPO_URL).toMatch(/^https:\/\/github\.com\/slippay-labs\/slippay$/);
     });
   });
 });

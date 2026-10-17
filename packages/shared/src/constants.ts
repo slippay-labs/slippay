@@ -36,3 +36,4 @@ export const DEFAULT_PLATFORM_FEE_BP = 297; // 2.97%
 export const ORDER_DEFAULT_EXPIRY_MINUTES = 30;
 export const API_KEY_PREFIX = "sk_live_";
 export const API_KEY_BYTES = 32;
+export const CANONICAL_REPO_URL = "https://github.com/slippay-labs/slippay";
