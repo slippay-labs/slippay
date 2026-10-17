@@ -94,6 +94,7 @@ only** and are not a roadmap.
 | [Receive USDC by QR](./guides/receive-usdc-qr.md) | `/cobrar` and `/comprovante`. |
 | [Verify a cert](./guides/verify-a-cert.md) | `/verify` and the offline `slippay_verify` path. |
 | [Agent surface](./product/agent-surface.md) | The membrane, `/sub`, and MCP integration. |
+| [Web locale strategy](./product/locale-strategy.md) | Supported locales (PT primary / EN mirror), detection + persistence, canonical routes and the legacy aliases. |
 | [Recurring billing](./guides/recurring-billing.md) | Subscriptions, off-chain and on-chain. |
 | [Drop-in SDK](./guides/drop-in-sdk.md) | Two lines of JavaScript. |
 | [WooCommerce plugin](./guides/woocommerce.md) | Install and configure. |
