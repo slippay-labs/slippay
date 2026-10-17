@@ -7,6 +7,7 @@
     "@slippay/shared": "../../../packages/shared/src/index.ts"
   },
   "tasks": {
+    "check": "deno check index.ts",
     "test": "deno test --allow-all test/"
   },
   "compilerOptions": {
