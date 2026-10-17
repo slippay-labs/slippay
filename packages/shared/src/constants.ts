@@ -33,6 +33,9 @@ export const USDC_ASSET_CODE = ASSET_CODES.USDC;
 export const STELLAR_ADDRESS_LENGTH = 56;
 export const MEMO_HASH_HEX_LENGTH = 64; // 32 bytes
 export const DEFAULT_PLATFORM_FEE_BP = 297; // 2.97%
+export const MIN_PLATFORM_FEE_BP = 0;
+export const MAX_PLATFORM_FEE_BP = 1000; // 10.00% max allowable platform fee bound (aligns with database constraint)
 export const ORDER_DEFAULT_EXPIRY_MINUTES = 30;
 export const API_KEY_PREFIX = "sk_live_";
 export const API_KEY_BYTES = 32;
+

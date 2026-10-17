@@ -1,4 +1,4 @@
-import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
+import { NETWORK, USDC_ASSET_CODE, MIN_PLATFORM_FEE_BP, MAX_PLATFORM_FEE_BP } from "@slippay/shared";
 
 export interface StellarPaymentEvent {
   memo_type: string;
@@ -59,9 +59,12 @@ export function matchPaymentToOrder(
     order.platform_fee_bp === undefined ||
     typeof order.platform_fee_bp !== "number" ||
     Number.isNaN(order.platform_fee_bp) ||
-    order.platform_fee_bp < 0 ||
-    order.platform_fee_bp >= 10_000
+    order.platform_fee_bp < MIN_PLATFORM_FEE_BP ||
+    order.platform_fee_bp > MAX_PLATFORM_FEE_BP
   ) {
+    console.error(
+      `[ALERT] fee_bp_out_of_bounds: order ${order.id ?? "unknown"} has platform_fee_bp=${order.platform_fee_bp}, exceeding [${MIN_PLATFORM_FEE_BP}, ${MAX_PLATFORM_FEE_BP}]`,
+    );
     return { outcome: "ignore", reason: "fee_bp_invalid" };
   }
   // Floor division here is conservative: integer division truncates toward

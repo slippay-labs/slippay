@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { matchPaymentToOrder, stellarToStroops, stroopsToStellar, type StellarPaymentEvent } from "../src/matcher.js";
+import { MIN_PLATFORM_FEE_BP, MAX_PLATFORM_FEE_BP } from "@slippay/shared";
 
 const order = {
   id: "ord-1",
@@ -78,9 +79,29 @@ describe("matchPaymentToOrder", () => {
     expect(matchPaymentToOrder(e, order, "TESTNET").outcome).toBe("ignore");
   });
 
-  it("rejects fee_bp >= 10000 as ignore (would zero merchant share)", () => {
-    const o = { ...order, platform_fee_bp: 10_000 };
-    expect(matchPaymentToOrder(validEvent, o, "TESTNET").outcome).toBe("ignore");
+  it("rejects fee_bp > MAX_PLATFORM_FEE_BP (1000) as ignore and emits alert log", () => {
+    const errorLogs: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      errorLogs.push(args.map(String).join(" "));
+    };
+    try {
+      const o = { ...order, platform_fee_bp: MAX_PLATFORM_FEE_BP + 1 };
+      const res = matchPaymentToOrder(validEvent, o, "TESTNET");
+      expect(res).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+      expect(errorLogs.length).toBeGreaterThan(0);
+      expect(errorLogs[0]).toContain("[ALERT] fee_bp_out_of_bounds");
+      expect(errorLogs[0]).toContain(`exceeding [${MIN_PLATFORM_FEE_BP}, ${MAX_PLATFORM_FEE_BP}]`);
+    } finally {
+      console.error = origError;
+    }
+  });
+
+  it("accepts fee_bp = MAX_PLATFORM_FEE_BP (1000 bp = 10%) as valid bound", () => {
+    // 10 USDC with 10% fee means expected merchant share = 9 USDC
+    const o = { ...order, usdc_amount: "10.0000000", platform_fee_bp: MAX_PLATFORM_FEE_BP };
+    const e = { ...validEvent, amount: "9.0000000" };
+    expect(matchPaymentToOrder(e, o, "TESTNET")).toEqual({ outcome: "paid" });
   });
 
   it("rejects null fee_bp as ignore instead of treating as zero fee", () => {
@@ -93,9 +114,20 @@ describe("matchPaymentToOrder", () => {
     expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
   });
 
-  it("rejects negative fee_bp as ignore", () => {
-    const o = { ...order, platform_fee_bp: -1 };
-    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+  it("rejects negative fee_bp as ignore and emits alert log", () => {
+    const errorLogs: string[] = [];
+    const origError = console.error;
+    console.error = (...args: unknown[]) => {
+      errorLogs.push(args.map(String).join(" "));
+    };
+    try {
+      const o = { ...order, platform_fee_bp: -1 };
+      expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+      expect(errorLogs.length).toBeGreaterThan(0);
+      expect(errorLogs[0]).toContain("[ALERT] fee_bp_out_of_bounds");
+    } finally {
+      console.error = origError;
+    }
   });
 });
 

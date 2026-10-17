@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   NETWORK,
   DEFAULT_PLATFORM_FEE_BP,
+  MIN_PLATFORM_FEE_BP,
+  MAX_PLATFORM_FEE_BP,
   ORDER_DEFAULT_EXPIRY_MINUTES,
   API_KEY_PREFIX,
   API_KEY_BYTES,
@@ -19,9 +21,11 @@ describe("packages/shared constants invariants", () => {
     });
 
     it("satisfies database constraint for merchants.platform_fee_bp (between 0 and 1000)", () => {
+      expect(MIN_PLATFORM_FEE_BP).toBe(0);
+      expect(MAX_PLATFORM_FEE_BP).toBe(1000);
       expect(Number.isInteger(DEFAULT_PLATFORM_FEE_BP)).toBe(true);
-      expect(DEFAULT_PLATFORM_FEE_BP).toBeGreaterThanOrEqual(0);
-      expect(DEFAULT_PLATFORM_FEE_BP).toBeLessThanOrEqual(1000);
+      expect(DEFAULT_PLATFORM_FEE_BP).toBeGreaterThanOrEqual(MIN_PLATFORM_FEE_BP);
+      expect(DEFAULT_PLATFORM_FEE_BP).toBeLessThanOrEqual(MAX_PLATFORM_FEE_BP);
     });
   });
 
