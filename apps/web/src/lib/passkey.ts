@@ -86,32 +86,102 @@ export interface PasskeyHandle {
   credId: Uint8Array;
 }
 
+/** A user-initiated outcome that is NOT an error: the person cancelled the
+ *  Face ID / fingerprint prompt, it timed out, or this device can't do passkeys.
+ *  Genuine failures still throw. */
+export type PasskeyOutcome =
+  | { ok: false; reason: "cancelled" }
+  | { ok: false; reason: "timeout" }
+  | { ok: false; reason: "unsupported"; message: string };
+
+export type PasskeyResult<T> = { ok: true; value: T } | PasskeyOutcome;
+
+export interface PasskeyAssertion {
+  authenticatorData: Uint8Array;
+  clientDataJSON: Uint8Array;
+  signature: Uint8Array;
+}
+
+const UNSUPPORTED_MESSAGE =
+  "Este dispositivo não suporta passkey / Face ID. Ative a biometria nas configurações do aparelho ou use outro dispositivo.";
+
+const CEREMONY_TIMEOUT_MS = 60000;
+// The browser's own timeout is deliberately LONGER than ours. If they were equal,
+// the browser could win the race and report a timeout as NotAllowedError, which
+// looks identical to the user cancelling.
+const BROWSER_TIMEOUT_MS = CEREMONY_TIMEOUT_MS + 5000;
+
+/** Run a WebAuthn ceremony and translate cancel / timeout / unsupported into
+ *  results. Anything else is a genuine failure and is re-thrown. */
+async function runCeremony(
+  call: (signal: AbortSignal) => Promise<Credential | null>,
+): Promise<PasskeyResult<PublicKeyCredential>> {
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, CEREMONY_TIMEOUT_MS);
+  try {
+    const cred = await call(controller.signal);
+    if (!cred) return { ok: false, reason: "cancelled" };
+    return { ok: true, value: cred as PublicKeyCredential };
+  } catch (err) {
+    // NotAllowedError is used for cancel AND timeout, so the error name can't
+    // tell them apart. Our own flag can.
+    if (timedOut) return { ok: false, reason: "timeout" };
+    const name = (err as { name?: string } | null)?.name;
+    if (name === "NotAllowedError" || name === "AbortError") return { ok: false, reason: "cancelled" };
+    if (name === "NotSupportedError") return { ok: false, reason: "unsupported", message: UNSUPPORTED_MESSAGE };
+    throw err; // genuine failure: keep it loud
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** User-facing text for a non-ok outcome, or null when nothing should be shown
+ *  (the user cancelled on purpose, so the UI just returns quietly). */
+export function passkeyOutcomeMessage(o: PasskeyOutcome): string | null {
+  switch (o.reason) {
+    case "cancelled":
+      return null;
+    case "timeout":
+      return "A biometria demorou demais para responder. Tente novamente.";
+    case "unsupported":
+      return o.message;
+  }
+}
+
 /** Prompt the platform authenticator (Face ID / fingerprint) to MINT a new
  *  passkey. Returns the secp256r1 pubkey to bind a wallet to. */
-export async function createPasskey(userName: string): Promise<PasskeyHandle> {
-  if (!window.PublicKeyCredential) throw new Error("Este dispositivo não suporta passkey / Face ID.");
-  const cred = (await navigator.credentials.create({
-    publicKey: {
-      challenge: crypto.getRandomValues(new Uint8Array(32)),
-      rp: { name: "Slippay" },
-      user: {
-        id: crypto.getRandomValues(new Uint8Array(16)),
-        name: userName,
-        displayName: userName,
+export async function createPasskey(userName: string): Promise<PasskeyResult<PasskeyHandle>> {
+  if (!window.PublicKeyCredential) return { ok: false, reason: "unsupported", message: UNSUPPORTED_MESSAGE };
+  const r = await runCeremony((signal) =>
+    navigator.credentials.create({
+      publicKey: {
+        challenge: crypto.getRandomValues(new Uint8Array(32)),
+        rp: { name: "Slippay" },
+        user: {
+          id: crypto.getRandomValues(new Uint8Array(16)),
+          name: userName,
+          displayName: userName,
+        },
+        pubKeyCredParams: [{ type: "public-key", alg: -7 }], // ES256 / secp256r1
+        authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "preferred" },
+        timeout: BROWSER_TIMEOUT_MS,
       },
-      pubKeyCredParams: [{ type: "public-key", alg: -7 }], // ES256 / secp256r1
-      authenticatorSelection: { authenticatorAttachment: "platform", userVerification: "required", residentKey: "preferred" },
-      timeout: 60000,
-    },
-  })) as PublicKeyCredential | null;
-  if (!cred) throw new Error("Biometria cancelada.");
+      signal,
+    }),
+  );
+  if (!r.ok) return r;
+  const cred = r.value;
   const resp = cred.response as AuthenticatorAttestationResponse;
   // getPublicKey() returns the DER SPKI; for P-256 the uncompressed EC point
   // (0x04 || X || Y) is the trailing 65 bytes.
   const spki = new Uint8Array(resp.getPublicKey()!);
   const pubKey = spki.slice(spki.length - 65);
   if (pubKey[0] !== 0x04 || pubKey.length !== 65) throw new Error("passkey is not an uncompressed P-256 key");
-  return { pubKey, credId: new Uint8Array(cred.rawId) };
+  return { ok: true, value: { pubKey, credId: new Uint8Array(cred.rawId) } };
 }
 
 /** Prompt the authenticator to SIGN `challenge` (the Soroban auth payload).
@@ -119,21 +189,27 @@ export async function createPasskey(userName: string): Promise<PasskeyHandle> {
 export async function getAssertion(
   challenge: Uint8Array,
   credId?: Uint8Array,
-): Promise<{ authenticatorData: Uint8Array; clientDataJSON: Uint8Array; signature: Uint8Array }> {
-  const cred = (await navigator.credentials.get({
-    publicKey: {
-      challenge: challenge as BufferSource,
-      ...(credId ? { allowCredentials: [{ type: "public-key" as const, id: credId as BufferSource }] } : {}),
-      userVerification: "required",
-      timeout: 60000,
-    },
-  })) as PublicKeyCredential | null;
-  if (!cred) throw new Error("Biometria cancelada.");
-  const resp = cred.response as AuthenticatorAssertionResponse;
+): Promise<PasskeyResult<PasskeyAssertion>> {
+  const r = await runCeremony((signal) =>
+    navigator.credentials.get({
+      publicKey: {
+        challenge: challenge as BufferSource,
+        ...(credId ? { allowCredentials: [{ type: "public-key" as const, id: credId as BufferSource }] } : {}),
+        userVerification: "required",
+        timeout: BROWSER_TIMEOUT_MS,
+      },
+      signal,
+    }),
+  );
+  if (!r.ok) return r;
+  const resp = r.value.response as AuthenticatorAssertionResponse;
   return {
-    authenticatorData: new Uint8Array(resp.authenticatorData),
-    clientDataJSON: new Uint8Array(resp.clientDataJSON),
-    signature: derToRaw64(new Uint8Array(resp.signature)),
+    ok: true,
+    value: {
+      authenticatorData: new Uint8Array(resp.authenticatorData),
+      clientDataJSON: new Uint8Array(resp.clientDataJSON),
+      signature: derToRaw64(new Uint8Array(resp.signature)),
+    },
   };
 }
 
@@ -257,7 +333,7 @@ export async function payWithBiometric(opts: {
   asset?: "USDC" | "XLM";
   feeSource: Keypair;
   credId?: Uint8Array;
-}): Promise<string> {
+}): Promise<PasskeyResult<string>> {
   const passphrase = opts.network === "PUBLIC" ? Networks.PUBLIC : Networks.TESTNET;
   const server = new rpc.Server(HORIZON_RPC[opts.network]!, { allowHttp: false });
   const sac = payAssetSac(opts.network, (opts as { asset?: "USDC" | "XLM" }).asset, passphrase);
@@ -290,7 +366,9 @@ export async function payWithBiometric(opts: {
   const payload = new Uint8Array(hash(preimage.toXDR()));
 
   // ← the only human action: Face ID / fingerprint signs the payload.
-  const a = await getAssertion(payload, opts.credId);
+  const asserted = await getAssertion(payload, opts.credId);
+  if (!asserted.ok) return asserted; // cancelled / timeout / unsupported: nothing was signed
+  const a = asserted.value;
 
   const walletAuth = xdr.ScVal.scvVec([
     xdr.ScVal.scvSymbol("Passkey"),
@@ -337,7 +415,7 @@ export async function payWithBiometric(opts: {
     res = await server.getTransaction(sent.hash);
   }
   if (res.status !== "SUCCESS") throw new Error("payment failed: " + res.status);
-  return sent.hash;
+  return { ok: true, value: sent.hash };
 }
 
 /** Mainnet biometric payment via the gas-sponsor relayer (option A, zero
@@ -357,7 +435,7 @@ export async function payViaRelayer(opts: {
   amount: string; // stroops
   asset?: "USDC" | "XLM";
   credId?: Uint8Array;
-}): Promise<string> {
+}): Promise<PasskeyResult<string>> {
   const passphrase = opts.network === "PUBLIC" ? Networks.PUBLIC : Networks.TESTNET;
   const server = new rpc.Server(HORIZON_RPC[opts.network]!, { allowHttp: false });
   const sac = payAssetSac(opts.network, (opts as { asset?: "USDC" | "XLM" }).asset, passphrase);
@@ -389,7 +467,9 @@ export async function payViaRelayer(opts: {
   const payload = new Uint8Array(hash(preimage.toXDR()));
 
   // ← the only human action: Face ID / fingerprint signs the payload.
-  const a = await getAssertion(payload, opts.credId);
+  const asserted = await getAssertion(payload, opts.credId);
+  if (!asserted.ok) return asserted; // cancelled / timeout / unsupported: nothing was signed
+  const a = asserted.value;
 
   const walletAuth = xdr.ScVal.scvVec([
     xdr.ScVal.scvSymbol("Passkey"),
@@ -438,5 +518,5 @@ export async function payViaRelayer(opts: {
   });
   const j = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(`relayer rejected: ${j.reason ?? j.error ?? resp.status}`);
-  return j.hash as string;
+  return { ok: true, value: j.hash as string };
 }

@@ -10,7 +10,7 @@ import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
 import { QrScanner } from "../components/QrScanner";
 import { decodeRequest, stroopsToXlm, type PayRequest } from "../lib/slippayqr";
-import { createPasskey, payViaRelayer, type PasskeyHandle } from "../lib/passkey";
+import { createPasskey, passkeyOutcomeMessage, payViaRelayer, type PasskeyHandle } from "../lib/passkey";
 import { FaceScan } from "../components/FaceScan";
 import { LiveProof } from "../components/LiveProof";
 
@@ -99,6 +99,7 @@ export default function PayDemo() {
   const showScan = busy && !error && flow !== null && step === biometricStep;
 
   async function onCreateAccount() {
+    const prevFlow = flow; const prevStep = step;
     setBusy(true); setError(null); setPayHash(null); setPaidLabel(null); setFlow("create"); setStep(0);
     try {
       const info = await fetch(`${RELAYER_BASE}/info`).then((r) => r.json()).catch(() => ({}));
@@ -106,7 +107,13 @@ export default function PayDemo() {
       setSponsor(info.sponsor);
       setNetwork(info.network === "PUBLIC" ? "PUBLIC" : "TESTNET");
       setStep(1);
-      const h = await createPasskey("slippay");
+      const created = await createPasskey("slippay");
+      if (!created.ok) {
+        const m = passkeyOutcomeMessage(created);
+        if (m) setError(m); else { setFlow(prevFlow); setStep(prevStep); }
+        return;
+      }
+      const h = created.value;
       setHandle(h);
       setStep(2);
       const resp = await fetch(`${RELAYER_BASE}/deploy`, {
@@ -130,14 +137,21 @@ export default function PayDemo() {
   async function onPayReq() {
     if (!handle || !wallet || !sponsor || !req) return;
     const label = `${stroopsToXlm(req.amount)} ${req.asset ?? "USDC"}`;
+    const prevFlow = flow; const prevStep = step;
     setBusy(true); setError(null); setPayHash(null); setFlow("pay"); setStep(0);
     buzz(20); // tactile cue at the authorization moment
     try {
-      const hash = await payViaRelayer({
+      const paid = await payViaRelayer({
         network, relayerBase: RELAYER_BASE, sponsor,
         walletId: wallet, recipient: req.to, amount: req.amount,
         asset: req.asset ?? "USDC", credId: handle.credId,
       });
+      if (!paid.ok) {
+        const m = passkeyOutcomeMessage(paid);
+        if (m) setError(m); else { setFlow(prevFlow); setStep(prevStep); }
+        return;
+      }
+      const hash = paid.value;
       setStep(2); setPayHash(hash); setPaidLabel(label);
       setPaidReq({ to: req.to, amount: req.amount, asset: req.asset ?? "USDC", at: new Date().toLocaleString() });
       setReq(null);

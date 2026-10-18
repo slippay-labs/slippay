@@ -44,6 +44,7 @@ function verifyP256(pub: CryptoKey, raw64: Uint8Array, msg: Uint8Array): Promise
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("derToRaw64 — DER (WebAuthn) → raw 64-byte secp256r1 r||s", () => {
@@ -126,7 +127,9 @@ describe("getAssertion — WebAuthn assertion plumbing", () => {
     });
     vi.stubGlobal("navigator", { credentials: { get } });
 
-    const assertion = await getAssertion(challenge);
+    const result = await getAssertion(challenge);
+    if (!result.ok) throw new Error("expected a successful assertion");
+    const assertion = result.value;
 
     expect(assertion.signature.length).toBe(64);
     expect(Array.from(assertion.authenticatorData)).toEqual([1, 2, 3]);
@@ -137,17 +140,76 @@ describe("getAssertion — WebAuthn assertion plumbing", () => {
     expect(Array.from(arg.publicKey.challenge)).toEqual([9, 9, 9, 9]);
   });
 
-  it("throws when the user cancels biometrics", async () => {
+  it("returns a cancelled result (does not throw) when the user dismisses the prompt", async () => {
+    const err = Object.assign(new Error("The operation either timed out or was not allowed."), {
+      name: "NotAllowedError",
+    });
+    vi.stubGlobal("navigator", { credentials: { get: vi.fn().mockRejectedValue(err) } });
+
+    await expect(getAssertion(new Uint8Array([1]))).resolves.toEqual({ ok: false, reason: "cancelled" });
+  });
+
+  it("returns a cancelled result when the browser resolves with no credential", async () => {
     vi.stubGlobal("navigator", { credentials: { get: vi.fn().mockResolvedValue(null) } });
 
-    await expect(getAssertion(new Uint8Array([1]))).rejects.toThrow("Biometria cancelada.");
+    await expect(getAssertion(new Uint8Array([1]))).resolves.toEqual({ ok: false, reason: "cancelled" });
+  });
+
+  it("reports a timeout as a timeout, not a cancel, even when the browser rejects with NotAllowedError", async () => {
+    vi.useFakeTimers();
+    const get = vi.fn(
+      (opts: { signal: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          opts.signal.addEventListener("abort", () =>
+            reject(Object.assign(new Error("aborted"), { name: "NotAllowedError" })),
+          );
+        }),
+    );
+    vi.stubGlobal("navigator", { credentials: { get } });
+
+    const pending = getAssertion(new Uint8Array([1]));
+    await vi.advanceTimersByTimeAsync(60000);
+
+    await expect(pending).resolves.toEqual({ ok: false, reason: "timeout" });
+  });
+
+  it("gives the browser a longer timeout than ours so a timeout is never mistaken for a cancel", async () => {
+    const get = vi.fn().mockResolvedValue(null);
+    vi.stubGlobal("navigator", { credentials: { get } });
+
+    await getAssertion(new Uint8Array([1]));
+
+    const arg = get.mock.calls[0]![0] as { publicKey: { timeout: number } };
+    expect(arg.publicKey.timeout).toBeGreaterThan(60000);
+  });
+
+  it("returns an unsupported result with a message when the authenticator is not supported", async () => {
+    const err = Object.assign(new Error("nope"), { name: "NotSupportedError" });
+    vi.stubGlobal("navigator", { credentials: { get: vi.fn().mockRejectedValue(err) } });
+
+    const result = await getAssertion(new Uint8Array([1]));
+
+    expect(result).toMatchObject({ ok: false, reason: "unsupported", message: expect.stringMatching(/\S/) });
+  });
+
+  it("still throws on a genuine failure so it is never hidden", async () => {
+    const err = Object.assign(new Error("boom"), { name: "SecurityError" });
+    vi.stubGlobal("navigator", { credentials: { get: vi.fn().mockRejectedValue(err) } });
+
+    await expect(getAssertion(new Uint8Array([1]))).rejects.toThrow("boom");
   });
 });
 
 describe("createPasskey — platform support gate", () => {
-  it("throws a clear error when the device has no WebAuthn support", async () => {
+  it("returns an unsupported result with an actionable message when the device has no WebAuthn support", async () => {
     vi.stubGlobal("window", {});
 
-    await expect(createPasskey("alice")).rejects.toThrow(/não suporta passkey/);
+    const result = await createPasskey("alice");
+
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "unsupported",
+      message: expect.stringMatching(/não suporta passkey/),
+    });
   });
 });

@@ -5,7 +5,7 @@
 
 import { useState, useEffect } from "react";
 import { Link } from "react-router-dom";
-import { createPasskey } from "../lib/passkey";
+import { createPasskey, passkeyOutcomeMessage } from "../lib/passkey";
 import { loadAccount, saveAccount, clearAccount, type Account as Acct } from "../lib/account";
 import { LiveProof } from "../components/LiveProof";
 
@@ -50,7 +50,9 @@ export default function Account() {
       if (!info.sponsor) throw new Error("relayer unavailable");
       const network: Acct["network"] = info.network === "PUBLIC" ? "PUBLIC" : "TESTNET";
       setStep("Touch to create your key…"); buzz(20);
-      const h = await createPasskey("slippay");
+      const r = await createPasskey("slippay");
+      if (!r.ok) { const m = passkeyOutcomeMessage(r); if (m) setError(m); return; }
+      const h = r.value;
       setStep("Building your wallet on-chain…");
       const resp = await fetch(`${RELAYER_BASE}/deploy`, {
         method: "POST", headers: { "content-type": "application/json" },

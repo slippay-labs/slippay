@@ -9,7 +9,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { Logo } from "../components/Logo";
-import { createPasskey, getAssertion, type PasskeyHandle } from "../lib/passkey";
+import { createPasskey, getAssertion, passkeyOutcomeMessage, type PasskeyHandle } from "../lib/passkey";
 
 function hex(b: Uint8Array, head = 10, tail = 8): string {
   const s = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
@@ -32,7 +32,9 @@ export default function BioTest() {
     setBusy(true); setVerdict(null); setLog([]);
     try {
       add("pedindo Face ID / digital pra criar a passkey…");
-      const h = await createPasskey("slippay-bio-test");
+      const r = await createPasskey("slippay-bio-test");
+      if (!r.ok) { add(`↩ ${passkeyOutcomeMessage(r) ?? "cancelado"}`); return; }
+      const h = r.value;
       setHandle(h);
       add(`✅ passkey criada · pubkey secp256r1 ${hex(h.pubKey)} (65B)`);
       add("agora toca em ASSINAR pra autorizar com biometria.");
@@ -46,7 +48,9 @@ export default function BioTest() {
       const challenge = crypto.getRandomValues(new Uint8Array(32));
       add(`desafio aleatório: ${hex(challenge)}`);
       add("pedindo Face ID / digital pra assinar…");
-      const a = await getAssertion(challenge, handle.credId);
+      const asserted = await getAssertion(challenge, handle.credId);
+      if (!asserted.ok) { add(`↩ ${passkeyOutcomeMessage(asserted) ?? "cancelado"}`); return; }
+      const a = asserted.value;
       add("✅ asserção capturada (Face ID respondeu)");
 
       // Verify the assertion is cryptographically valid against the minted key:
