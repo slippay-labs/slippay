@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(deprecated)]
 //! SlipPay Checkout — the "Stripe of stablecoin" revenue primitive.
 //!
 //! A single, atomic payment that splits on-chain: the merchant receives the net,
@@ -15,6 +16,12 @@
 //! nested SEP-41 transfers settle atomically (Soroban reverts on any failure).
 
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol};
+
+/// Maximum permissible platform fee in basis points (1000 bp = 10.00%).
+/// Strictly matches the off-chain orders.platform_fee_bp check constraint:
+/// `check (platform_fee_bp between 0 and 1000)` defined in
+/// supabase/migrations/20261008130000_orders_platform_fee_bp_constraints.sql.
+pub const MAX_FEE_BPS: u32 = 1_000;
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -36,12 +43,25 @@ pub struct Checkout;
 #[contractimpl]
 impl Checkout {
     /// Set the SlipPay fee recipient + basis points once, at deploy. Immutable.
+    ///
+    /// The platform fee is bounded by `MAX_FEE_BPS` (1000 bp = 10.00%), matching
+    /// the off-chain database constraint. Deploying with `fee_bps == 0` is allowed
+    /// deliberately to support fee-free deployments where only the merchant receives
+    /// payment without taking a platform cut.
+    ///
+    /// Emits `(checkout_init, fee_to)` with `fee_bps` so deployment parameters
+    /// are recoverable from chain event data.
     pub fn __constructor(env: Env, fee_to: Address, fee_bps: u32) {
-        if fee_bps > 10_000 {
+        if fee_bps > MAX_FEE_BPS {
             panic_with(&env, Error::BadConfig);
         }
         env.storage().instance().set(&DataKey::FeeTo, &fee_to);
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
+
+        env.events().publish(
+            (Symbol::new(&env, "checkout_init"), fee_to),
+            fee_bps,
+        );
     }
 
     /// One charge → two atomic transfers: net to merchant, fee to SlipPay.
@@ -83,3 +103,7 @@ impl Checkout {
 fn panic_with(env: &Env, e: Error) -> ! {
     soroban_sdk::panic_with_error!(env, e)
 }
+
+#[cfg(test)]
+mod test;
+
