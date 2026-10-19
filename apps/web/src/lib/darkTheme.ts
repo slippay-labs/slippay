@@ -1,6 +1,8 @@
 // Shared dark theme tokens (Secuury/V3 register). Every page migrated off the
 // bone design imports these so the dark look is consistent, not re-invented per
 // page. Deep navy canvas, white type, electric-cyan accent.
+// Static tokens only — no toggle and no persistence; see
+// docs/product/locale-strategy.md ("Theme: lib/darkTheme.ts has no persistence").
 
 export const DARK = {
   bg: "#0a0e1a",

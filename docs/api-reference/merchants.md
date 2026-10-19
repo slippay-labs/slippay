@@ -14,9 +14,9 @@ and platform fee rate.
   "email": "operations@vortex.example",
   "stellar_address": "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
   "network": "testnet",
-  "api_key_prefix": "sk_live_e6f4a1c8",
+  "api_key_prefix": "sk_live_e6f4",
   "webhook_url": "https://vortex.example/webhooks/slippay",
-  "platform_fee_bp": 100,
+  "platform_fee_bp": 297,
   "active": true,
   "created_at": "2026-05-10T13:00:00Z"
 }
@@ -30,13 +30,14 @@ and platform fee rate.
 | `email` | string | from Supabase user; not editable directly here |
 | `stellar_address` | string \| null | 56-char Stellar pubkey where USDC settles |
 | `network` | enum | `testnet` or `mainnet` |
-| `api_key_prefix` | string | first 16 chars of the key, for UI display |
+| `api_key_prefix` | string | first 12 chars of the key (`sk_live_` + 4 chars), display-only for dashboard identification and never used for authentication |
 | `webhook_url` | string \| null | where SlipPay POSTs events |
-| `platform_fee_bp` | int | platform fee in basis points (100 = 1%, max 1000 = 10%) |
+| `platform_fee_bp` | int | platform fee in basis points (297 = 2.97%, max 1000 = 10%), configured per-merchant on the `merchants` table (default: `DEFAULT_PLATFORM_FEE_BP` = 297) |
 | `active` | bool | inactive merchants don't receive new orders |
 
-`api_key_hash` and `webhook_secret` are stored but never returned; they are
-write-only.
+`api_key_hash` and `webhook_secret` are stored but never returned by any
+endpoint. The webhook secret is minted server-side at creation and is
+**write-only**: see [Webhook secret](#webhook-secret).
 
 ## Create merchant
 
@@ -71,7 +72,12 @@ write-only.
 }
 ```
 
-> **Important**: `api_key` is shown **once**. Store it now. If lost, rotate.
+> **Important**: `api_key` is shown **once**. Store it now. If lost, use
+> [`POST /me/rotate-key`](#rotate-api-key).
+
+The response does **not** include `webhook_secret` — the API strips it from the
+create response exactly as it does for every later read. See
+[Webhook secret](#webhook-secret).
 
 ## Get current merchant
 
@@ -119,9 +125,23 @@ must use the new key.
 
 ## Webhook secret
 
-The merchant has an internal `webhook_secret` (256-bit random) used to HMAC
-all outgoing webhook payloads. It is set automatically at merchant creation
-and is **not** rotatable via API in v0.1 — file an issue if you need this.
+Every merchant has an internal `webhook_secret` (256-bit random, hex) used to
+HMAC-sign all outgoing webhook payloads (`X-Slippay-Signature`). The API
+generates it server-side when the merchant is created and **never returns it**:
 
-To verify HMAC on your side, store the secret from the dashboard (Settings
-tab) and use it as documented in [authentication](./authentication.md#webhook-hmac).
+- `POST /api/v1/merchants` strips it from the response
+  (`const { api_key_hash, webhook_secret, ...safe } = data`), so it is not in
+  the create response either.
+- `GET /api/v1/merchants/me` and `PATCH /api/v1/merchants/me` strip it too.
+- Column-level grants exclude it from authenticated reads, so the dashboard
+  cannot display it.
+
+Treat the secret as **one-time, write-only material** minted with the merchant.
+Unlike the API key there is no rotation endpoint in this version: there is no
+`POST /me/rotate-webhook-secret` and no reveal affordance on `GET /me`. If you
+need to read the stored value (for example to re-provision a handler) it is
+readable only with service-role database access; if you need a supported
+rotate/reveal path, file an issue.
+
+To verify HMAC on your side, use the secret as documented in
+[authentication](./authentication.md#webhook-hmac).
