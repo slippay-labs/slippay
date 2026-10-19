@@ -13,6 +13,11 @@
 // - Two pods racing during initial INSERT: Postgres serializes on the PK;
 //   one INSERT wins, the other gets a unique-violation and treats that as
 //   "lease taken, sleep + retry".
+// - Heartbeat lost lease: the heartbeat update is filtered on holder_id.
+//   If another pod took over (because our expires_at lapsed during a
+//   stall), the update matches zero rows and returns no error. We must
+//   treat that as a lost lease and stop watching — never continue without
+//   a lease.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
@@ -27,10 +32,22 @@ export type LeaseResult =
   | { acquired: true; release: () => Promise<void> }
   | { acquired: false; heldBy: string; expiresAt: string };
 
+export interface AcquireLeaseOpts {
+  ttlSeconds?: number;
+  heartbeatSeconds?: number;
+  /**
+   * Called when the heartbeat detects that this pod no longer holds the
+   * lease (the conditional update matched zero rows). The listener must
+   * tear down the account's watch stream and leases rather than continue
+   * watching without a lease.
+   */
+  onLeaseLost?: () => void | Promise<void>;
+}
+
 export async function acquireLease(
   db: SupabaseClient,
   accountId: string,
-  opts: { ttlSeconds?: number; heartbeatSeconds?: number } = {},
+  opts: AcquireLeaseOpts = {},
 ): Promise<LeaseResult> {
   const ttl = opts.ttlSeconds ?? DEFAULT_LEASE_TTL_S;
   const heartbeatMs = (opts.heartbeatSeconds ?? DEFAULT_HEARTBEAT_S) * 1000;
@@ -79,12 +96,30 @@ export async function acquireLease(
   const heartbeat = setInterval(async () => {
     if (stopped) return;
     const nextExpires = new Date(Date.now() + ttl * 1000).toISOString();
+    // Require a returned row: a conditional update that affects zero rows
+    // means we no longer hold the lease (another pod took over). Treat that
+    // as a lost, not as success.
     const r = await db.from("listener_leases")
       .update({ expires_at: nextExpires })
       .eq("account_id", accountId)
-      .eq("holder_id", HOLDER_ID);
+      .eq("holder_id", HOLDER_ID)
+      .select("holder_id");
     if (r.error) {
       log("warn", "lease_heartbeat_failed", { account_id: accountId, error: r.error.message });
+      return;
+    }
+    const rows = (r.data as unknown as Array<unknown> | null) ?? [];
+    if (rows.length === 0) {
+      // Lease lost: the conditional update matched zero rows. Stop the
+      // heartbeat and tear down the watch stream via the callback.
+      stopped = true;
+      clearInterval(heartbeat);
+      log("alert", "lease_lost", { account_id: accountId, holder_id: HOLDER_ID });
+      try {
+        await opts.onLeaseLost?.();
+      } catch (e) {
+        log("error", "lease_lost_handler_failed", { account_id: accountId, error: String(e) });
+      }
     }
   }, heartbeatMs);
   // Prevent the heartbeat timer from keeping the process alive after shutdown.
