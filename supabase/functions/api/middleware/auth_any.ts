@@ -1,10 +1,11 @@
 import type { Context, Next } from "hono";
+import { extractBearerApiKey } from "@slippay/shared";
 import { serviceClient, userClient } from "../lib/supabase.ts";
 import { requireApiKey } from "./auth_apikey.ts";
 
 // Dual auth for read endpoints consumed by BOTH the public API (merchant
-// integrations, e.g. the WooCommerce plugin, with `Bearer sk_live_...`) AND
-// the merchant dashboard (logged-in session, `Bearer <supabase_jwt>`).
+// integrations, e.g. the WooCommerce plugin, with `Bearer sk_live_...` or
+// `Bearer sk_test_...`) AND the merchant dashboard (logged-in session, `Bearer <supabase_jwt>`).
 //
 // Bug it fixes: the dashboard `/v1/orders` list authenticated with the user's
 // Supabase JWT but the route only accepted API keys (`requireApiKey`), so the
@@ -18,8 +19,8 @@ import { requireApiKey } from "./auth_apikey.ts";
 export async function requireApiKeyOrJwt(c: Context, next: Next) {
   const auth = c.req.header("authorization");
 
-  // API-key path (sk_live_...) — delegate to the canonical middleware.
-  if (auth?.startsWith("Bearer sk_live_")) {
+  // API-key path (sk_live_..., sk_test_...) — delegate to the canonical middleware.
+  if (extractBearerApiKey(auth)) {
     return requireApiKey(c, next);
   }
 
@@ -27,23 +28,27 @@ export async function requireApiKeyOrJwt(c: Context, next: Next) {
   if (!auth?.startsWith("Bearer ")) {
     return c.json({ error: "unauthenticated" }, 401);
   }
-  const userSb = userClient(c.req.raw);
-  const { data: u, error: ue } = await userSb.auth.getUser();
-  if (ue || !u.user) {
+  try {
+    const userSb = userClient(c.req.raw);
+    const { data: u, error: ue } = await userSb.auth.getUser();
+    if (ue || !u.user) {
+      return c.json({ error: "unauthenticated" }, 401);
+    }
+    const svc = serviceClient();
+    const { data: merchant, error: me } = await svc
+      .from("merchants")
+      .select("*")
+      .eq("auth_user_id", u.user.id)
+      .eq("active", true)
+      .maybeSingle();
+    if (me || !merchant) {
+      return c.json({ error: "unauthenticated" }, 401);
+    }
+    c.set("user", u.user);
+    c.set("merchant", merchant);
+    c.set("supabase", svc);
+    await next();
+  } catch {
     return c.json({ error: "unauthenticated" }, 401);
   }
-  const svc = serviceClient();
-  const { data: merchant, error: me } = await svc
-    .from("merchants")
-    .select("*")
-    .eq("auth_user_id", u.user.id)
-    .eq("active", true)
-    .maybeSingle();
-  if (me || !merchant) {
-    return c.json({ error: "unauthenticated" }, 401);
-  }
-  c.set("user", u.user);
-  c.set("merchant", merchant);
-  c.set("supabase", svc);
-  await next();
 }

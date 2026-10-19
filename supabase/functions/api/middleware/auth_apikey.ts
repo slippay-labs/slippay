@@ -1,4 +1,5 @@
 import type { Context, Next } from "hono";
+import { extractBearerApiKey } from "@slippay/shared";
 import { serviceClient } from "../lib/supabase.ts";
 import { hashApiKey } from "../lib/apikey.ts";
 
@@ -11,10 +12,10 @@ async function legacyHashApiKey(plain: string): Promise<string> {
 
 export async function requireApiKey(c: Context, next: Next) {
   const auth = c.req.header("authorization");
-  if (!auth?.startsWith("Bearer sk_live_")) {
+  const plain = extractBearerApiKey(auth);
+  if (!plain) {
     return c.json({ error: "unauthenticated" }, 401);
   }
-  const plain = auth.slice("Bearer ".length);
   const sb = serviceClient();
 
   // Look up by peppered hash first (canonical). If miss, try legacy hash for

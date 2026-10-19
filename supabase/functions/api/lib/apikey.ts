@@ -1,4 +1,4 @@
-import { API_KEY_PREFIX, API_KEY_BYTES, bufToHex } from "@slippay/shared";
+import { API_KEY_PREFIX, API_KEY_PREFIX_TEST, API_KEY_PREFIXES, type ApiKeyPrefix, API_KEY_BYTES, bufToHex } from "@slippay/shared";
 
 // Audit-004 · C4 — API keys are hashed with HMAC-SHA-256 using a server-side
 // pepper, so a DB-only leak (Supabase breach, backup theft, support engineer
@@ -28,11 +28,11 @@ async function hmacKey(): Promise<CryptoKey> {
   return HMAC_KEY_CACHE;
 }
 
-export function generateApiKey(): { plain: string } {
+export function generateApiKey(prefix: ApiKeyPrefix = API_KEY_PREFIX): { plain: string } {
   const bytes = new Uint8Array(API_KEY_BYTES);
   crypto.getRandomValues(bytes);
   const hex = bufToHex(bytes);
-  return { plain: API_KEY_PREFIX + hex };
+  return { plain: prefix + hex };
 }
 
 /** Canonical hash for new keys: HMAC-SHA-256(pepper, plain). */
@@ -70,5 +70,10 @@ function constantTimeEqual(a: string, b: string): boolean {
 // 16 chars revealed 8 bytes of entropy in a leaked dump — overkill for UX,
 // dangerous if combined with a hash leak.
 export function prefixOf(plain: string, n = 4): string {
+  for (const p of API_KEY_PREFIXES) {
+    if (plain.startsWith(p)) {
+      return plain.slice(0, p.length + n);
+    }
+  }
   return plain.slice(0, API_KEY_PREFIX.length + n);
 }

@@ -4,6 +4,10 @@ import {
   DEFAULT_PLATFORM_FEE_BP,
   ORDER_DEFAULT_EXPIRY_MINUTES,
   API_KEY_PREFIX,
+  API_KEY_PREFIX_TEST,
+  API_KEY_PREFIXES,
+  hasApiKeyPrefix,
+  extractBearerApiKey,
   API_KEY_BYTES,
   STELLAR_ADDRESS_LENGTH,
   MEMO_HASH_HEX_LENGTH,
@@ -65,21 +69,42 @@ describe("packages/shared constants invariants", () => {
   });
 
   describe("API key configuration and derived key length", () => {
-    it("defines the standard live prefix and entropy byte size", () => {
+    it("defines the standard live and test prefixes and entropy byte size", () => {
       expect(API_KEY_PREFIX).toBe("sk_live_");
+      expect(API_KEY_PREFIX_TEST).toBe("sk_test_");
+      expect(API_KEY_PREFIXES).toEqual(["sk_live_", "sk_test_"]);
       expect(API_KEY_BYTES).toBe(32);
+    });
+
+    it("recognizes both live and test prefixes correctly", () => {
+      expect(hasApiKeyPrefix("sk_live_12345")).toBe(true);
+      expect(hasApiKeyPrefix("sk_test_12345")).toBe(true);
+      expect(hasApiKeyPrefix("sk_sandbox_12345")).toBe(false);
+      expect(hasApiKeyPrefix("Bearer sk_live_123")).toBe(false);
+    });
+
+    it("extracts bearer API keys cleanly", () => {
+      expect(extractBearerApiKey("Bearer sk_live_abc123")).toBe("sk_live_abc123");
+      expect(extractBearerApiKey("Bearer sk_test_xyz789")).toBe("sk_test_xyz789");
+      expect(extractBearerApiKey("Bearer sk_fake_000000")).toBeNull();
+      expect(extractBearerApiKey("Bearer jwt.token.here")).toBeNull();
+      expect(extractBearerApiKey("Basic sk_live_abc123")).toBeNull();
+      expect(extractBearerApiKey(null)).toBeNull();
+      expect(extractBearerApiKey(undefined)).toBeNull();
     });
 
     it("asserts derived key length numerically (prefix + 2 hex chars per byte)", () => {
       // 32 random bytes hex-encoded produce 64 hexadecimal characters
-      // sk_live_ prefix is 8 characters -> Total derived API key length is 72
-      const prefixLength = API_KEY_PREFIX.length;
-      const hexEntropyLength = API_KEY_BYTES * 2;
-      const derivedKeyLength = prefixLength + hexEntropyLength;
+      // sk_live_ and sk_test_ prefix are 8 characters -> Total derived API key length is 72
+      for (const prefix of API_KEY_PREFIXES) {
+        const prefixLength = prefix.length;
+        const hexEntropyLength = API_KEY_BYTES * 2;
+        const derivedKeyLength = prefixLength + hexEntropyLength;
 
-      expect(prefixLength).toBe(8);
-      expect(hexEntropyLength).toBe(64);
-      expect(derivedKeyLength).toBe(72);
+        expect(prefixLength).toBe(8);
+        expect(hexEntropyLength).toBe(64);
+        expect(derivedKeyLength).toBe(72);
+      }
     });
   });
 
