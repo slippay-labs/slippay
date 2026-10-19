@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { SupabaseClient } from "supabase";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
 import { mapDbError } from "../lib/db-error.ts";
+import { aggregatePeriodTotals, stroopsToDecimal } from "@slippay/shared";
 
 type Vars = { merchant: { id: string; platform_fee_bp?: number; [k: string]: unknown }; supabase: SupabaseClient };
 const r = new Hono<{ Variables: Vars }>();
@@ -32,17 +33,18 @@ r.get("/fees", requireApiKeyOrJwt, async (c) => {
   if (error) { const m = mapDbError(error); return c.json({ error: m.code }, m.status as 400 | 409); }
 
   const rows = data ?? [];
-  const sum = (k: string) => rows.reduce((a, o) => a + parseFloat((o as Record<string, string>)[k] ?? "0"), 0);
-  const feeTotal = sum("fee_usdc");
-  const grossTotal = sum("usdc_amount");
+  // Sum decimal strings in integer stroops. PostgREST returns numeric columns
+  // as strings; parseFloat would reintroduce binary-floating-point error on a
+  // period with thousands of orders.
+  const totals = aggregatePeriodTotals(rows);
 
   return c.json({
     merchant_id: merchant.id,
     period: { from, to },
     orders_count: rows.length,
-    gross_usdc: grossTotal.toFixed(7),
-    fee_usdc_total: feeTotal.toFixed(7),     // what SlipPay invoices for the period
-    net_usdc_total: (grossTotal - feeTotal).toFixed(7),
+    gross_usdc: stroopsToDecimal(totals.grossStroops),
+    fee_usdc_total: stroopsToDecimal(totals.feeStroops), // what SlipPay invoices for the period
+    net_usdc_total: stroopsToDecimal(totals.netStroops),
     platform_fee_bp: Number(merchant.platform_fee_bp ?? 98),
   });
 });
