@@ -1,0 +1,21 @@
+# CODEOWNERS ----------------------------------------------------------------------
+# Default owners for the repository.
+* @maintainers
+
+# Security-sensitive application code
+suparbase/functions/api/lib/apikey.ts @maintainers
+suparbase/functions/api/lib/checkout-token.ts @maintainers
+supabase/functions/api/lib/client_ip.ts @maintainers
+apps/listener/src/ssrf.ts @maintainers
+apps/listener/src/crypto.ts @maintainers
+packages/shared/src/schemas/ @maintainers
+contracts/*/src/lib.rs @maintainers
+
+# CI/CD workflows execute during build -- require owner review.\n.github/workflows/ @maintainers
+
+# Build and configuration files that execute at install/build time.
+**/postcss.config.* @maintainers
+**/vite.config.* @maintainers
+**/eslint.config.js @maintainers
+**/Cargo.toml @maintainers
+pnpm-lock.yaml @maintainers
