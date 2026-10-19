@@ -35,9 +35,13 @@ vi.mock("../src/reconciler.js", () => ({ reconcileMatch: vi.fn(async () => undef
 vi.mock("../src/log.js", () => ({ log: vi.fn() }));
 
 import { watchAccount } from "../src/horizon.js";
+import { DEFAULT_PLATFORM_FEE_BP } from "@slippay/shared";
+import { matchPaymentToOrder } from "../src/matcher.js";
+import { log } from "../src/log.js";
 
 // --- db stub: enough of the Supabase chain for listener_state + orders -------
 const stateRow = { current: null as null | { paging_token: string } };
+let orderRow: any = null;
 const upserted: { account_id: string; paging_token: string }[] = [];
 
 const db: any = {
@@ -45,7 +49,11 @@ const db: any = {
     const b: any = {
       select: () => b,
       eq: () => b,
-      maybeSingle: () => Promise.resolve({ data: table === "listener_state" ? stateRow.current : null, error: null }),
+      maybeSingle: () =>
+        Promise.resolve({
+          data: table === "listener_state" ? stateRow.current : table === "orders" ? orderRow : null,
+          error: null,
+        }),
       upsert: (row: any) => {
         if (table === "listener_state") upserted.push(row);
         return Promise.resolve({ error: null });
@@ -75,7 +83,10 @@ beforeEach(() => {
   vi.useFakeTimers();
   hz.reset();
   stateRow.current = null;
+  orderRow = null;
   upserted.length = 0;
+  vi.mocked(matchPaymentToOrder).mockClear();
+  vi.mocked(log).mockClear();
 });
 
 afterEach(() => {
@@ -155,6 +166,85 @@ describe("watchAccount · cursor paging (duplicate + out-of-order)", () => {
 
     expect(upserted.map((u) => u.paging_token)).toEqual(["50", "50"]);
     expect(hz.calls[1]).toMatchObject({ cursor: "50" });
+    stop();
+  });
+});
+
+describe("watchAccount — missing order fee rate", () => {
+  it("falls back to the shared default and alerts when neither rate exists", async () => {
+    stateRow.current = { paging_token: "60" };
+    orderRow = {
+      id: "order-1",
+      merchant_id: "merchant-1",
+      memo: "00".repeat(32),
+      usdc_amount: "1.0000000",
+      platform_fee_bp: null,
+      merchants: { stellar_address: ACCOUNT, platform_fee_bp: null },
+    };
+    hz.setQueue([{ records: [paymentRecord("61")] }, { records: [] }]);
+
+    const stop = await watchAccount({ db, network: "TESTNET", accountId: ACCOUNT });
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(matchPaymentToOrder).toHaveBeenCalledTimes(1);
+    const matchedOrder = vi.mocked(matchPaymentToOrder).mock.calls[0]![1];
+    expect(matchedOrder.platform_fee_bp).toBe(DEFAULT_PLATFORM_FEE_BP);
+    expect(DEFAULT_PLATFORM_FEE_BP).not.toBe(0);
+    expect(log).toHaveBeenCalledWith(
+      "alert",
+      "order_missing_fee_basis_point",
+      expect.objectContaining({
+        order_id: "order-1",
+        resolved_fee_bp: DEFAULT_PLATFORM_FEE_BP,
+        source: "default",
+      }),
+    );
+    stop();
+  });
+
+  it("uses the merchant rate, not zero, and still alerts when the order rate is null", async () => {
+    stateRow.current = { paging_token: "70" };
+    orderRow = {
+      id: "order-2",
+      merchant_id: "merchant-2",
+      memo: "00".repeat(32),
+      usdc_amount: "2.0000000",
+      platform_fee_bp: null,
+      merchants: { stellar_address: ACCOUNT, platform_fee_bp: 250 },
+    };
+    hz.setQueue([{ records: [paymentRecord("71")] }, { records: [] }]);
+
+    const stop = await watchAccount({ db, network: "TESTNET", accountId: ACCOUNT });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const matchedOrder = vi.mocked(matchPaymentToOrder).mock.calls[0]![1];
+    expect(matchedOrder.platform_fee_bp).toBe(250);
+    expect(log).toHaveBeenCalledWith(
+      "alert",
+      "order_missing_fee_basis_point",
+      expect.objectContaining({ order_id: "order-2", resolved_fee_bp: 250, source: "merchant" }),
+    );
+    stop();
+  });
+
+  it("keeps an explicit order rate without alerting", async () => {
+    stateRow.current = { paging_token: "80" };
+    orderRow = {
+      id: "order-3",
+      merchant_id: "merchant-3",
+      memo: "00".repeat(32),
+      usdc_amount: "3.0000000",
+      platform_fee_bp: 200,
+      merchants: { stellar_address: ACCOUNT, platform_fee_bp: 250 },
+    };
+    hz.setQueue([{ records: [paymentRecord("81")] }, { records: [] }]);
+
+    const stop = await watchAccount({ db, network: "TESTNET", accountId: ACCOUNT });
+    await vi.advanceTimersByTimeAsync(0);
+
+    const matchedOrder = vi.mocked(matchPaymentToOrder).mock.calls[0]![1];
+    expect(matchedOrder.platform_fee_bp).toBe(200);
+    expect(log).not.toHaveBeenCalledWith("alert", "order_missing_fee_basis_point", expect.anything());
     stop();
   });
 });
