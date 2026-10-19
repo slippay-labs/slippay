@@ -8,7 +8,7 @@ export async function authorizePayment(args: {
   publicKey: string;
   signHash: (hash: Buffer) => Promise<Buffer>;
   confirm: (s: TxSummary) => Promise<boolean>;
-  expect: { destination: string; amount: string; assetCode: string };
+  expect: { destination: string; amount: string; assetCode: string; memo?: string; fee?: string; source?: string };
 }): Promise<{ hash: string }> {
   const summary = decodeTx(args.xdr, args.network);            // 1. decode the REAL xdr
   assertPaymentMatches(summary, args.expect);                 // 2. machine assert (threat #3)
@@ -25,7 +25,6 @@ export async function authorizeContractCall(args: {
   xdr: string;
   network: "TESTNET" | "PUBLIC";
   publicKey: string;
-  signHash: (hash: Buffer) => Promise<Buffer>;
   confirm: (s: TxSummary) => Promise<boolean>;
 }): Promise<{ hash: string }> {
   const summary = decodeTx(args.xdr, args.network);

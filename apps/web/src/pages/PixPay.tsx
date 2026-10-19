@@ -105,6 +105,8 @@ export default function PixPay() {
         destination: created.receiver,
         amount: created.amount,
         assetCode: "USDC",
+        memo: created.memo,
+        source: wallet,
       });
 
       // Guard 4: present decoded tx to user for explicit confirmation

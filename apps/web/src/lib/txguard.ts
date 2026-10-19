@@ -5,6 +5,8 @@ const PASS: Record<string, string> = { TESTNET: Networks.TESTNET, PUBLIC: Networ
 export interface OpSummary { type: string; destination?: string; amount?: string; assetCode?: string }
 export interface TxSummary { source: string; fee: string; memo?: string; operations: OpSummary[] }
 
+export const MAX_TRANSACTION_FEE = "10000"; // 10,000 stroops = 0.0001 XLM max; normal base fee is 100 stroops
+
 export function decodeTx(xdr: string, network: "TESTNET" | "PUBLIC"): TxSummary {
   const tx = TransactionBuilder.fromXDR(xdr, PASS[network]!) as any;
   const ops: OpSummary[] = (tx.operations ?? []).map((op: any) => {
@@ -32,7 +34,7 @@ export function isValidStellarAddress(address: string): boolean {
 
 export function assertPaymentMatches(
   s: TxSummary,
-  expect: { destination: string; amount: string; assetCode: string },
+  expect: { destination: string; amount: string; assetCode: string; memo?: string; fee?: string; source?: string },
 ): void {
   const pays = s.operations.filter((o) => o.type === "payment");
   if (pays.length !== 1) {
@@ -52,5 +54,35 @@ export function assertPaymentMatches(
   }
   if (Math.abs(got - want) > 1e-7) {
     throw new Error(`guard: valor divergente (assinaria ${pay.amount}, esperado ${expect.amount})`);
+  }
+  // --- Memo validation ---
+  if (expect.memo !== undefined) {
+    if (s.memo === undefined) {
+      throw new Error(`guard: memo esperado mas ausente na transação`);
+    }
+    if (s.memo !== expect.memo) {
+      throw new Error(`guard: memo divergente (assinaria ${s.memo}, esperado ${expect.memo})`);
+    }
+  } else if (s.memo !== undefined) {
+    // Expectation does not require a memo but transaction has one;
+    // still validate it matches the order memo if the order expects none.
+    // For now, we allow it (the order context controls this).
+  }
+  // --- Fee validation ---
+  if (expect.fee !== undefined) {
+    // Compare decoded fee against the maximum allowed fee.
+    const gotFee = String(s.fee);
+    if (gotFee > MAX_TRANSACTION_FEE) {
+      throw new Error(`guard: taxa de transação acima do limite máximo (${gotFee} > ${MAX_TRANSACTION_FEE} stroops)`);
+    }
+    if (gotFee !== expect.fee) {
+      throw new Error(`guard: taxa divergente (assinaria ${s.fee}, esperado ${expect.fee})`);
+    }
+  }
+  // --- Source account validation ---
+  if (expect.source !== undefined) {
+    if (s.source !== expect.source) {
+      throw new Error(`guard: source account divergente (assinaria ${s.source}, esperado ${expect.source})`);
+    }
   }
 }
