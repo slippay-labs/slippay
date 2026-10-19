@@ -132,7 +132,7 @@ buyer-side Pix flow on mainnet for Brazilian users.
 If SlipPay only:
 
 - runs the merchant API and hosted checkout,
-- observes Stellar payments via Horizon SSE,
+- polls Stellar payments via Horizon `/payments`,
 - fires webhooks,
 - charges merchants a SaaS fee (in USD via Stripe-equivalent, **not** in
   BRL via Pix),
