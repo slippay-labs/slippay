@@ -47,6 +47,13 @@ export default async function handler(req, res) {
 
 ## 2. Verify HMAC
 
+Use your merchant's `webhook_secret` — `X-Slippay-Signature` is HMAC-SHA256 over
+the raw request body. The secret is minted at merchant creation and is
+**write-only**: the API never returns it (not even in the create response), so
+capture it out-of-band, as described in
+[merchants](../api-reference/merchants.md#webhook-secret).
+
+
 ```ts
 import crypto from "node:crypto";
 

@@ -6,7 +6,7 @@ type QuoteModule = typeof import("./quote.ts");
 let quote: QuoteModule;
 
 const okFetch = (brlPerUsd: number) =>
-  vi.fn().mockResolved({
+  vi.fn().mockResolvedValue({
     ok: true,
     status: 200,
     headers: { get: () => "application/json; charset=utf-8" },
@@ -116,7 +116,7 @@ describe("quoteBRLtoUSDC — guard rails", () => {
 
 describe("midRateBRLperUSD — live rate with fallback", () => {
   it("marks the fallback rate stale when the fetch throws", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejected(new Error("offline")));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
 
     const q = await quote.quoteBRLtoUSDC(54);
 
@@ -137,7 +137,7 @@ describe("midRateBRLperUSD — live rate with fallback", () => {
   });
 
   it("treats a non-200 response as a failure", async () => {
-    const fetchMock = vi.fn().mockResolved({
+    const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
       status: 500,
       headers: { get: () => "application/json" },
@@ -155,7 +155,7 @@ describe("midRateBRLperUSD — live rate with fallback", () => {
   });
 
   it("treats a non-JSON content type as a failure", async () => {
-    const fetchMock = vi.fn().mockResolved({
+    const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       headers: { get: () => "text/html" },
@@ -200,7 +200,7 @@ describe("midRateBRLperUSD — live rate with fallback", () => {
   it("a cache miss during an in-flight request does not start a second", async () => {
     let resolveJson!: (v: unknown) => void;
     const json = new Promise<unknown>((r) => { resolveJson = r; });
-    const fetchMock = vi.fn().mockResolved({
+    const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
       headers: { get: () => "application/json" },
@@ -224,13 +224,13 @@ describe("midRateBRLperUSD — live rate with fallback", () => {
 
   it("shares an in-flight failure with concurrent callers, then retries fresh", async () => {
     const fetchMock = vi.fn()
-      .mockResolvedBeforeOnce({
+      .mockResolvedValueOnce({
         ok: true,
         status: 200,
         headers: { get: () => "application/json" },
         json: async () => { throw new Error("bad body"); },
       })
-      .mockResolvedBeforeOnce({
+      .mockResolvedValueOnce({
         ok: true,
         status: 200,
         headers: { get: () => "application/json" },
@@ -291,7 +291,7 @@ describe("recordConversionIntent — best-effort margin ledger", () => {
     vi.stubGlobal("fetch", okFetch(5));
     const q = await quote.quoteBRLtoUSDC(100, 297);
 
-    const post = vi.fn().mockResolved({ ok: true });
+    const post = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", post);
 
     await quote.recordConversionIntent(q, "GABC");
@@ -308,8 +308,8 @@ describe("recordConversionIntent — best-effort margin ledger", () => {
     vi.stubGlobal("fetch", okFetch(5));
     const q = await quote.quoteBRLtoUSDC(10);
 
-    vi.stubGlobal("fetch", vi.fn().mockRejected(new Error("down")));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
 
-    await expect(quote.recordConversionIntent(q)).resolvesToBeUndefined();
+    await expect(quote.recordConversionIntent(q)).resolves.toBeUndefined();
   });
 });

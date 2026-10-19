@@ -5,8 +5,10 @@ import { serviceClient } from "../lib/supabase.ts";
 async function createMerchant() {
   const sb = serviceClient();
   const email = `m-${crypto.randomUUID()}@slippay.test`;
-  const { data: u } = await sb.auth.admin.createUser({ email, email_confirm: true, password: "p" });
-  const { data: s } = await sb.auth.signInWithPassword({ email, password: "p" });
+  const { data: u, error: errCreate } = await sb.auth.admin.createUser({ email, email_confirm: true, password: "test-password-1234" });
+  if (errCreate) throw errCreate;
+  const { data: s, error: errSign } = await sb.auth.signInWithPassword({ email, password: "test-password-1234" });
+  if (errSign) throw errSign;
   const create = await req("/v1/merchants", {
     method: "POST",
     headers: { authorization: `Bearer ${s.session!.access_token}`, "content-type": "application/json" },
@@ -46,6 +48,46 @@ Deno.test("POST /v1/orders rejects invalid amount", { sanitizeOps: false, saniti
   assertEquals(res.status, 400);
 });
 
+Deno.test("POST /v1/orders with valid usd_amount sets usdc_amount equal to input without toFixed coercion", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const m = await createMerchant();
+  const res = await req("/v1/orders", {
+    method: "POST",
+    headers: { authorization: `Bearer ${m.api_key}`, "content-type": "application/json" },
+    body: JSON.stringify({ usd_amount: "10.50", external_ref: "cart_usd" }),
+  });
+  assertEquals(res.status, 201);
+  const body = await res.json();
+  assertEquals(body.order.usd_amount, "10.50");
+  assertEquals(body.order.usdc_amount, "10.50");
+});
+
+Deno.test("POST /v1/orders rejects over-precise or non-positive usd_amount with 400", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const m = await createMerchant();
+  // Over-precise (> 7 decimals)
+  const resOver = await req("/v1/orders", {
+    method: "POST",
+    headers: { authorization: `Bearer ${m.api_key}`, "content-type": "application/json" },
+    body: JSON.stringify({ usd_amount: "10.12345678" }),
+  });
+  assertEquals(resOver.status, 400);
+
+  // Non-positive (0.00)
+  const resZero = await req("/v1/orders", {
+    method: "POST",
+    headers: { authorization: `Bearer ${m.api_key}`, "content-type": "application/json" },
+    body: JSON.stringify({ usd_amount: "0.00" }),
+  });
+  assertEquals(resZero.status, 400);
+
+  // Non-positive (-1.00)
+  const resNeg = await req("/v1/orders", {
+    method: "POST",
+    headers: { authorization: `Bearer ${m.api_key}`, "content-type": "application/json" },
+    body: JSON.stringify({ usd_amount: "-1.00" }),
+  });
+  assertEquals(resNeg.status, 400);
+});
+
 Deno.test("GET /v1/orders lists own orders only", { sanitizeOps: false, sanitizeResources: false }, async () => {
   const a = await createMerchant();
   const b = await createMerchant();
@@ -59,6 +101,29 @@ Deno.test("GET /v1/orders lists own orders only", { sanitizeOps: false, sanitize
   const body = await res.json();
   assertEquals(body.orders.length, 1);
   assertEquals(body.orders[0].brl_amount, "10.00");
+});
+
+Deno.test("GET /v1/orders rejects invalid limit with 400 validation error", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const m = await createMerchant();
+  for (const invalid of ["abc", "-1", "0"]) {
+    const res = await req(`/v1/orders?limit=${invalid}`, {
+      headers: { authorization: `Bearer ${m.api_key}` },
+    });
+    assertEquals(res.status, 400);
+    const body = await res.json();
+    assertEquals(body.error, "validation_error");
+  }
+});
+
+Deno.test("GET /v1/orders accepts limit=250 and caps at 200", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const m = await createMerchant();
+  const res = await req("/v1/orders?limit=250", {
+    headers: { authorization: `Bearer ${m.api_key}` },
+  });
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assert(Array.isArray(body.orders));
+  assert(body.orders.length <= 200);
 });
 
 Deno.test("GET /v1/orders/:id requires signed token (audit-004 C2)", { sanitizeOps: false, sanitizeResources: false }, async () => {
@@ -105,3 +170,122 @@ Deno.test("POST /v1/orders/:id/cancel marks status cancelled", { sanitizeOps: fa
   const body = await res.json();
   assertEquals(body.order.status, "cancelled");
 });
+
+Deno.test("orders.fee_usdc constraint rejects negative values and enforces NOT NULL", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const sb = serviceClient();
+  const m = await createMerchant();
+
+  // 1. Rejects negative fee_usdc
+  const { error: negErr } = await sb.from("orders").insert({
+    merchant_id: m.merchant.id,
+    brl_amount: "10.00",
+    usdc_amount: "1.7241379",
+    rate_brl_usdc: "5.80",
+    memo: "m_neg_" + crypto.randomUUID().replace(/-/g, "").slice(0, 50),
+    fee_usdc: -1,
+  });
+  assert(negErr !== null, "insert with negative fee_usdc must be rejected");
+
+  // 2. Rejects NULL fee_usdc
+  const { error: nullErr } = await sb.from("orders").insert({
+    merchant_id: m.merchant.id,
+    brl_amount: "10.00",
+    usdc_amount: "1.7241379",
+    rate_brl_usdc: "5.80",
+    memo: "m_null_" + crypto.randomUUID().replace(/-/g, "").slice(0, 50),
+    fee_usdc: null as any,
+  });
+  assert(nullErr !== null, "insert with null fee_usdc must be rejected");
+
+  // 3. Valid insert succeeds
+  const { data: okData, error: okErr } = await sb.from("orders").insert({
+    merchant_id: m.merchant.id,
+    brl_amount: "10.00",
+    usdc_amount: "1.7241379",
+    rate_brl_usdc: "5.80",
+    memo: "m_ok_" + crypto.randomUUID().replace(/-/g, "").slice(0, 50),
+    fee_usdc: "0.0168965",
+  }).select("*").single();
+  assert(okErr === null, "valid insert must succeed");
+  assertEquals(parseFloat(okData.fee_usdc), 0.0168965);
+});
+
+Deno.test("orders.platform_fee_bp constraint rejects out-of-bounds values, enforces NOT NULL, and defaults to 297", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const sb = serviceClient();
+  const m = await createMerchant();
+
+  // 1. Rejects negative platform_fee_bp (< 0)
+  const { error: negErr } = await sb.from("orders").insert({
+    merchant_id: m.merchant.id,
+    brl_amount: "10.00",
+    usdc_amount: "1.7241379",
+    rate_brl_usdc: "5.80",
+    memo: "m_fee_neg_" + crypto.randomUUID().replace(/-/g, "").slice(0, 40),
+    fee_usdc: "0.0168965",
+    platform_fee_bp: -1,
+  });
+  assert(negErr !== null, "insert with negative platform_fee_bp must be rejected");
+
+  // 2. Rejects platform_fee_bp > 1000 (> 10%)
+  const { error: highErr } = await sb.from("orders").insert({
+    merchant_id: m.merchant.id,
+    brl_amount: "10.00",
+    usdc_amount: "1.7241379",
+    rate_brl_usdc: "5.80",
+    memo: "m_fee_high_" + crypto.randomUUID().replace(/-/g, "").slice(0, 40),
+    fee_usdc: "0.0168965",
+    platform_fee_bp: 1001,
+  });
+  assert(highErr !== null, "insert with platform_fee_bp > 1000 must be rejected");
+
+  // 3. Rejects NULL platform_fee_bp
+  const { error: nullErr } = await sb.from("orders").insert({
+    merchant_id: m.merchant.id,
+    brl_amount: "10.00",
+    usdc_amount: "1.7241379",
+    rate_brl_usdc: "5.80",
+    memo: "m_fee_null_" + crypto.randomUUID().replace(/-/g, "").slice(0, 40),
+    fee_usdc: "0.0168965",
+    platform_fee_bp: null as any,
+  });
+  assert(nullErr !== null, "insert with null platform_fee_bp must be rejected");
+
+  // 4. Default 297 applies when omitted
+  const { data: defData, error: defErr } = await sb.from("orders").insert({
+    merchant_id: m.merchant.id,
+    brl_amount: "10.00",
+    usdc_amount: "1.7241379",
+    rate_brl_usdc: "5.80",
+    memo: "m_fee_def_" + crypto.randomUUID().replace(/-/g, "").slice(0, 40),
+    fee_usdc: "0.0168965",
+  }).select("*").single();
+  assert(defErr === null, "insert without explicit platform_fee_bp must succeed");
+  assertEquals(defData.platform_fee_bp, 297);
+});
+
+Deno.test("GET /v1/x402/:slug sets platform_fee_bp and fee_usdc on order insert", { sanitizeOps: false, sanitizeResources: false }, async () => {
+  const sb = serviceClient();
+  const m = await createMerchant();
+  const slug = "test-fee-" + crypto.randomUUID().slice(0, 8);
+  const { data: resData, error: resErr } = await sb.from("x402_resources").insert({
+    merchant_id: m.merchant.id,
+    slug,
+    usd_amount: "5.0000000",
+    inline_content: "hello protected content",
+    inline_mime: "text/plain",
+  }).select("*").single();
+  assert(resErr === null);
+
+  const res = await req(`/v1/x402/${slug}`, { method: "GET" });
+  assertEquals(res.status, 402);
+
+  const { data: orderData, error: ordErr } = await sb.from("orders")
+    .select("platform_fee_bp, fee_usdc, usdc_amount")
+    .eq("x402_resource_id", resData.id)
+    .single();
+  assert(ordErr === null);
+  assertEquals(orderData.platform_fee_bp, 297);
+  assertEquals(orderData.fee_usdc, "0.1485000"); // 5.0 * 297 / 10000
+});
+
+

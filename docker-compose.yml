@@ -7,7 +7,7 @@
 # Services:
 #   web      — nginx serving the Vite SPA bundle (port 5173)
 #   api      — Deno runtime serving the Hono Edge Function clone (port 8000)
-#   listener — Node container streaming Horizon SSE + delivering webhooks
+#   listener — Node container polling Horizon /payments + delivering webhooks
 #
 # Supabase Postgres + Auth + Studio are NOT in this compose file. Run them
 # locally via `supabase start` (the Supabase CLI manages its own Docker stack)

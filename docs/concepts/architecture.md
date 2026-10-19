@@ -57,7 +57,7 @@ it sponsors gas and cannot move user funds.
   +-----------+   +---------------+--+   +-----------+-------------------+
   | listener  |   | autocharge       |   | relayer (gas sponsor)        |
   | (Horizon  |   |  scheduler       |   |  fee-payer only; validates    |
-  |  SSE)     |   | (off-chain cron, |   |  sponsorable ops fail-closed  |
+  |  poll)    |   | (off-chain cron, |   |  sponsorable ops fail-closed  |
   +-----------+   |  fee-payer only) |   +------------------------------+
                   +------------------+
                                   |
@@ -111,12 +111,24 @@ at the chain adapter layer, not exposed via the API.
 
 ### Listener
 
-A separate process. It watches Stellar Horizon payment streams per merchant and
-matches a USDC payment to an order by memo hash:
-`memo_type=hash`, `asset=USDC`, correct issuer, `to=merchant`,
-`base64 -> hex memo == order.memo`. Money math is in BigInt stroops, status
-transitions are forward-only, and webhooks are HMAC-signed with SSRF defense on
-the delivery target.
+A separate process that **polls** Horizon; there is no long-lived stream. `manager.ts`
+re-reads the active-merchant list every `MERCHANT_POLL_MS` (default 30 s) and,
+for each active Merchant address not already watched, acquires a per-account
+lease in `listener_leases` (`lease.ts` stores a `holder_id` + `expires_at` and
+heartbeats it) so only one pod ever watches a given account. `horizon.ts` then
+pages `GET /accounts/{id}/payments` forward from a persisted `paging_token`
+(`listener_state`), one HTTP GET per `LISTENER_POLL_MS` (default 4 s), and
+matches a USDC payment to an order by memo hash: `memo_type=hash`, `asset=USDC`,
+correct issuer, `to=merchant`, `base64 -> hex memo == order.memo`. Money math is
+in BigInt stroops, status transitions are forward-only, and webhooks are
+HMAC-signed with SSRF defense on the delivery target.
+
+Polling replaced Horizon's `.stream()` deliberately: that stream can die
+silently — the socket stays open with no `onerror`, no events, and no
+auto-reconnect — so a nominally "online" listener stops confirming payments
+invisibly. A fresh GET each tick is immune to that failure mode, and a periodic
+`poller_alive` heartbeat makes a stall visible. The extra latency is bounded by
+`LISTENER_POLL_MS` and is fine for a checkout flow that already polls.
 
 The listener is read-only against Stellar. It never writes on-chain. Its only
 writes are to SlipPay's own Postgres state.
@@ -315,7 +327,7 @@ default is 297 bp (2.97%). The fee is computed, persisted, and exposed per order
   4. buyer opens checkout / /pay                        <- web
   5. wallet signs Stellar payment with Memo.hash(memo)  <- web -> wallet
   6. tx submitted to an RPC / Horizon                   <- wallet -> Stellar
-  7. Horizon broadcasts via SSE                         <- Stellar -> listener
+  7. listener polls Horizon /payments                         <- Stellar -> listener
   8. matcher: asset, issuer, to, memo, amount           <- listener
   9. orders.update status=paid, tx_hash=...             <- listener
  10. webhook_deliveries.insert (HMAC-signed)            <- listener
