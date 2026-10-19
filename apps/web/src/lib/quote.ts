@@ -14,8 +14,11 @@
 const SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
 const RATE_URL = "https://open.er-api.com/v6/latest/USD";
 const FALLBACK_BRL_PER_USD = 5.4;
+const RATE_TIMEOUT_MS = 5_000;
 
 export const SPREAD_PCT = SPREAD_BPS / 100;
+
+export type RateSource = "live" | "fallback";
 
 export interface Quote {
   brlIn: number;
@@ -27,33 +30,42 @@ export interface Quote {
   marginUsd: number;   // SlipPay's captured margin (USD)
   marginBrl: number;   // ...in BRL
   stale: boolean;      // live rate fetch failed -> fallback used
+  rateSource: RateSource; // which source produced the mid rate
   ts: string;
 }
+
+const FALLBACK_RESULT = { rate: FALLBACK_BRL_PER_USD, stale: true, source: "fallback" as const };
 
 let cache: { rate: number; at: number } | null = null;
 // Cache the in-flight promise, not just the resolved value: concurrent cold
 // callers (several components mounting in one frame) share a single request.
-let inflight: Promise<{ rate: number; stale: boolean }> | null = null;
+let inflight: Promise<{ rate: number; stale: boolean; source: RateSource }> | null = null;
 
-async function fetchMidRate(): Promise<{ rate: number; stale: boolean }> {
+async function fetchMidRate(): Promise<{ rate: number; stale: boolean; source: RateSource }> {
   try {
-    const r = await fetch(RATE_URL);
+    const r = await fetch(RATE_URL, { signal: AbortSignal.timeout(RATE_TIMEOUT_MS) });
+    // fetch resolves for 500s — check the status before trusting the body.
+    if (!r.ok) throw new Error(`rate upstream returned ${r.status}`);
+    const ct = r.headers?.get?.("content-type") ?? "";
+    if (!ct.toLowerCase().includes("application/json") && !ct.toLowerCase().includes("json")) {
+      throw new Error(`rate upstream content-type ${ct}`);
+    }
     const j = await r.json();
     const rate = Number(j?.rates?.BRL);
-    if (rate > 0) { cache = { rate, at: Date.now() }; return { rate, stale: false }; }
+    if (rate > 0) { cache = { rate, at: Date.now() }; return { rate, stale: false, source: "live" }; }
   } catch { /* fall through to fallback */ }
-  return { rate: FALLBACK_BRL_PER_USD, stale: true };
+  return FALLBACK_RESULT;
 }
 
-export async function midRateBRLperUSD(): Promise<{ rate: number; stale: boolean }> {
-  if (cache && Date.now() - cache.at < 60_000) return { rate: cache.rate, stale: false };
+export async function midRateBRLperUSD(): Promise<{ rate: number; stale: boolean; source: RateSource }> {
+  if (cache && Date.now() - cache.at < 60_000) return { rate: cache.rate, stale: false, source: "live" };
   if (inflight) return inflight;
   inflight = fetchMidRate().finally(() => { inflight = null; });
   return inflight;
 }
 
 export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Promise<Quote> {
-  const { rate: midRate, stale } = await midRateBRLperUSD();
+  const { rate: midRate, stale, source } = await midRateBRLperUSD();
   const quotedRate = midRate * (1 + spreadBps / 10000);
   const usdcOut = brlIn > 0 ? brlIn / quotedRate : 0;
   const usdcAtMid = brlIn > 0 ? brlIn / midRate : 0;
@@ -61,7 +73,7 @@ export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Pro
   return {
     brlIn, midRate, quotedRate, spreadBps,
     usdcOut, usdcAtMid, marginUsd, marginBrl: marginUsd * quotedRate,
-    stale, ts: new Date().toISOString(),
+    stale, rateSource: source, ts: new Date().toISOString(),
   };
 }
 
@@ -77,6 +89,7 @@ export async function recordConversionIntent(q: Quote, walletId?: string): Promi
       body: JSON.stringify({
         brlIn: q.brlIn, midRate: q.midRate, quotedRate: q.quotedRate, spreadBps: q.spreadBps,
         usdcOut: q.usdcOut, marginUsd: q.marginUsd, walletId: walletId ?? null, ts: q.ts,
+        rateSource: q.rateSource,
       }),
       keepalive: true,
     });
