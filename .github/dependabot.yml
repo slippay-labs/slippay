@@ -1,0 +1,25 @@
+version: 2
+
+updates:
+  # Keep the SHA-pinned actions in .github/workflows current. Grouping every
+  # action update into one PR keeps review affordable while ensuring a pin
+  # never silently ages out of its security updates.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # The repository is a pnpm workspace; Dependabot handles it through the npm
+  # ecosystem. One grouped PR covers the root and workspace manifests.
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      npm-dependencies:
+        patterns:
+          - "*"
