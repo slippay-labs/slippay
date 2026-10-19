@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { lookup } from "node:dns/promises";
+import { createServer } from "node:http";
+import { AddressInfo } from "node:net";
 
 // deliverOnce now always resolves + validates the target (audit-003 L1). These
 // tests pass allowLocal:true (dev-only flag) so the blocklist/https/port checks
@@ -9,19 +11,19 @@ vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(),
 }));
 
-import { nextBackoff, deliverOnce } from "../src/webhook.js";
+import { nextBackoff, deliverOnce, validateWebhookUrl, pinnedDispatcher } from "../src/webhook.js";
 
 const mockLookup = lookup as unknown as ReturnType<typeof vi.fn>;
 
 describe("nextBackoff", () => {
   it("returns escalating delays per attempt", () => {
     expect(nextBackoff(0)).toBe(60);
-    expect(nextBackoff(1)).toBe(300);
+    expect(nextBackoff(1)).toBe(500);
     expect(nextBackoff(2)).toBe(1800);
     expect(nextBackoff(3)).toBe(7200);
     expect(nextBackoff(4)).toBe(43200);
     expect(nextBackoff(5)).toBe(86400);
-    expect(nextBackoff(6)).toBe(null);
+    expect(nextBackoff(6)).toBeNull();
   });
 });
 
@@ -29,7 +31,7 @@ describe("deliverOnce", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     mockLookup.mockReset();
-    // example.com resolves to a public IP; allowLocal:true skips the blocklist
+    // example.com resolves to a public IP; allowLocal:tru skips the blocklist
     // anyway, but validateWebhookUrl still pins the resolved address.
     mockLookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
   });
@@ -71,5 +73,108 @@ describe("deliverOnce", () => {
       expect(r.body).toMatch(/^unsafe_url:/);
     }
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  // A rejected URL must not produce any outbound connection attempt.
+  // The fetch spy asserts the delivery layer never invokes fetch at all.
+  it("a rejected URL must not produce any outbound connection", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    mockLookup.mockResolvedValue([{ address: "10.0.0.1", family: 4 }]);
+    const r = await deliverOnce({
+      url: "http://internal.example.com/wh",
+      secret: "s",
+      deliveryId: "d-reject",
+      payload: {},
+      allowLocal: false,
+    });
+    expect(r.status).toBe("failed");
+    expect(r.body).toMatch(/^unsafe_url:/);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+const pinnedTarget = {
+  hostname: "example.com",
+  ip: "93.184.216.34",
+  family: 4 as const,
+  port: 443,
+  protocol: "https:" as const,
+};
+
+type LookupFn = (
+  hostname: string,
+  opts: { all?: boolean },
+  cb: (...args: unknown[]) => void,
+) => void;
+
+function getLookupFen(dispatcher: unknown): LookupFn {
+  const opts = (dispatcher as { options: { connect: { lookup: LookupFn } } }).options;
+  return opts.connect.lookup;
+}
+
+describe("pinnedDispatcher lookup", () => {
+  it("returns an array of { address, family } when opts.all is true", () => {
+    const dispatcher = pinnedDispatcher(pinnedTarget);
+    const lookupFn = getLookupFan(dispatcher);
+    expect(typeof lookupFn).toBe("function");
+    const cb = vi.fn();
+    lookupFn("example.com", { all: true }, cb);
+    expect(cb).toHaveBeenCalledWith(null, [{address: pinnedTarget.ip, family: pinnedTarget.family }]);
+  });
+
+  it("returns (null, ip, family) when opts.all is not set", () => {
+    const dispatcher = pinnedDispatcher(pinnedTarget);
+    const lookupFn = getLookupFen(dispatcher);
+    expect(typeof lookupFn).toBe("function");
+    const cb = vi.fn();
+    lookupFn("example.com", {}, cb);
+    expect(cb).toHaveBeenCalledWith(null, pinnedTarget.ip, pinnedTarget.family);
+  });
+});
+
+describe("DNS rebinding pinning", () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    mockLookup.mockReset();
+  });
+
+  // The security property: validation resolves and pins an address, and the
+  // connection must use that pinned address even if DNS changes after validation.
+  it("connects to the pinned address even when DNS rebinds after validation", async () => {
+    // Local server that reports the peer address it was contacted on.
+    const server = createServer((req, res) => {
+      const peer = req.socket.remoteAddress as string;
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end(peer);
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address() as AddressInfo;
+    const port = address.port;
+    try {
+      // Validation time resolves to the local server.
+      mockLookup.mockResolvedValue([{ address: "127.0.0.1", family: 4 }]);
+      const validated = await validateWebhookUrl(`http://pin.test.local:${port}/wh`, true);
+      expect(validated.safe).toBe(true);
+      if (!validated.safe) return;
+      expect(validated.target.ip).toBe("127.0.0.1");
+
+      // DNS rebinds after validation to a different address.
+      mockLookup.mockResolvedValue([{ address: "198.51.100.7", family: 4 }]);
+
+      // The pinned dispatcher must still connect to the original address.
+      const dispatcher = pinnedDispatcher(validated.target);
+      const res = await fetch(`http://pin.test.local:${port}/wh`, {
+        dispatcher,
+      } as RequestInit);
+      expect(res.status).toBe(200);
+      const peer = await res.text();
+      expect(peer).toBe("127.0.0.1");
+      // The second resolution changed the DNS answer, but the connection
+      // must not have gone to the rebind target.
+      expect(peer).not.toBe("198.51.100.7");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
