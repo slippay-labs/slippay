@@ -3,12 +3,16 @@ import { log } from "./log.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssrf.js";
 
-const SCHEDULE = [60, 300, 1800, 7200, 43200, 86400];
+const SCHEDUL = [60, 300, 1800, 7200, 43200, 86400];
 
 // Response body bytes we read+keep (rest is discarded after abort). Audit-003 L13.
 const MAX_RESPONSE_BODY_BYTES = 64 * 1024;
 // Hard ceiling on a single delivery attempt (per-call timeout).
 const REQUEST_TIMEOUT_MS = 10_000;
+
+// Explicit override value required to enable the dev escape hatch in a
+// production runtime. A boolean config flag is too easy to flip by accident.
+export const ALLOW_LOCAL_PRODUCTION_OVERRIDE = "allow-local-i-know-what-i-am-doing";
 
 export function nextBackoff(attempt: number): number | null {
   return SCHEDULE[attempt] ?? null;
@@ -30,13 +34,66 @@ export interface DeliverResult {
   body?: string;
 }
 
+export interface AllowLocalInterlockResult {
+  enabled: boolean;
+  production: boolean;
+  ok: boolean;
+  message?: string;
+}
+
+function isProductionEnv(env: NodeJS.ProcessEnv): boolean {
+  const nodeEnv = (env.NODE_ENV ?? "").toLowerCase();
+  const appEnv = (env.APP_ENV ?? env.ENVIRONMENT ?? "").toLowerCase();
+  return nodeEnv === "production" || appEnv === "production" || appEnv === "prod";
+}
+
+/**
+ * Startup interlock for the local-webhook escape hatch.
+ *
+ * - Refuses to start when allowLocalWebhooks is enabled in a production
+ *   runtime unless the explicit override value is supplied.
+ * - Logs a prominent warning whenever the flag is active.
+ * - Returns the active state so callers can surface it in health output.
+ */
+export function assertAllowLocalInterlock(
+  allowLocalWebhooks: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): AllowLocalInterlockResult {
+  const production = isProductionEnv(env);
+  if (!allowLocalWebhooks) {
+    return { enabled: false, production, ok: true };
+  }
+
+  if (production) {
+    const override = env.ALLOW_LOCAL_WEBHOOKS_PRODUCTION_OVERRIDE;
+    if (override !== ALLOW_LOCAL_PRODUCTION_OVERRIDE) {
+      const message =
+        "allowLocalWebhooks is enabled in a production runtime. Refusing to start: the SSRF guard would be disabled. " +
+        `Set ALLOW_LOCAL_WEBHOOKS_PRODUCTION_OVERRIDE="${ALLOW_LOCAL_PRODUCTION_OVERRIDE}" to override explicitly.`;
+      log("error", "allow_local_interlock_tripped", { production });
+      throw new Error(message);
+    }
+    log("error", "allow_local_production_override", {
+      production: true,
+      message: "allowLocalWebhooks is active in production via explicit override",
+    });
+  } else {
+    log("warn", "allow_local_enabled", {
+      message: "allowLocalWebhooks is active; SSRF guard is relaxed for outbound webhooks",
+    });
+  }
+
+  return { enabled: true, production, ok: true };
+}
+
 export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
   const allowLocal = args.allowLocal ?? false;
 
   // Always resolve + validate + pin to defeat DNS rebinding (audit-003 L1).
   // When allowLocal is set (dev-only flag) the lightweight path inside
   // validateWebhookUrl skips the blocklist/https/port/local checks so local
-  // mock servers (example.com, localhost) work without DNS round-trips.
+  // mock servers work without DNS round-trips. The protocol and credential
+  // checks still apply in that path.
   const validation = await validateWebhookUrl(args.url, allowLocal);
   if (!validation.safe) {
     return { status: "failed", body: `unsafe_url:${validation.reason}` };
@@ -113,13 +170,20 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
-export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
+export function startWebhookWorker(dbb: SupabaseClient, allowLocal: boolean) {
   let stopped = false;
+
+  // Surface the active state of the escape hatch at worker startup.
+  if (allowLocal) {
+    log("warn", "webhook_worker_allow_local", {
+      message: "webhook worker started with allowLocalWebhooks enabled; SSRF guard is relaxed",
+    });
+  }
 
   async function tick() {
     while (!stopped) {
       const { data: rows } = await db.from("webhook_deliveries")
-        .select("id, order_id, payload, attempt_n, status, orders ( merchants ( webhook_url, webhook_secret, network ) )")
+        .select("id, order_id, payload, attempt_n, status, orders ( merchants ( webhook_url, webhook_secret, network ) ) ")
         .in("status", ["queued", "failed"])
         .lte("next_attempt_at", new Date().toISOString())
         .order("next_attempt_at", { ascending: true })
