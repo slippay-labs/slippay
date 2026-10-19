@@ -14,11 +14,18 @@ SlipPay never holds funds.
 ## Network, address, deploy date
 
 - **Testnet:** `CBO2COBZUTHH4II4JCQRZVO4RKDUIUH4MXZTAWOYVUZIVYI47UIDQCWQ`,
-  `fee_bps = 300`, deployed 2026-06-05.
+  `fee_bps = 300` (3%), deployed 2026-06-05.
 - Proof tx: `e142cd0b…` (paid 10 → merchant +9.7, fee +0.3).
 - **Mainnet: pending.** Needs the deployer to fund XLM and a `/pay` wrapper.
 
 The wasm hash is in the source/deploy artifacts under `contracts/checkout/`.
+
+## Fee documentation
+
+For the canonical fee policy, including the fee rate range, formula, rounding
+behavior, zero-net and maximum-rate description, atomicity guarantees, and the
+relationship to the off-chain `fee_usdc` invoice, see
+[`docs/fees.md`](../../docs/fees.md).
 
 ## Entrypoints
 
@@ -77,3 +84,15 @@ constructed with the canonical 297 bp to match the API.
 - **No tests yet** for this contract. The behavior above is from source and a
   single proof transaction, not a test suite.
 - No third-party audit of this contract.
+
+## Cross-references
+
+- [`docs/fees.md`](../../docs/fees.md) — canonical reference for the off-chain
+  fee policy; the checkout contract documents how that policy is implemented
+  and enforced on-chain.
+- `contracts/checkout/DEPLOYMENT.md` — deployment record with contract IDs and
+  proof transactions.
+- `supabase/migrations/20261008130000_orders_platform_fee_bp_constraints.sql` —
+  database CHECK constraint `platform_fee_bp between 0 and 1000` (0%–10%).
+- `supabase/migrations/20261008120000_orders_fee_usdc_constraints.sql` —
+  off-chain `fee_usdc` backfill formula: `round(usdc_amount * platform_fee_bp / 10000.0, 7)`.
