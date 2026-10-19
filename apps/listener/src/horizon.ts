@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { matchPaymentToOrder, type StellarPaymentEvent } from "./matcher.js";
 import { reconcileMatch } from "./reconciler.js";
 import { log } from "./log.js";
-import { NETWORK } from "@slippay/shared";
+import { DEFAULT_PLATFORM_FEE_BP, NETWORK } from "@slippay/shared";
 
 const HORIZON: Record<"TESTNET" | "PUBLIC", string> = {
   TESTNET: NETWORK.testnet.horizon,
@@ -69,7 +69,28 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
       // PostgREST embeds a many-to-one relation as an object, but some setups
       // return a single-element array — handle both so stellar_address resolves.
       const mraw = (order as any).merchants;
-      const merchant = (Array.isArray(mraw) ? mraw[0] : mraw) as { stellar_address: string; platform_fee_bp: number } | undefined;
+      const merchant = (Array.isArray(mraw) ? mraw[0] : mraw) as
+        | { stellar_address: string; platform_fee_bp: number | null | undefined }
+        | undefined;
+      // Zero is a meaningful fee rate, so it must never be the fallback for a
+      // missing one: it would make the merchant's expectation the full amount
+      // and turn a correctly paid order into an unmatched underpayment. The
+      // order rate wins, then the merchant's, then the system-wide default.
+      const orderFeeBp = (order as any).platform_fee_bp as number | null | undefined;
+      const merchantFeeBp = merchant?.platform_fee_bp;
+      const platformFeeBp = orderFeeBp ?? merchantFeeBp ?? DEFAULT_PLATFORM_FEE_BP;
+      if (orderFeeBp === null || orderFeeBp === undefined) {
+        // A null order rate means something upstream is wrong (the column is
+        // NOT NULL after migrations 70/71), so surface it instead of failing
+        // silently on the next payment.
+        log("alert", "order_missing_fee_basis_point", {
+          account: accountId,
+          order_id: order.id,
+          merchant_id: order.merchant_id,
+          resolved_fee_bp: platformFeeBp,
+          source: merchantFeeBp === null || merchantFeeBp === undefined ? "default" : "merchant",
+        });
+      }
       const orderForMatch = {
         id: order.id as string,
         merchant_id: order.merchant_id as string,
@@ -78,7 +99,7 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
         // needs a string (it .split()s) — coerce or it throws -> "amount_parse".
         usdc_amount: String(order.usdc_amount),
         merchant_stellar_address: merchant?.stellar_address as string,
-        platform_fee_bp: ((order as any).platform_fee_bp ?? merchant?.platform_fee_bp ?? 0) as number,
+        platform_fee_bp: platformFeeBp as number,
       };
       const outcome = matchPaymentToOrder(ev, orderForMatch, network);
       await reconcileMatch(db, orderForMatch, outcome, ev.hash);
