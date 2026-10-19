@@ -1,13 +1,6 @@
 import type { Context, Next } from "hono";
 import { serviceClient } from "../lib/supabase.ts";
-import { hashApiKey } from "../lib/apikey.ts";
-
-// Legacy SHA-256 fallback for keys hashed before audit-004 C4 (peppered HMAC).
-// Removed once all merchants rotate via /me/rotate-key.
-async function legacyHashApiKey(plain: string): Promise<string> {
-  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(plain));
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
-}
+import { hashCandidates } from "../lib/apikey.ts";
 
 export async function requireApiKey(c: Context, next: Next) {
   const auth = c.req.header("authorization");
@@ -17,15 +10,14 @@ export async function requireApiKey(c: Context, next: Next) {
   const plain = auth.slice("Bearer ".length);
   const sb = serviceClient();
 
-  // Look up by peppered hash first (canonical). If miss, try legacy hash for
-  // unrotated keys. Both branches still go through `.in()` exact-match on the
-  // indexed column, so per-row time is constant.
-  const peppered = await hashApiKey(plain);
-  const legacy = await legacyHashApiKey(plain);
+  // Look up every candidate hash in one exact-match query on the indexed
+  // column. `hashCandidates` owns the legacy branch so the rotation can be
+  // completed by editing one function.
+  const candidates = await hashCandidates(plain);
   const { data, error } = await sb
     .from("merchants")
     .select("*")
-    .in("api_key_hash", [peppered, legacy])
+    .in("api_key_hash", candidates)
     .eq("active", true)
     .maybeSingle();
   if (error || !data) {

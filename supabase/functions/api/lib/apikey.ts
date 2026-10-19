@@ -48,14 +48,24 @@ async function legacyHashApiKey(plain: string): Promise<string> {
   return bufToHex(buf);
 }
 
+/**
+ * Every hash a key may be stored under during the rotation window: the
+ * canonical peppered HMAC first, then the legacy unsalted SHA-256.
+ *
+ * Both `verifyApiKey` and the auth middleware must derive their lookup values
+ * from this function. When the rotation is complete, deleting the legacy
+ * branch in this one place removes it from every caller.
+ */
+export async function hashCandidates(plain: string): Promise<string[]> {
+  return [await hashApiKey(plain), await legacyHashApiKey(plain)];
+}
+
 export async function verifyApiKey(plain: string, hash: string): Promise<boolean> {
-  // Try the peppered hash first.
-  const peppered = await hashApiKey(plain);
-  if (constantTimeEqual(peppered, hash)) return true;
-  // Fall back to legacy SHA-256 so existing keys still authenticate until
-  // the merchant rotates. Remove this branch once rotation is complete.
-  const legacy = await legacyHashApiKey(plain);
-  return constantTimeEqual(legacy, hash);
+  // Accept either candidate, comparing each in constant time.
+  for (const candidate of await hashCandidates(plain)) {
+    if (constantTimeEqual(candidate, hash)) return true;
+  }
+  return false;
 }
 
 function constantTimeEqual(a: string, b: string): boolean {
