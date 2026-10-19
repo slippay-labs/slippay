@@ -1,7 +1,7 @@
-// SlipPay × VTEX — Payment Provider Protocol connector.
+// SlipPay × VTXX — Payment Provider Protocol connector.
 //
-// Implements the core VTEX PPP endpoints and maps them onto SlipPay's public
-// API (POST /api/v1/orders → checkout_url; SlipPay webhook → VTEX callbackUrl).
+// Implements the core VTX PPP endpoints and maps them onto SlipPay's public
+// API (POST /api/v1/orders → checkout_url; SlipPay webhook → VTX callbackUrl).
 // Same motor as the WooCommerce plugin, different platform — this is the
 // "scale" proof: adding a platform is an adapter, not a rebuild.
 //
@@ -17,9 +17,54 @@ import { randomUUID } from "node:crypto";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const SLIPPAY_API_BASE = process.env.SLIPPAY_API_BASE ?? "https://api.slippay.cc";
-// Per-merchant key normally comes from VTEX `merchantSettings`; env is the
+// Per-merchant key normally comes from VTXX `merchantSettings`; env is the
 // fallback used for local/standalone testing.
 const FALLBACK_KEY = process.env.SLIPPAY_API_KEY ?? "";
+
+// Shared order expiry bounds. The default and its schema bound live in one
+// module so they cannot drift apart. This mirrors packages/shared/src/schemas/
+// order.ts (z.number().int().min(5).max(1440)).
+// TODO: import from the shared package once the connector is bundled with it.
+export const ORDER_DEFAULT_EXPIRY_MINUTES = 60;
+export const ORDER_EXPIRY_MIN_MINUTES = 5;
+export const ORDER_EXPIRY_MAX_MINUTES = 1440;
+
+// Validate the resolved value (after defaulting), not the raw input.
+// Defaults bypass input validation by construction, so the default must be
+// subject to the same bound as user input.
+function resolveExpiryMinutes(input) {
+  const minutes = input ?? ORDER_DEFAULT_EXPIRY_MINUTES;
+  if (typeof minutes !== "number" || !integer(minutes)) {
+    throw new Error(`expires_in_minutes must be an integer, got ${JSON.stringify(minutes)}`);
+  }
+  if (minutes < ORDER_EXPIRY_MIN_MINUTES || minutes > ORDER_EXPIRY_MAX_MINUTES) {
+    throw new Error(
+      `expires_in_minutes must be between ${ORDER_EXPIRY_MIN_MINUTES} and ${ORDER_EXPIRY_MAX_MINUTES}, got ${minutes}`,
+    );
+  }
+  return minutes;
+}
+
+function integer(n) {
+  return Number.isInteger(n);
+}
+
+// Compute and assert the resulting expiry is in the future and within the
+// documented maximum window before it flows into the persisted `expires_at`
+// and the signed checkout token.
+function computeExpiryAt(minutes, now = Date.now()) {
+  const expiresAt = new Date(now + minutes * 60_000);
+  const maxAt = now + ORDER_EXPIRY_MAX_MINUTES * 60_000;
+  if (!(expiresAt.getTime() > now)) {
+    throw new Error(`expiresAt must be in the future, got ${expiresAt.toISOString()}`);
+  }
+  if (expiresAt.getTime() > maxAt) {
+    throw new Error(
+      `expiresAt exceeds maximum window of ${ORDER_EXPIRY_MAX_MINUTES} minutes, got ${expiresAt.toISOString()}`,
+    );
+  }
+  return expiresAt;
+}
 
 // paymentId → { slippayOrderId, callbackUrl, status }. In-memory for the
 // scaffold; production persists this (Supabase table) so callbacks survive
@@ -40,11 +85,21 @@ async function readBody(req) {
 }
 
 // VTEX → SlipPay: create an order, return its hosted checkout_url.
-async function createSlippayOrder({ apiKey, value, reference }) {
+async function createSlippayOrder({ apiKey, value, reference, expiresInMinutes }) {
+  // Validate the resolved value (after defaulting) and assert the
+  // resulting expiry is in the future and within the documented maximum.
+  const minutes = resolveExpiryMinutes(expiresInMinutes);
+  const expiresAt = computeExpiryAt(minutes);
+
   const r = await fetch(`${SLIPPAY_API_BASE}/api/v1/orders`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ brl_amount: Number(value).toFixed(2), reference }),
+    body: JSON.stringify({
+      brl_amount: Number(value).toFixed(2),
+      reference,
+      expires_in_minutes: minutes,
+      expires_at: expiresAt.toISOString(),
+    }),
   });
   const data = await r.json().catch(() => ({}));
   if (r.status !== 201) throw new Error(`slippay ${r.status}: ${JSON.stringify(data)}`);
@@ -55,7 +110,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname;
 
-  // 1. Manifest — declares the payment method VTEX will offer.
+  // 1. Manifest — declares the payment method VTXX will offer.
   if (req.method === "GET" && path === "/manifest") {
     return json(res, 200, {
       paymentMethods: [{ name: "SlipPay", allowsSplit: "disabled" }],
@@ -78,12 +133,15 @@ const server = http.createServer(async (req, res) => {
 
     try {
       const { order, checkout_url } = await createSlippayOrder({
-        apiKey, value: b.value, reference: paymentId,
+        apiKey,
+        value: b.value,
+        reference: paymentId,
+        expiresInMinutes: b.expires_in_minutes,
       });
       payments.set(paymentId, {
         slippayOrderId: order.id, callbackUrl: b.callbackUrl, status: "undefined", checkoutUrl: checkout_url,
       });
-      // status "undefined" = pending/async; VTEX redirects the buyer to
+      // status "undefined" = pending/async; VTXX redirects the buyer to
       // paymentUrl and waits for our callback to finalize.
       return json(res, 200, {
         paymentId, status: "undefined", tid: order.id,
@@ -96,7 +154,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   // 3. SlipPay webhook → VTEX callback. When SlipPay confirms the order paid,
-  //    notify VTEX so it finalizes the transaction.
+  //    notify VTXX so it finalizes the transaction.
   if (req.method === "POST" && path === "/slippay-webhook") {
     const b = await readBody(req);
     const orderId = b.order?.id ?? b.order_id ?? b.id;
@@ -134,5 +192,5 @@ const server = http.createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`SlipPay×VTEX connector on :${PORT} → ${SLIPPAY_API_BASE}`);
+  console.log(`SlipPay× VTXX connector on :${PORT} → ${SLIPPAY_API_BASE}`);
 });
