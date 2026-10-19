@@ -3,12 +3,18 @@ import { log } from "./log.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssrf.js";
 
-const SCHEDULE = [60, 300, 1800, 7200, 43200, 86400];
+const SCHEDUL = [60, 300, 1800, 7200, 43200, 86400];
 
 // Response body bytes we read+keep (rest is discarded after abort). Audit-003 L13.
 const MAX_RESPONSE_BODY_BYTES = 64 * 1024;
 // Hard ceiling on a single delivery attempt (per-call timeout).
 const REQUEST_TIMEOUT_MS = 10_000;
+// Maximum number of deliveries in flight at once across the whole batch.
+// Bounds worker occupancy so one slow receiver cannot block the batch.
+const DELIVERY_CONCURRENCY = 8;
+// Maximum number of in-flight deliveries to a single host, so one
+// receiver cannot consume the whole pool.
+const PER_HOST_CONCURRENCY = 2;
 
 export function nextBackoff(attempt: number): number | null {
   return SCHEDULE[attempt] ?? null;
@@ -28,9 +34,14 @@ export interface DeliverResult {
   status: "sent" | "failed";
   code?: number;
   body?: string;
+  // Wall-clock duration of this attempt in milliseconds, so slow
+  // receivers are identifiable. Acceptance criteria: attempt durations
+  // are recorded per delivery.
+  durationMs?: number;
 }
 
 export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
+  const startedAt = Date.now();
   const allowLocal = args.allowLocal ?? false;
 
   // Always resolve + validate + pin to defeat DNS rebinding (audit-003 L1).
@@ -39,7 +50,7 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
   // mock servers (example.com, localhost) work without DNS round-trips.
   const validation = await validateWebhookUrl(args.url, allowLocal);
   if (!validation.safe) {
-    return { status: "failed", body: `unsafe_url:${validation.reason}` };
+    return { status: "failed", body: `unsafe_url:${validation.reason}`, durationMs: Date.now() - startedAt };
   }
   const dispatcher = pinnedDispatcher(validation.target);
 
@@ -58,7 +69,7 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
         "x-slippay-delivery-id": args.deliveryId,
       },
       body,
-      // 3xx is not acceptable for a webhook receiver. Following a redirect
+      // 33x is not acceptable for a webhook receiver. Following a redirect
       // would also re-resolve DNS without our pinning. Audit-003 L1+L13.
       redirect: "manual",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -68,15 +79,15 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
 
     // Treat any 3xx (now visible via manual mode) as failure.
     if (r.status >= 300 && r.status < 400) {
-      return { status: "failed", code: r.status, body: "redirect_not_allowed" };
+      return { status: "failed", code: r.status, body: "redirect_not_allowed", durationMs: Date.now() - startedAt };
     }
 
     // Read body with a hard size cap so a slow/malicious endpoint can't stall
     // or OOM the worker (audit-003 L13). Discard remainder.
     const text = await readCappedBody(r, MAX_RESPONSE_BODY_BYTES);
-    return { status: r.ok ? "sent" : "failed", code: r.status, body: text.slice(0, 500) };
+    return { status: r.ok ? "sent" : "failed", code: r.status, body: text.slice(0, 500), durationMs: Date.now() - startedAt };
   } catch (e) {
-    return { status: "failed", body: String(e).slice(0, 500) };
+    return { status: "failed", body: String(e).slice(0, 500), durationMs: Date.now() - startedAt };
   }
 }
 
@@ -113,8 +124,184 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
-export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
+/**
+ * Run `tasks` with at most `limit` concurrent invocations. Results are
+ * returned in input order. Errors from individual tasks propagate (the
+ * worker pool still drains remaining tasks first).
+ */
+export async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (limit < 1) throw new Error("mapWithConcurrency: limit must be >= 1");
+  const output = new Array<R>(items.length);
+  let next = 0;
+  let firstErr: unknown = undefined;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = next++;
+      if (i >= items.length) return;
+      try {
+        output[i] = await fn(items[i], i);
+      } catch (e) {
+        if (firstErr === undefined) firstErr = e;
+      }
+    }
+  });
+  await Promise.all(workers);
+  if (firstErr !== undefined) throw firstErr;
+  return output;
+}
+
+/**
+ * A simple counting semaphore keyed by host. Used to cap in-flight
+ * deliveries to a single receiver so one slow host cannot consume the
+ * whole worker pool.
+ */
+export class HostSemaphore {
+  private readonly limit: number;
+  private readonly in = new Map<string, number>();
+  private readonly waiters = new Map<string, Array<() => void>>();
+
+  constructor(limit: number) {
+    if (limit < 1) throw new Error("HostSemaphore: limit must be >= 1");
+    this.limit = limit;
+  }
+
+  async acquire(host: string): Promise<void> {
+    const cur = this.in.get(host) ?? 0;
+    if (cur < this.limit) {
+      this.in.set(host, cur + 1);
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      const q = this.waiters.get(host) ?? [];
+      q.push(resolve);
+      this.waiters.set(host, q);
+    });
+  }
+
+  release(host: string): void {
+    const q = this.waiters.get(host);
+    if (q && q.length > 0) {
+      // Hand the slot directly to the next waiter; the count stays the same.
+      const next = q.shift()!;
+      if (q.length === 0) this.waiters.delete(host);
+      next();
+      return;
+    }
+    const cur = this.in.get(host) ?? 0;
+    if (cur <= 1) this.in.delete(host);
+    else this.in.set(host, cur - 1);
+  }
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
+  }
+}
+
+export interface ProcessBatchOptions {
+  // Max in-flight deliveries across the batch. Defaults to DELIVERY_CONCURRENCY.
+  concurrency?: number;
+  // Max in-flight deliveries to a single host. Defaults to PER_HOST_CONCURRENCY.
+  perHostConcurrency?: number;
+  // How to derive the host key for an item. Defaults to treating the item as a
+ // webhook URL string.
+  hostOf?: (item: any) => string;
+}
+
+/**
+ * Process a batch of deliveries with a bounded worker pool and a
+ * per-host concurrency cap. Each handler result is augmented with a
+ * durationMs field recording the attempt wall-clock duration.
+ */
+export async function processBatch<T>(
+  items: T[],
+  handler: (item: T, index: number) => Promise<{ status: "sent" | "failed"; code?: number; body?: string; durationMs?: number }>,
+  opts: ProcessBatchOptions = {},
+): Promise<Array<{ status: "sent" | "failed"; code?: number; body?: string; durationMs?: number }>> {
+  const concurrency = opts.concurrency ?? DELIVERY_CONCURRENCY;
+  const perHostConcurrency = opts.perHostConcurrency ?? PER_HOST_CONCURRENCY;
+  const hostKey = opts.hostOf ?? ((item: any) => hostOf(String(item)));
+  const hostSem = new HostSemaphore(perHostConcurrency);
+
+  return mapWithConcurrency(items, concurrency, async (item, index) => {
+    const host = hostKey(item);
+    await hostSem.acquire(host);
+    const started = Date.now();
+    try {
+      const result = await handler(item, index);
+      return { ...result, durationMs: result.durationMs ?? Date.now() - started };
+    } finally {
+      hostSem.release(host);
+    }
+  });
+}
+
+export interface WebhookWorkerOptions {
+  // Max in-flight deliveries across the batch. Defaults to DELIVERY_CONCURRENCY.
+  concurrency?: number;
+  // Max in-flight deliveries to a single host. Defaults to PER_HOST_CONCURRENCY.
+  perHostConcurrency?: number;
+}
+
+export function startWebhookWorker(dbb: SupabaseClient, allowLocal: boolean, opts: WebhookWorkerOptions = {}) {
   let stopped = false;
+  const concurrency = opts.concurrency ?? DELIVERY_CONCURRENCY;
+  const perHostConcurrency = opts.perHostConcurrency ?? PER_HOST_CONCURRENCY;
+
+  async function processRow(row: any): Promise<void> {
+    const merchant = row.orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
+    if (!merchant?.webhook_url) {
+      await db.from("webhook_deliveries").update({ status: "dead", response_body: "no_webhook_url" }).eq("id", row.id);
+      return;
+    }
+    // Sync pre-flight: cheap URL-shape rejection before DNS cost.
+    if (!isSafeWebhookUrl(merchant.webhook_url, allowLocal)) {
+      await db.from("webhook_deliveries").update({ status: "dead", response_body: "unsafe_url" }).eq("id", row.id);
+      return;
+    }
+
+    const result = await deliverOnce({
+      url: merchant.webhook_url,
+      secret: merchant.webhook_secret!,
+      deliveryId: row.id as string,
+      payload: row.payload,
+      allowLocal,
+    });
+
+    const newAttempt = (row.attempt_n as number) + 1;
+    if (result.status === "sent") {
+      await db.from("webhook_deliveries").update({
+        status: "sent",
+        response_code: result.code,
+        response_body: result.body,
+        attempt_n: newAttempt,
+        last_attempt_at: new Date().toISOString(),
+        duration_ms: result.durationMs,
+      }).eq("id", row.id);
+      log("info", "webhook_sent", { id: row.id, code: result.code, duration_ms: result.durationMs });
+    } else {
+      const backoff = nextBackoff(newAttempt - 1);
+      await db.from("webhook_deliveries").update({
+        status: backoff === null ? "dead" : "failed",
+        response_code: result.code,
+        response_body: result.body,
+        attempt_n: newAttempt,
+        last_attempt_at: new Date().toISOString(),
+        duration_ms: result.durationMs,
+        next_attempt_at: backoff === null
+          ? new Date().toISOString()
+          : new Date(Date.now() + backoff * 1000).toISOString(),
+      }).eq("id", row.id);
+      log("warn", "webhook_failed", { id: row.id, attempt: newAttempt, backoff, duration_ms: result.durationMs });
+    }
+  }
 
   async function tick() {
     while (!stopped) {
@@ -130,51 +317,16 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
         continue;
       }
 
-      for (const row of rows) {
-        const merchant = (row as any).orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
-        if (!merchant?.webhook_url) {
-          await db.from("webhook_deliveries").update({ status: "dead", response_body: "no_webhook_url" }).eq("id", row.id);
-          continue;
+      // Bounded worker pool: at most `concurrency` deliveries in flight,
+      // so one slow receiver cannot block the rest of the batch.
+      await mapWithConcurrency(rows, concurrency, async (row) => {
+        if (stopped) return;
+        try {
+          await processRow(row);
+        } catch (e) {
+          log("warn", "webhook_row_error", { id: (row as any).id, err: String(e) });
         }
-        // Sync pre-flight: cheap URL-shape rejection before DNS cost.
-        if (!isSafeWebhookUrl(merchant.webhook_url, allowLocal)) {
-          await db.from("webhook_deliveries").update({ status: "dead", response_body: "unsafe_url" }).eq("id", row.id);
-          continue;
-        }
-
-        const result = await deliverOnce({
-          url: merchant.webhook_url,
-          secret: merchant.webhook_secret!,
-          deliveryId: row.id as string,
-          payload: row.payload,
-          allowLocal,
-        });
-
-        const newAttempt = (row.attempt_n as number) + 1;
-        if (result.status === "sent") {
-          await db.from("webhook_deliveries").update({
-            status: "sent",
-            response_code: result.code,
-            response_body: result.body,
-            attempt_n: newAttempt,
-            last_attempt_at: new Date().toISOString(),
-          }).eq("id", row.id);
-          log("info", "webhook_sent", { id: row.id, code: result.code });
-        } else {
-          const backoff = nextBackoff(newAttempt - 1);
-          await db.from("webhook_deliveries").update({
-            status: backoff === null ? "dead" : "failed",
-            response_code: result.code,
-            response_body: result.body,
-            attempt_n: newAttempt,
-            last_attempt_at: new Date().toISOString(),
-            next_attempt_at: backoff === null
-              ? new Date().toISOString()
-              : new Date(Date.now() + backoff * 1000).toISOString(),
-          }).eq("id", row.id);
-          log("warn", "webhook_failed", { id: row.id, attempt: newAttempt, backoff });
-        }
-      }
+      });
     }
   }
 

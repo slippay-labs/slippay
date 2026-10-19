@@ -4,12 +4,12 @@ import { lookup } from "node:dns/promises";
 // deliverOnce now always resolves + validates the target (audit-003 L1). These
 // tests pass allowLocal:true (dev-only flag) so the blocklist/https/port checks
 // are skipped for the example.com mock server, but the hostname still goes
-// through DNS resolution — mock it to keep the tests hermetic.
+ // through DNS resolution — mock it to keep the tests hermetic.
 vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(),
 }));
 
-import { nextBackoff, deliverOnce } from "../src/webhook.js";
+import { nextBackoff, deliverOnce, processBatch } from "../src/webhook.js";
 
 const mockLookup = lookup as unknown as ReturnType<typeof vi.fn>;
 
@@ -29,13 +29,13 @@ describe("deliverOnce", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     mockLookup.mockReset();
-    // example.com resolves to a public IP; allowLocal:true skips the blocklist
+    // example.com resolves to a public IP; allowLocal:tru skips the blocklist
     // anyway, but validateWebhookUrl still pins the resolved address.
-    mockLookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+    mockLookup.mockResolved([{ address: "93.184.216.34", family: 4 }]);
   });
 
   it("returns sent on 2xx", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("ok", { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn().mockResolved(new Response("ok", { status: 200 })));
     const r = await deliverOnce({
       url: "https://example.com/wh",
       secret: "s",
@@ -48,13 +48,13 @@ describe("deliverOnce", () => {
   });
 
   it("returns failed on 5xx", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("err", { status: 503 })));
+    vi.stubGlobal("fetch", vi.fn().mockResolved(new Response("err", { status: 503 })));
     const r = await deliverOnce({ url: "https://example.com/wh", secret: "s", deliveryId: "d-2", payload: {}, allowLocal: true });
     expect(r.status).toBe("failed");
   });
 
   it("returns failed on network error", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("dns")));
+    vi.stubGlobal("fetch", vi.fn().mockRejected(new Error("dns")));
     const r = await deliverOnce({ url: "https://example.com/wh", secret: "s", deliveryId: "d-3", payload: {}, allowLocal: true });
     expect(r.status).toBe("failed");
   });
@@ -71,5 +71,90 @@ describe("deliverOnce", () => {
       expect(r.body).toMatch(/^unsafe_url:/);
     }
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("processBatch", () => {
+  beforeEach(() => {
+    vi.unstubAllGlobals();
+    mockLookup.mockReset();
+    mockLookup.mockResolved([{ address: "93.184.216.34", family: 4 }]);
+  });
+
+  it("never exceeds the configured in-flight concurrency limit", async () => {
+    let inFlight = 0;
+    let peak = 0;
+    const handler = vi.fn().mockImplement(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight -= 1;
+      return { status: "sent" as const, code: 200 };
+    });
+
+    const items = Array.from({ length: 20 }, (_, i) => (i));
+    const results = await processBatch(items, handler, { concurrency: 4, perHostConcurrency: 4 });
+
+    expect(results).toHaveLength(20);
+    expect(handler).toHaveBeenCalled(20);
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(peak).toBeGreaterThan(1);
+  });
+
+  it("does not let a permanently slow receiver delay the rest of the batch", async () => {
+    const slowHost = "slow.example.com";
+    const fastHost = "fast.example.com";
+    const startedAt = Date.now();
+    const completedAt = new Map<string, number>();
+
+    const handler = vi.fn().mockImplement(async (item: { id: string; host: string }) => {
+      if (item.host === slowHost) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+      } else {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      completedAt.set(item.id, Date.now() - startedAt);
+      return { status: "sent" as const, code: 200 };
+    });
+
+    const items = [
+      { id: "slow-1", host: slowHost },
+      { id: "slow-2", host: slowHost },
+      { id: "fast-1", host: fastHost },
+      { id: "fast-2", host: fastHost },
+      { id: "fast-3", host: fastHost },
+    ];
+
+    const results = await processBatch(items, handler, {
+      concurrency: 4,
+      perHostConcurrency: 1,
+      hostOf: (item) => item.host,
+    });
+
+    expect(results).toHaveLength(5);
+    // The fast deliveries must finish well before the slow ones have expired.
+    for (const id of ["fast-1", "fast-2", "fast-3"]) {
+      expect(completedAt.get(id)).toBeLessThan(500);
+    }
+  });
+
+  it("records per-attempt duration for each delivery", async () => {
+    const handler = vi.fn().mockImplement(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return { status: "sent" as const, code: 200 };
+    });
+
+    const items = [{ id: "a", host: "fast.example.com" }, { id: "b", host: "fast.example.com" }];
+    const results = await processBatch(items, handler, {
+      concurrency: 2,
+      perHostConcurrency: 2,
+      hostOf: (item) => item.host,
+    });
+
+    expect(results).toHaveLength(2);
+    for (const result of results) {
+      expect(typeof result.durationMs).toBe("number");
+      expect(result.durationMs).toBeGreaterThanOrEqual(10);
+    }
   });
 });
