@@ -34,24 +34,27 @@ const db: any = {
 type Fn = ReturnType<typeof vi.fn>;
 let stops: Record<string, Fn>;
 let releases: Record<string, Fn>;
+let lossHandlers: Record<string, () => Promise<void>>;
 
 function seed(active: string[]): void {
   merchants = active.map((stellar_address) => ({ stellar_address }));
   queryError = null;
   stops = {};
   releases = {};
+  lossHandlers = {};
   m.watchAccount.mockImplementation(async ({ accountId }: { accountId: string }) => {
     stops[accountId] = vi.fn();
     return stops[accountId];
   });
-  m.acquireLease.mockImplementation(async (_db: unknown, addr: string) => {
-    releases[addr] = vi.fn(async () => undefined);
+  m.acquireLease.mockImplementation(async (_db: unknown, addr: string, opts?: { onLeaseLost?: () => Promise<void> }) => {
+    releases[addr] = vi.fn().mockResolvedValue(undefined);
+    if (opts?.onLeaseLost) lossHandlers[addr] = opts.onLeaseLost;
     return { acquired: true, release: releases[addr] };
   });
 }
 
-const flush = () => vi.advanceTimersByTimeAsync(0);
-const poll = () => vi.advanceTimersByTimeAsync(1_000);
+const flush = () => vi.advanceTimersByAsync(0);
+const poll = () => vi.advanceTimersByAsync(1_000);
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -120,6 +123,31 @@ describe("startManager · desired-vs-running reconciliation", () => {
 
     expect(m.watchAccount).not.toHaveBeenCalled();
     expect(m.log).toHaveBeenCalledWith("error", "manager_query_failed", expect.objectContaining({ error: "boom" }));
+    await shutdown();
+  });
+});
+
+describe("startManager · lease loss", () => {
+  it("stops watching and releases the lease when the heartbeat detects a stolen lease", async () => {
+    seed(["A"]);
+    const shutdown = startManager(db);
+    await flush();
+
+    expect(m.watchAccount).toHaveBeenCalledTimes(1);
+    expect(typeof lossHandlers["A"]).toBe("function");
+
+    // Simulate the heartbeat detecting that another pod stole the lease.
+    await lossHandlers["A"]();
+
+    expect(stops["A"]).toHaveBeenCalledTimes(1);
+    expect(releases["A"]).toHaveBeenCalledTimes(1);
+
+    // The account is no longer active: a following tick does not restart it
+    // with the same lease handler (and acquireLease would be called again
+    // only after the next acquisition attempt).
+    await poll();
+    expect(stops["A"]).toHaveBeenCalledTimes(1);
+
     await shutdown();
   });
 });
