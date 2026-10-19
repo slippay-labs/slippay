@@ -29,18 +29,26 @@ const STATUS_DOT: Record<string, string> = {
 
 export default function DashboardOrders() {
   const [orders, setOrders] = useState<OrderRow[] | null>(null);
+  const [controller, setController] = useState<AbortController | null>(null);
 
   useEffect(() => {
-    let alive = true;
+    const cancel = new AbortController();
+    setController(cancel);
+
     async function load() {
-      const r = await authFetch("/v1/orders");
-      if (!alive) return;
+      if (cancel !== controller) return;
+      const r = await authFetch("/v1/orders", { signal: cancel.signal });
+      if (cancel !== controller) return;
       const j = await r.json();
       setOrders(j.orders ?? []);
     }
+
     load();
     const id = setInterval(load, 10_000);
-    return () => { alive = false; clearInterval(id); };
+    return () => {
+      cancel.abort();
+      clearInterval(id);
+    };
   }, []);
 
   if (orders === null) {
@@ -77,7 +85,7 @@ export default function DashboardOrders() {
         </div>
       ) : (
         <div className="mt-14">
-          <div className="hidden md:grid grid-cols-[1fr_auto_auto_auto_auto] gap-6 pb-3 font-mono text-[9px] uppercase tracking-[0.2em] text-[#0a0a0a]/40 border-b border-[#0a0a0a]/15">
+          <div className="hidden md:grid grid-cols-[1fr_auto_auto_auto_auto] gap-6 pb-3 font-mono text-[9px] uppercase tracking-[0.2em] text-[#0a0a0a]/15 border-b border-[#0a0a0a]/15">
             <span>order</span><span>amount</span><span>status</span><span>when</span><span>tx</span>
           </div>
           {orders.map((o) => (

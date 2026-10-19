@@ -17,24 +17,37 @@ interface OrderRow {
 export default function DashboardOverview() {
   const [orders, setOrders] = useState<OrderRow[] | null>(null);
   const [subs, setSubs] = useState<number | null>(null);
+  const [controller, setController] = useState<AbortController | null>(null);
 
   useEffect(() => {
-    let alive = true;
+    const cancel = new AbortController();
+    setController(cancel);
+
     async function load() {
       try {
-        const r = await authFetch("/v1/orders");
+        const r = await authFetch("/v1/orders", { signal: cancel.signal });
         const j = await r.json();
-        if (alive) setOrders(j.orders ?? []);
-      } catch { if (alive) setOrders([]); }
+        setOrders(j.orders ?? []);
+      } catch (e) {
+        // If this is not our current controller, ignore the result (stale request).
+        if (cancel !== controller) return;
+      }
       try {
-        const r = await authFetch("/v1/subscriptions");
+        const r = await authFetch("/v1/subscriptions", { signal: cancel.signal });
         const j = await r.json();
-        if (alive) setSubs((j.subscriptions ?? []).length);
-      } catch { if (alive) setSubs(0); }
+        if (cancel !== controller) return;
+        setSubs((j.subscriptions ?? []).length);
+      } catch (e) {
+        if (cancel !== controller) return;
+      }
     }
+
     load();
     const id = setInterval(load, 12_000);
-    return () => { alive = false; clearInterval(id); };
+    return () => {
+      cancel.abort();
+      clearInterval(id);
+    };
   }, []);
 
   const os = orders ?? [];
@@ -111,8 +124,8 @@ export default function DashboardOverview() {
               <span className="font-mono text-xs text-[#0a0a0a]/55">{o.id.slice(0, 8)}</span>
               <span className="tabular-nums" style={display}>{o.usdc_amount}<span className="text-[#0a0a0a]/45 text-sm"> USDC</span></span>
               <span className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 w-20 text-right">{o.status}</span>
-              <span className="font-mono text-[11px] w-20 text-right">
-                {o.tx_hash ? <a href={`${EXPLORER_BASE}/${o.tx_hash}`} target="_blank" rel="noreferrer" className="text-[#6f6862] hover:underline">{o.tx_hash.slice(0, 6)}↗</a> : <span className="text-[#0a0a0a]/25">—</span>}
+              <span className="font-mono text-[11px] text-right md:text-left">
+                {o.tx_hash ? <a href={`${EXPLORER_BASE}/${o.tx_hash}`} target="_blank" rel="noreferrer" className="text-[#6f6862] hover:underline underline-offset-4">{o.tx_hash.slice(0, 6)}↗</a> : <span className="text-[#0a0a0a]/25">—</span>}
               </span>
             </div>
           ))}

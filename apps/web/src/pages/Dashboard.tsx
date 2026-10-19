@@ -34,15 +34,25 @@ export default function Dashboard() {
   const nav = useNavigate();
   const onboardNetwork = "TESTNET" as const;
   const addrFormatInvalid = stellarAddress.trim() !== "" && !isValidAddress(stellarAddress);
+  const [merchantController, setMerchantController] = useState<AbortController | null>(null);
 
   useEffect(() => {
+    const cancel = new AbortController();
+    setMerchantController(cancel);
+
     if (!session) return;
-    authFetch("/v1/merchants/me").then(async r => {
+
+    authFetch("/v1/merchants/me", { signal: cancel.signal }).then(async r => {
+      if (cancel !== merchantController) return; // stale request, ignore
       if (r.status === 404) { setNeedsCreate(true); return; }
       const j = await r.json();
       setMerchant(j.merchant);
     });
-  }, [session]);
+
+    return () => {
+      cancel.abort();
+    };
+  }, [session, merchantController]);
 
   if (loading) {
     return (
