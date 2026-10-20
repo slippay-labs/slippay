@@ -113,68 +113,168 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
-export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
+// Poll interval when a batch is empty or produced no state change.
+export const WEBHOOK_IDLE_POLL_MS = 5_000;
+// Minimum wall-clock interval between iterations when work was found and
+// progressed. "Found work" is never a reason to skip the sleep: without it a
+// batch that cannot transition (silent update failure, filter/write mismatch)
+// re-selects the same rows as fast as the DB round-trip allows.
+export const WEBHOOK_MIN_INTERVAL_MS = 250;
+// Consecutive selections of the same delivery without a state transition
+// before it is dead-lettered (circuit breaker, slippay-labs/slippay#242).
+export const WEBHOOK_STUCK_FETCH_LIMIT = 3;
+
+export interface WebhookWorkerOptions {
+  idlePollMs?: number;
+  minIntervalMs?: number;
+  stuckFetchLimit?: number;
+}
+
+const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
+
+export function startWebhookWorker(
+  db: SupabaseClient,
+  allowLocal: boolean,
+  opts: WebhookWorkerOptions = {},
+) {
+  const idlePollMs = opts.idlePollMs ?? WEBHOOK_IDLE_POLL_MS;
+  const minIntervalMs = opts.minIntervalMs ?? WEBHOOK_MIN_INTERVAL_MS;
+  const stuckFetchLimit = opts.stuckFetchLimit ?? WEBHOOK_STUCK_FETCH_LIMIT;
   let stopped = false;
+  // delivery id -> consecutive selections with no state transition (#242).
+  const stall = new Map<string, number>();
+
+  // Conditional update: only write if the row is still in the status we read.
+  // Returns whether the write actually transitioned the row; a silently-failed
+  // or zero-row match counts as "no" so the caller can trip the breaker.
+  async function guardUpdate(id: string, claimedStatus: string, patch: Record<string, unknown>): Promise<boolean> {
+    const { data, error } = await db.from("webhook_deliveries")
+      .update(patch)
+      .eq("id", id)
+      .eq("status", claimedStatus)
+      .select("id");
+    if (error) {
+      log("error", "webhook_update_failed", { id, error: error.message });
+      return false;
+    }
+    return Array.isArray(data) && data.length > 0;
+  }
+
+  async function processRow(row: any): Promise<boolean> {
+    const merchant = row.orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
+    if (!merchant?.webhook_url) {
+      return guardUpdate(row.id, row.status, { status: "dead", response_body: "no_webhook_url" });
+    }
+    // Sync pre-flight: cheap URL-shape rejection before DNS cost.
+    if (!isSafeWebhookUrl(merchant.webhook_url, allowLocal)) {
+      return guardUpdate(row.id, row.status, { status: "dead", response_body: "unsafe_url" });
+    }
+
+    const result = await deliverOnce({
+      url: merchant.webhook_url,
+      secret: merchant.webhook_secret!,
+      deliveryId: row.id as string,
+      payload: row.payload,
+      allowLocal,
+    });
+
+    const newAttempt = (row.attempt_n as number) + 1;
+    if (result.status === "sent") {
+      const transitioned = await guardUpdate(row.id, row.status, {
+        status: "sent",
+        response_code: result.code,
+        response_body: result.body,
+        attempt_n: newAttempt,
+        last_attempt_at: new Date().toISOString(),
+      });
+      if (transitioned) log("info", "webhook_sent", { id: row.id, code: result.code });
+      return transitioned;
+    }
+
+    const backoff = nextBackoff(newAttempt - 1);
+    const transitioned = await guardUpdate(row.id, row.status, {
+      status: backoff === null ? "dead" : "failed",
+      response_code: result.code,
+      response_body: result.body,
+      attempt_n: newAttempt,
+      last_attempt_at: new Date().toISOString(),
+      next_attempt_at: backoff === null
+        ? new Date().toISOString()
+        : new Date(Date.now() + backoff * 1000).toISOString(),
+    });
+    if (transitioned) log("warn", "webhook_failed", { id: row.id, attempt: newAttempt, backoff });
+    return transitioned;
+  }
 
   async function tick() {
     while (!stopped) {
-      const { data: rows } = await db.from("webhook_deliveries")
+      const startedAt = Date.now();
+      const { data: rows, error } = await db.from("webhook_deliveries")
         .select("id, order_id, payload, attempt_n, status, orders ( merchants ( webhook_url, webhook_secret, network ) )")
         .in("status", ["queued", "failed"])
         .lte("next_attempt_at", new Date().toISOString())
         .order("next_attempt_at", { ascending: true })
         .limit(50);
 
-      if (!rows || rows.length === 0) {
-        await new Promise(r => setTimeout(r, 5000));
+      if (error) {
+        log("error", "webhook_query_failed", { error: error.message });
+        await sleep(idlePollMs);
         continue;
       }
 
-      for (const row of rows) {
-        const merchant = (row as any).orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
-        if (!merchant?.webhook_url) {
-          await db.from("webhook_deliveries").update({ status: "dead", response_body: "no_webhook_url" }).eq("id", row.id);
+      const batch = rows ?? [];
+      if (batch.length === 0) {
+        stall.clear();
+        await sleep(idlePollMs);
+        continue;
+      }
+
+      let progressed = false;
+      const selected = new Set<string>();
+      for (const row of batch) {
+        selected.add(row.id as string);
+        let transitioned = false;
+        try {
+          transitioned = await processRow(row);
+        } catch (e) {
+          log("error", "webhook_row_failed", { id: row.id, error: String(e) });
+        }
+        if (transitioned) {
+          progressed = true;
+          stall.delete(row.id as string);
           continue;
         }
-        // Sync pre-flight: cheap URL-shape rejection before DNS cost.
-        if (!isSafeWebhookUrl(merchant.webhook_url, allowLocal)) {
-          await db.from("webhook_deliveries").update({ status: "dead", response_body: "unsafe_url" }).eq("id", row.id);
-          continue;
-        }
-
-        const result = await deliverOnce({
-          url: merchant.webhook_url,
-          secret: merchant.webhook_secret!,
-          deliveryId: row.id as string,
-          payload: row.payload,
-          allowLocal,
-        });
-
-        const newAttempt = (row.attempt_n as number) + 1;
-        if (result.status === "sent") {
-          await db.from("webhook_deliveries").update({
-            status: "sent",
-            response_code: result.code,
-            response_body: result.body,
-            attempt_n: newAttempt,
-            last_attempt_at: new Date().toISOString(),
-          }).eq("id", row.id);
-          log("info", "webhook_sent", { id: row.id, code: result.code });
+        // Same delivery selected again with no state transition: either its
+        // writes silently failed or something else owns it. Circuit-breaker:
+        // after N stuck selections mark it dead and log loudly (#242).
+        const n = (stall.get(row.id as string) ?? 0) + 1;
+        if (n >= stuckFetchLimit) {
+          const deadLettered = await guardUpdate(row.id, row.status, {
+            status: "dead",
+            response_body: "stuck_no_transition",
+          });
+          log("error", "webhook_delivery_stuck_dead", { id: row.id, selections: n, deadLettered });
+          stall.delete(row.id as string);
+          if (deadLettered) progressed = true;
         } else {
-          const backoff = nextBackoff(newAttempt - 1);
-          await db.from("webhook_deliveries").update({
-            status: backoff === null ? "dead" : "failed",
-            response_code: result.code,
-            response_body: result.body,
-            attempt_n: newAttempt,
-            last_attempt_at: new Date().toISOString(),
-            next_attempt_at: backoff === null
-              ? new Date().toISOString()
-              : new Date(Date.now() + backoff * 1000).toISOString(),
-          }).eq("id", row.id);
-          log("warn", "webhook_failed", { id: row.id, attempt: newAttempt, backoff });
+          stall.set(row.id as string, n);
         }
       }
+      // Forget rows that dropped out of the selection (they transitioned or
+      // someone else did); only rows seen again count toward the breaker.
+      for (const id of [...stall.keys()]) {
+        if (!selected.has(id)) stall.delete(id);
+      }
+
+      if (!progressed) {
+        // A full batch produced no state change: back off further so a
+        // permanently-stuck fixture cannot out-poll the connection limit.
+        await sleep(idlePollMs);
+        continue;
+      }
+      // Always yield, even when work was found.
+      const remaining = minIntervalMs - (Date.now() - startedAt);
+      if (remaining > 0) await sleep(remaining);
     }
   }
 
