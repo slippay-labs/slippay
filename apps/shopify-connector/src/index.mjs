@@ -48,6 +48,14 @@ const WEBHOOK_TOLERANCE_S = 300;
 export const MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES ?? 1_048_576);
 const SHOP_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/;
 
+// Order expiry bounds — single source of truth for the default and its bound.
+// Mirrors packages/shared/src/schemas/order.ts (`expires_in_minutes`:
+// z.number().int().min(5).max(1440)). The default is validated against the
+// same bound as user input so a constant change cannot silently bypass it.
+export const ORDER_DEFAULT_EXPIRY_MINUTES = 30;
+export const ORDER_MIN_EXPIRY_MINUTES = 5;
+export const ORDER_MAX_EXPIRY_MINUTES = 1440;
+
 // ---------- state ----------
 function loadState() {
   try { return JSON.parse(readFileSync(STATE_FILE, "utf8")); } catch { return {}; }
