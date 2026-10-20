@@ -36,3 +36,8 @@ export const DEFAULT_PLATFORM_FEE_BP = 297; // 2.97%
 export const ORDER_DEFAULT_EXPIRY_MINUTES = 30;
 export const API_KEY_PREFIX = "sk_live_";
 export const API_KEY_BYTES = 32;
+
+// Sane exchange rate boundaries for BRL per USDC (Issue #194)
+export const MIN_BRL_PER_USDC = 0.5;
+export const MAX_BRL_PER_USDC = 20.0;
+
