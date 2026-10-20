@@ -60,7 +60,7 @@ export function MoatCarousel({ slides, interval = 6500 }: { slides: MoatSlide[];
             const active = idx === i;
             return (
               <div
-                key={idx}
+                key={s.tag}
                 aria-hidden={!active}
                 className="absolute inset-0 transition-all duration-[600ms]"
                 style={{
@@ -97,9 +97,9 @@ export function MoatCarousel({ slides, interval = 6500 }: { slides: MoatSlide[];
         {/* controls: progress + dots + arrows */}
         <div className="mt-10 flex items-center gap-5">
           <div className="flex gap-2">
-            {slides.map((_, idx) => (
+            {slides.map((s, idx) => (
               <button
-                key={idx}
+                key={s.tag}
                 aria-label={`moat ${idx + 1}`}
                 onClick={() => go(idx)}
                 className="h-1.5 rounded-full transition-all duration-300"

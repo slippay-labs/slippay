@@ -40,6 +40,7 @@ export function V3Ribbon() {
           </defs>
           {[0, 1, 2].map((g) => (
             <g key={g} className={`v3rb-g${g + 1}`} filter="url(#v3rbwarp)">
+	      {/* Static by construction: decorative list generated once and never reordered or filtered. Index key is safe. */}
               {Array.from({ length: 8 }).map((_, i) => {
                 const k = g * 8 + i;
                 const off = (k - 11.5) * 5;

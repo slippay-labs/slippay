@@ -236,7 +236,7 @@ export default function LandingV2() {
         <h2 className={`mt-10 ${h2} text-[clamp(2.5rem,9vw,6rem)]`} style={display}>{t.how.h}</h2>
         <div className="mt-14 grid md:grid-cols-3 gap-px bg-[#0a0a0a]/12 border border-[#0a0a0a]/12 rounded-2xl overflow-hidden">
           {t.how.steps.map(([h, b], i) => (
-            <div key={i} className="bg-[#f1eee7] p-7 md:p-9">
+            <div key={h} className="bg-[#f1eee7] p-7 md:p-9">
               <span className="font-mono text-[12px]" style={{ color: GRAY }}>{String(i + 1).padStart(2, "0")}</span>
               <div className="mt-4 text-2xl md:text-3xl font-bold tracking-[-0.02em]" style={display}>{h}</div>
               <p className="mt-2 text-[15px] text-[#0a0a0a]/60">{b}</p>
@@ -273,7 +273,7 @@ export default function LandingV2() {
         <h2 className={`mt-10 ${h2} text-[clamp(2.25rem,7vw,4.5rem)]`} style={display}>{t.faq.h}</h2>
         <div className="mt-12 flex flex-col">
           {t.faq.items.map(([q, a], i) => (
-            <div key={i} className="border-t border-[#0a0a0a]/12 py-7">
+            <div key={q} className="border-t border-[#0a0a0a]/12 py-7">
               <div className="text-xl md:text-2xl font-bold tracking-[-0.02em]" style={display}>{q}</div>
               <p className="mt-2 text-[16px] leading-relaxed text-[#0a0a0a]/60 max-w-[60ch]">{a}</p>
             </div>

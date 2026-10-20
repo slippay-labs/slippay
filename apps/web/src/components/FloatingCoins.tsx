@@ -35,6 +35,7 @@ export function FloatingCoins({ className = "" }: { className?: string }) {
   const reduce = useReducedMotion();
   return (
     <div className={className} aria-hidden>
+      {/* Static by construction: decorative list generated once and never reordered or filtered. Index key is safe. */}  
       {COINS.map((c, i) => (
         <motion.div
           key={i}

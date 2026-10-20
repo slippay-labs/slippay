@@ -241,7 +241,7 @@ export default function Empresas() {
         <h2 className={`mt-10 ${h2} text-[clamp(2.25rem,7vw,4.75rem)]`} style={display}>{t.fee.h}</h2>
         <div className="mt-12 max-w-[640px] flex flex-col">
           {t.fee.rows.map(([who, rate, hot], i) => (
-            <div key={i} className={"flex items-center justify-between py-5 border-t " + (hot ? "border-[#0a0a0a]" : "border-[#0a0a0a]/12")}>
+            <div key={who} className={"flex items-center justify-between py-5 border-t " + (hot ? "border-[#0a0a0a]" : "border-[#0a0a0a]/12")}>
               <span className={"text-lg md:text-2xl tracking-[-0.01em] " + (hot ? "font-bold" : "text-[#0a0a0a]/60")} style={display}>{who}</span>
               <span className={"font-mono text-xl md:text-3xl tabular-nums " + (hot ? "font-black" : "text-[#0a0a0a]/55")} style={hot ? { background: ACCENT, padding: "2px 10px", borderRadius: "8px" } : undefined}>{rate}</span>
             </div>

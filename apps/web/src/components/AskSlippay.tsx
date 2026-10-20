@@ -23,6 +23,7 @@ interface Citation {
 }
 
 interface Turn {
+  id: string;
   role: "user" | "assistant";
   content: string;
   citations?: Citation[];
@@ -104,11 +105,11 @@ export function AskSlippay() {
     setOpen(true);            // rise into the conversation view
     setInput("");
 
-    const newTurns: Turn[] = [
+     const newTurns: Turn[] = [
       ...turns,
-      { role: "user", content: q },
-      { role: "assistant", content: "", citations: [] },
-    ];
+      { id: crypto.randomUUID(), role: "user", content: q },
+      { id: crypto.randomUUID(), role: "assistant", content: "", citations: [] },
+     ];
     setTurns(newTurns);
 
     const history = turns.map(t => ({ role: t.role, content: t.content }));
@@ -246,8 +247,8 @@ export function AskSlippay() {
                 className="overflow-y-auto flex flex-col gap-3 pb-3"
                 style={{ height: "calc(min(64vh, 560px) - 44px)" }}
               >
-                {turns.map((t, i) => (
-                  <div key={i} className={`flex ${t.role === "user" ? "justify-end" : "justify-start"}`}>
+                {turns.map((t) => (
+                  <div key={t.id} className={`flex ${t.role === "user" ? "justify-end" : "justify-start"}`}>
                     {t.role === "user" ? (
                       <div
                         className="max-w-[80%] px-4 py-2.5 rounded-2xl rounded-tr-sm text-[13px] leading-relaxed"
@@ -280,9 +281,9 @@ export function AskSlippay() {
                             )}
                             {t.citations && t.citations.length > 0 && !streaming && (
                               <div className="mt-1 flex flex-col gap-1 pl-1">
-                                {dedupeCitations(t.citations).slice(0, 5).map((c, j) => (
+                                {dedupeCitations(t.citations).slice(0, 5).map((c) => (
                                   <a
-                                    key={j}
+                                    key={c.doc_path}
                                     href={`${GITHUB_DOCS}/${c.doc_path}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
