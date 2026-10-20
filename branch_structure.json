@@ -1,0 +1,33 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "fix/merchant-select-star",
+    "fix/orders-money-contract",
+    "fix/web-test-typecheck",
+    "main",
+    "origin",
+    "security/remove-polinrider-gitignore-artefacts",
+    "security/supply-chain-guard",
+    "wave/reland-116"
+  ],
+  "parent": {
+    "fix/merchant-select-star": "main",
+    "fix/orders-money-contract": "main",
+    "fix/web-test-typecheck": "main",
+    "main": null,
+    "origin": "main",
+    "security/remove-polinrider-gitignore-artefacts": "main",
+    "security/supply-chain-guard": "main",
+    "wave/reland-116": "main"
+  },
+  "order": [
+    "main",
+    "fix/merchant-select-star",
+    "fix/orders-money-contract",
+    "fix/web-test-typecheck",
+    "origin",
+    "security/remove-polinrider-gitignore-artefacts",
+    "security/supply-chain-guard",
+    "wave/reland-116"
+  ]
+}
