@@ -20,7 +20,7 @@ interface Call {
 }
 
 /**
- * A-chainable mock that records every PostgREST builder call. `orders.single()`
+ * A chainable mock that records every PostgREST builder call. `orders.single()`
  * resolves from a queue so a test can model "the row matched" followed by "the
  * predicate no longer matches on replay". `webhook_deliveries.insert()` is the
  * success side-effect we assert on. Nothing here touches the network.
