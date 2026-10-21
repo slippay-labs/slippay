@@ -29,6 +29,10 @@ Open tasks are published as bounty issues on the issue tracker:
 
 Open an issue with steps to reproduce, the expected result and the actual result.
 
+## Security
+
+Please do **not** report security vulnerabilities via public GitHub issues. See [SECURITY.md](SECURITY.md) for our private disclosure channels, SLAs, and incident response procedures.
+
 ## Questions
 
 Ask on the issue thread so the discussion stays alongside the task.
