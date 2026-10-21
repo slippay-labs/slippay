@@ -174,6 +174,38 @@ export async function validateWebhookUrl(
   const pinned = addrs[0]!;
   return {
     safe: true,
-    target: {} as any,
-  } as ValidationResult;
+    target: {
+      hostname: host,
+      ip: pinned.address,
+      family: pinned.family === 6 ? 6 : 4,
+      port,
+      protocol,
+    },
+  };
+}
+
+/**
+ * Build an undici Dispatcher that connects to the pre-resolved IP, so the
+ * second DNS resolution (which fetch would otherwise perform) cannot rebind
+ * to an internal address between validation and connect. SNI and Host header
+ * remain bound to the original hostname.
+ */
+export function pinnedDispatcher(target: ValidatedTarget): Dispatcher {
+  return new Agent({
+    connect: {
+      lookup: (_hostname: string, opts: unknown, cb: (err: Error | null, address: any, family?: number) => void) => {
+        // undici may call with { all: true } and read res[0].address; answering
+        // (ip, family) there yields address=undefined and every delivery dies
+        // with "TypeError: fetch failed" / ERR_INVALID_IP_ADDRESS (2026-07-14).
+        if (opts && (opts as { all?: boolean }).all) {
+          cb(null, [{ address: target.ip, family: target.family }]);
+        } else {
+          cb(null, target.ip, target.family);
+        }
+      },
+    },
+    headersTimeout: 10_000,
+    bodyTimeout: 10_000,
+    connectTimeout: 5_000,
+  });
 }
