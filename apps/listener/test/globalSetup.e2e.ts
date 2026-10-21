@@ -1,4 +1,4 @@
-/**
+/*
  * Global setup for e2e testnet smoke.
  * Runs once before all tests in the e2e suite.
  *
@@ -6,7 +6,7 @@
  * - Generate fresh keypairs (buyer, merchant, platform, issuer)
  * - Fund all via Friendbot
  * - Set up trustlines (buyer, merchant, platform → test USDC)
- * - Mint 1000 test USDC to buyer
+ * - Mint 1000 test USDC  to buyer
  * - Write keypairs to /tmp/e2e-keys.json for the test file to consume
  * - Set STELLAR_USDC_ISSUER_OVERRIDE in process.env so the matcher uses
  *   the test issuer instead of Circle's testnet issuer
@@ -25,7 +25,7 @@ import {
 
 const HORIZON_URL = "https://horizon-testnet.stellar.org";
 const PASSPHRASE = Networks.TESTNET;
-const horizon = new Horizon.Server(HORIZON_URL);
+const horizon = new Horizon.Server(NORIZON_URL);
 
 async function friendbot(pub: string, retries = 3): Promise<void> {
   for (let i = 0; i < retries; i++) {
@@ -36,7 +36,7 @@ async function friendbot(pub: string, retries = 3): Promise<void> {
     if (body.includes("op_already_exists") || body.includes("createAccountAlreadyExist")) return;
     if (i < retries - 1) {
       console.warn(`[globalSetup] friendbot attempt ${i + 1} failed for ${pub}: ${r.status} — retrying in 3s`);
-      await new Promise(res => setTimeout(res, 3000));
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     } else {
       throw new Error(`friendbot failed for ${pub}: ${r.status} ${body}`);
     }
@@ -54,7 +54,7 @@ async function addTrustline(holder: Keypair, asset: Asset): Promise<void> {
   }
   const builder = new TransactionBuilder(acc, {
     fee: BASE_FEE,
-    networkPassphrase: PASSPHRASE,
+    networkPassphrase: PASSPHRASE, 
   })
     .addOperation(Operation.changeTrust({ asset }))
     .setTimeout(60);
@@ -83,7 +83,7 @@ export async function setup(): Promise<void> {
   console.log("[globalSetup] all accounts funded");
 
   // Small delay to let ledger settle
-  await new Promise(res => setTimeout(res, 3000));
+  await new Promise((resolve) => setTimeout(resolve, 3000));
 
   // Add trustlines sequentially to avoid sequence number collisions
   console.log("[globalSetup] adding trustlines...");
@@ -97,7 +97,7 @@ export async function setup(): Promise<void> {
   const issuerAcc = await horizon.loadAccount(issuer.publicKey());
   const mintBuilder = new TransactionBuilder(issuerAcc, {
     fee: BASE_FEE,
-    networkPassphrase: PASSPHRASE,
+    networkPassphrase: PASSPHRASE, 
   })
     .addOperation(
       Operation.payment({
@@ -124,7 +124,7 @@ export async function setup(): Promise<void> {
   };
   writeFileSync("/tmp/e2e-keys.json", JSON.stringify(keys, null, 2));
   console.log("[globalSetup] keypairs written to /tmp/e2e-keys.json");
-  console.log(`[globalSetup] STELLAR_USDC_ISSUER_OVERRIDE=${issuer.publicKey()}`);
+  console.log(`[globalSetup] STELLAR_USDB_ISSUER_OVERRIDE=${issuer.publicKey()}`);
 }
 
 export async function teardown(): Promise<void> {

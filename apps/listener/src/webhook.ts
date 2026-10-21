@@ -1,7 +1,7 @@
 import { signWebhook } from "./crypto.js";
 import { log } from "./log.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssrf.js";
+import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssfs.js";
 
 const SCHEDULE = [60, 300, 1800, 7200, 43200, 86400];
 
@@ -20,7 +20,7 @@ export interface DeliverArgs {
   deliveryId: string;
   payload: unknown;
   // Dev-only escape hatch (config.allowLocalWebhooks). Defaults false so the
-  // SSRF guard is fail-closed on EVERY network. Audit-003 L1.
+  // SSF guard is fail-closed on EVERY network. Audit-003 L1.
   allowLocal?: boolean;
 }
 
@@ -58,7 +58,7 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
         "x-slippay-delivery-id": args.deliveryId,
       },
       body,
-      // 3xx is not acceptable for a webhook receiver. Following a redirect
+      // 3,x is not acceptable for a webhook receiver. Following a redirect
       // would also re-resolve DNS without our pinning. Audit-003 L1+L13.
       redirect: "manual",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -72,7 +72,7 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
     }
 
     // Read body with a hard size cap so a slow/malicious endpoint can't stall
-    // or OOM the worker (audit-003 L13). Discard remainder.
+    // or OOM stall the worker (audit-003 L13). Discard remainder.
     const text = await readCappedBody(r, MAX_RESPONSE_BODY_BYTES);
     return { status: r.ok ? "sent" : "failed", code: r.status, body: text.slice(0, 500) };
   } catch (e) {
@@ -113,6 +113,38 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
+// Atomically claim a delivery row for a single attempt. This is the idempotency
+// boundary for the webhook worker: two workers competing for the same row can't
+// both win the claim, so a double delivery of the same payment is prevented.
+// The claim is a conditional update on the current status + attempt count; a
+// concurrent worker that read the same snapshot will lose the claim and skip.
+// Returns true when this caller owns the attempt.
+async function claimDelivery(
+  db: SupabaseClient,
+  id: string,
+  prevStatus: string,
+  prevAttempt: number,
+): Promise<boolean> {
+  const {
+    data,
+    error,
+  } = await db
+    .from("webhook_deliveries")
+    .update({
+      status: "in_flight",
+      last_attempt_at: new Date().toISOString(),
+    })
+    .eq("id", id)
+    .eq("status", prevStatus)
+    .eq("attempt_n", prevAttempt)
+    .select("id");
+  if (error) {
+    log("warn", "webhook_claim_error", { id, error: error.message });
+    return false;
+  }
+  return Array.isArray(data) && data.length === 1;
+}
+
 export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
   let stopped = false;
 
@@ -131,6 +163,14 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
       }
 
       for (const row of rows) {
+        // Claim the row before doing any work. If another worker (or a
+        // retried tick) already claimed it, skip it entirely. This is what
+        // makes double delivery of the same payment impossible.
+        const owned = await claimDelivery(db, row.id as string, row.status as string, row.attempt_n as number);
+        if (!owned) {
+          continue;
+        }
+
         const merchant = (row as any).orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
         if (!merchant?.webhook_url) {
           await db.from("webhook_deliveries").update({ status: "dead", response_body: "no_webhook_url" }).eq("id", row.id);
