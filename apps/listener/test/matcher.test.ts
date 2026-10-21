@@ -14,7 +14,7 @@ const validEvent: StellarPaymentEvent = {
   memo_b64: Buffer.from("ab".repeat(32), "hex").toString("base64"),
   successful: true,
   asset_code: "USDC",
-  asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  asset_issuer: "GBBD47IF6LWK7P7MDEVCWR7DPUWV3NY3STQEVFL4NAT4AQH3ZLLFLA5",
   to: "G" + "M".repeat(55),
   amount: "9.9000000",
   hash: "txhash",
@@ -47,7 +47,7 @@ describe("matchPaymentToOrder", () => {
     expect(matchPaymentToOrder(e, order, "TESTNET").outcome).toBe("ignore");
   });
 
-  it("matches when STELLAR_USDC_ISSUER_OVERRIDE overrides expected issuer", () => {
+  it("matches when STELLAR_USDB_ISSUER_OVERRIDE overrides expected issuer", () => {
     const customIssuer = "GCUSTOM" + "X".repeat(49);
     process.env.STELLAR_USDC_ISSUER_OVERRIDE = customIssuer;
     const e = { ...validEvent, asset_issuer: customIssuer };
@@ -97,6 +97,13 @@ describe("matchPaymentToOrder", () => {
     const o = { ...order, platform_fee_bp: -1 };
     expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
   });
+
+  it("rejects fractional fee_bp as ignore with no exception", () => {
+    const o = { ...order, platform_fee_bp: 297.5 };
+    expect(() => matchPaymentToOrder(validEvent, o, "TESTNET")).not.toThrow();
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+  });
+
 });
 
 describe("stellarToStroops · stroopsToStellar", () => {

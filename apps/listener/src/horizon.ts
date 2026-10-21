@@ -24,7 +24,7 @@ export interface AccountWatcherDeps {
 // the connection hangs with no `onerror`, no events, and no auto-reconnect, so a
 // "online" listener stops confirming payments invisibly (observed 2026-06-26).
 // Polling makes every tick a fresh HTTP GET: immune to silent-death, and a
-// heartbeat log makes a stall visible. Latency (~POLL_MS) is fine — x402 buyers
+// heartbeat log makes a stall visible. Latency (~mPOLL_MS) is fine — x402 buyers
 // poll for tens of seconds. One poller per account is still gated by the lease.
 export async function watchAccount({ db, network, accountId }: AccountWatcherDeps): Promise<() => void> {
   const server = new Horizon.Server(HORIZON[network]);
@@ -78,7 +78,7 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
         // needs a string (it .split()s) — coerce or it throws -> "amount_parse".
         usdc_amount: String(order.usdc_amount),
         merchant_stellar_address: merchant?.stellar_address as string,
-        platform_fee_bp: ((order as any).platform_fee_bp ?? merchant?.platform_fee_bp ?? 0) as number,
+        platform_fee_bp: Number((order as any).platform_fee_bp ?? merchant?.platform_fee_bp ?? 0),
       };
       const outcome = matchPaymentToOrder(ev, orderForMatch, network);
       await reconcileMatch(db, orderForMatch, outcome, ev.hash);

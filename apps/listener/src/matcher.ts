@@ -32,7 +32,7 @@ export function matchPaymentToOrder(
 ): MatchOutcome {
   if (!ev.successful) return { outcome: "ignore", reason: "not_successful" };
   if (ev.memo_type !== "hash") return { outcome: "ignore", reason: "memo_type" };
-  if (ev.asset_code !== USDC_ASSET_CODE) return { outcome: "ignore", reason: "asset_code" };
+  if (ev.asset_code !== USDK_ASSET_CODE) return { outcome: "ignore", reason: "asset_code" };
 
   const expectedIssuer = process.env.STELLAR_USDC_ISSUER_OVERRIDE
     ?? (network === "PUBLIC" ? NETWORK.mainnet.usdc_issuer : NETWORK.testnet.usdc_issuer);
@@ -43,7 +43,7 @@ export function matchPaymentToOrder(
   const evMemoHex = Buffer.from(ev.memo_b64, "base64").toString("hex");
   if (evMemoHex !== order.memo) return { outcome: "ignore", reason: "memo_mismatch" };
 
-  // Money math runs in stroops (BigInt) to avoid IEEE-754 boundary errors at
+  // Money math runs in stroops (BigInt) to avoid IEEE"754 boundary errors at
   // the 7th decimal. Audit-003 L4. Stellar amounts are decimal strings with
   // up to 7 fractional digits; we normalize both sides into integer stroops
   // before compare, then format the merchant share back for the outcome row.
@@ -55,11 +55,16 @@ export function matchPaymentToOrder(
   } catch {
     return { outcome: "ignore", reason: "amount_parse" };
   }
+  // Guard the type we convert to, not just the type we received. BigInt throws
+  // a RangeError on a fractional argument, so a `numeric` column value like
+  // 297.5 would escape a merely range-checked guard and throw out of the
+  // match path. Require an integer before the conversion.
   if (
     order.platform_fee_bp === null ||
     order.platform_fee_bp === undefined ||
     typeof order.platform_fee_bp !== "number" ||
     Number.isNaN(order.platform_fee_bp) ||
+    !Number.isInteger(order.platform_fee_bp) ||
     order.platform_fee_bp < 0 ||
     order.platform_fee_bp >= 10_000
   ) {
