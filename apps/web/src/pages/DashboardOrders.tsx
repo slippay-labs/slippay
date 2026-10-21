@@ -10,6 +10,7 @@ const EXPLORER_BASE =
 interface OrderRow {
   id: string;
   external_ref: string | null;
+  checkout_url: string | null;
   brl_amount: string | number;
   usdc_amount: string;
   status: string;
@@ -82,7 +83,12 @@ export default function DashboardOrders() {
           </div>
           {orders.map((o) => (
             <div key={o.id} className="grid grid-cols-2 md:grid-cols-[1fr_auto_auto_auto_auto] gap-x-6 gap-y-1 py-5 border-b border-[#0a0a0a]/10 hover:bg-[#0a0a0a]/[0.02] transition-colors items-baseline">
-              <span className="font-mono text-xs text-[#0a0a0a]/60">{o.id.slice(0, 8)}{o.external_ref ? ` · ${o.external_ref}` : ""}</span>
+              <span className="font-mono text-xs text-[#0a0a0a]/60">
+                {o.checkout_url
+                  ? <a href={o.checkout_url} target="_blank" rel="noreferrer" className="hover:underline underline-offset-4">{o.id.slice(0, 8)}</a>
+                  : o.id.slice(0, 8)}
+                {o.external_ref ? ` · ${o.external_ref}` : ""}
+              </span>
               <span className="text-right md:text-left tabular-nums" style={display}>{o.usdc_amount}<span className="text-[#0a0a0a]/45 text-sm"> USDC</span></span>
               <span className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/65">
                 <span className={`inline-block w-1.5 h-1.5 rounded-full ${STATUS_DOT[o.status] ?? "bg-[#0a0a0a]/25"}`} />{o.status}
