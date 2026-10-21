@@ -13,24 +13,22 @@ import { approveAllowance } from "../../soroban.ts";
 import type {
   ChainAdapter, AddressCheck, OneTimePayArgs, ApproveArgs, PayResult,
 } from "../types.ts";
-
-function network(): "TESTNET" | "PUBLIC" {
-  return ((import.meta.env.VITE_STELLAR_NETWORK ?? "TESTNET").toUpperCase()) as "TESTNET" | "PUBLIC";
-}
+import { getStellarNetwork, type StellarNetwork } from "../types.ts";
+import { getStellarNetwork as _getStellarNetwork } from "../types.ts";
 
 // Recurring-authorization mechanics (SAC, RPC, spender contract) live here, not
 // in the page — they are Stellar-specific. Mirrors what Sub.tsx used to compute.
-const USDC_ISSUER: Record<"TESTNET" | "PUBLIC", string> = {
+const USDC_ISSUER: Record<StellarNetwork, string> = {
   TESTNET: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
-  PUBLIC:  "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN",
+  PUBLIC:  "GA5ZSEJYB37JRC5AVCIA5MOP4RXTM335X2KGX3IHOJAPPSRE34K4KZVN",
 };
-const SOROBAN_RPC: Record<"TESTNET" | "PUBLIC", string> = {
+const SOROBAN_RPC: Record<StellarNetwork, string> = {
   TESTNET: "https://soroban-testnet.stellar.org",
   PUBLIC:  "https://soroban-mainnet.stellar.org",
 };
 // Subscription contract = the SEP-41 spender. Mainnet = CBJMQ6ZY.
 const SUB_CONTRACT = (import.meta.env.VITE_SUB_CONTRACT as string | undefined)
-  ?? "CBJMQ6ZYQJ2OMM46FGXPEIKKZDRHHERBXUVE54ZN64FDPKN5DJKSEVQN";
+  ?? "CBJMQ6ZYQJJOMM46FGXPEIKKZDRHHERBXUVE54ZN64FDKN5DJKSEVQN";
 const DEFAULT_DURATION_LEDGERS = 5_000_000; // ~9 months at ~5s/ledger
 
 export const stellarAdapter: ChainAdapter = {
@@ -40,10 +38,10 @@ export const stellarAdapter: ChainAdapter = {
 
   isValidAddress: (addr) => isValidStellarAddress(addr),
 
-  checkReceiveAddress: (addr): Promise<AddressCheck> => checkReceiveAddress(network(), addr),
+  checkReceiveAddress: (addr): Promise<AddressCheck> => checkReceiveAddress(getStellarNetwork(), addr),
 
   async payOneTime(a: OneTimePayArgs): Promise<PayResult> {
-    const net = network();
+    const net = getStellarNetwork();
     const seq = await fetchSequence(net, a.buyerAddress);
     const xdr = await buildAtomicTx({
       buyerPublicKey: a.buyerAddress,
@@ -61,7 +59,7 @@ export const stellarAdapter: ChainAdapter = {
   },
 
   async approveRecurring(a: ApproveArgs): Promise<PayResult> {
-    const net = network();
+    const net = getStellarNetwork();
     const passphrase = net === "PUBLIC" ? Networks.PUBLIC : Networks.TESTNET;
     const rpcUrl = SOROBAN_RPC[net];
     const sac = new Asset("USDC", USDC_ISSUER[net]).contractId(passphrase);
