@@ -14,7 +14,7 @@ const validEvent: StellarPaymentEvent = {
   memo_b64: Buffer.from("ab".repeat(32), "hex").toString("base64"),
   successful: true,
   asset_code: "USDC",
-  asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVF4NAT4AQH3ZLLFLA5",
   to: "G" + "M".repeat(55),
   amount: "9.9000000",
   hash: "txhash",
@@ -78,9 +78,35 @@ describe("matchPaymentToOrder", () => {
     expect(matchPaymentToOrder(e, order, "TESTNET").outcome).toBe("ignore");
   });
 
-  it("rejects fee_bp >= 10000 as ignore (would zero merchant share)", () => {
+  it("rejects fee_bp >= 1000 as ignore (would exceed database bound)", () => {
     const o = { ...order, platform_fee_bp: 10_000 };
-    expect(matchPaymentToOrder(validEvent, o, "TESTNET").outcome).toBe("ignore");
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+  });
+
+  it("rejects fee_bp at the upper bound (1000) as ignore", () => {
+    const o = { ...order, platform_fee_bp: 1000 };
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+  });
+
+  it("rejects fractional fee_bp as fee_bp_invalid rather than throwing", () => {
+    const o = { ...order, platform_fee_bp: 12.5 };
+    expect(() => matchPaymentToOrder(validEvent, o, "TESTNET")).not.toThrow();
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+  });
+
+  it("rejects null fee_bp as ignore instead of treating as zero fee", () => {
+    const o = { ...order, platform_fee_bp: null };
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+  });
+
+  it("rejects undefined/missing fee_bp as ignore", () => {
+    const o = { ...order, platform_fee_bp: undefined };
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+  });
+
+  it("rejects negative fee_bp as ignore", () => {
+    const o = { ...order, platform_fee_bp: -1 };
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
   });
 
   it("rejects null fee_bp as ignore instead of treating as zero fee", () => {
