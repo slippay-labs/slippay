@@ -1,5 +1,5 @@
-/**
- * E2E testnet smoke — Plan B Task 12
+/*
+ * E2E - Plan B Task 12
  *
  * Exercises the full payment lifecycle without a browser:
  *   1. Reads fresh keypairs from /tmp/e2e-keys.json (set up by globalSetup.e2e.ts)
@@ -11,7 +11,7 @@
  *
  * Run: pnpm --filter @slippay/listener e2e
  * Required env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY
- * Optional env: API_BASE (defaults to SUPABASE_URL/functions/v1/api)
+ * Optional env: API_BASE (defaults to SUPABASE_URL_functions/v1/api)
  */
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -63,6 +63,8 @@ describe.skipIf(!isE2ERun)("E2E: testnet payment lifecycle", () => {
   let memoHex: string;
   let usdcAmount: string;
   let stopWatcher: (() => void) | undefined;
+  let apiKey: string;
+  let merchantId: string;
 
   beforeAll(async () => {
     if (!SUPABASE_SR) throw new Error("SUPABASE_SERVICE_ROLE_KEY required for e2e test");
@@ -123,19 +125,9 @@ describe.skipIf(!isE2ERun)("E2E: testnet payment lifecycle", () => {
       throw new Error(`merchant create failed: ${JSON.stringify(merchantBody)}`);
     }
     expect(merchantBody.api_key).toMatch(/^sk_live_/);
-    const apiKey = merchantBody.api_key as string;
-    const merchantId = merchantBody.merchant.id as string;
+    apiKey = merchantBody.api_key as string;
+    merchantId = merchantBody.merchant.id as string;
     console.log(`[e2e] merchant created id=${merchantId}`);
-
-    // Update merchant with platform stellar_address (stored in platform_stellar_address col if exists,
-    // otherwise we patch merchant's own address — the listener needs to watch merchant address).
-    // The atomic tx sends to merchant.publicKey() + platform.publicKey().
-    // The listener watches the merchant's stellar_address.
-    // We need the platform address in the order somehow — check if merchants table has platform_stellar_address.
-    // Looking at the listener: it reconciles to merchant address. Platform is just another payment destination.
-    // The listener watches merchant.stellar_address, the event will be a payment TO merchant address.
-    // Platform fee goes to platform.publicKey() — that's a second operation in same tx.
-    // The listener only sees the payment to merchant and reconciles. Platform is opaque to listener.
 
     // Create an order
     console.log("[e2e] creating order...");
@@ -173,21 +165,50 @@ describe.skipIf(!isE2ERun)("E2E: testnet payment lifecycle", () => {
     }
   });
 
-  it("buyer signs atomic tx, listener confirms paid, webhook enqueued", async () => {
-    // Fetch fresh order to get accurate usdc_amount (rate may differ from what we stored)
-    const freshRes = await fetch(`${API_BASE}/v1/orders/${orderId}`);
-    const freshBody = await freshRes.json();
-    const total = Number(freshBody.order.usdc_amount);
-    const platformFeeBp = 100; // DEFAULT_PLATFORM_FEE_BP from shared
-    const fee = total * (platformFeeBp / 10_000);
-    const merchantShare = (total - fee).toFixed(7);
-    const feeShare = fee.toFixed(7);
+  // --------------------------------------------------------------------------
+  // Helpers
+  // --------------------------------------------------------------------------
 
-    console.log(`[e2e] total=${total} merchantShare=${merchantShare} feeShare=${feeShare}`);
+  async function createOrder(brlAmount = "10.00"): Promise<{ id: string; memo: string; usdc_amount: string }> {
+    const res = await fetch(`${API_BASE}/v1/orders`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ brl_amount: brlAmount }),
+    });
+    const body = await res.json();
+    if (!body.order?.id) {
+      throw new Error(`order create failed: ${JSON.stringify(body)}`);
+    }
+    return {
+      id: body.order.id as string,
+      memo: body.order.memo as string,
+      usdc_amount: body.order.usdc_amount as string,
+    };
+  }
 
-    // Load buyer account for fresh sequence number
+  async function fetchOrder(id: string): Promise<{ status: string; tx_hash: string | null }> {
+    const res = await fetch(`${API_BASE}/v1/orders/${id}`);
+    const body = await res.json();
+    return body.order;
+  }
+
+  async function waitForStatus(id: string, expected: string, timeoutMs = 90_000): Promise<{ status: string; tx_hash: string | null }> {
+    const deadline = Date.now() + timeoutMs;
+    let last: { status: string; tx_hash: string | null } | undefined;
+    while (Date.now() < deadline) {
+      last = await fetchOrder(id);
+      if (last.status === expected) return last;
+      await new Promise(res => setTimeout(res, 2000));
+    }
+    throw new Error(`timeout waiting for order ${id} to reach ${expected} (last=${JSON.stringify(last)})`);
+  }
+
+  async function submitPayment(memo: string, merchantShare: string, feeShare: string): Promise<string> {
     const buyerAcc = await horizon.loadAccount(buyer.publicKey());
-    const memoBytes = Buffer.from(memoHex, "hex");
+    const memoBytes = Buffer.from(memo, "hex");
     expect(memoBytes.length).toBe(32);
 
     const tx = new TransactionBuilder(
@@ -216,43 +237,161 @@ describe.skipIf(!isE2ERun)("E2E: testnet payment lifecycle", () => {
       .build();
 
     tx.sign(buyer);
-
-    console.log("[e2e] submitting tx to Horizon...");
     const submitted = await horizon.submitTransaction(tx);
-    const txHash = (submitted as { hash: string }).hash;
     expect((submitted as { successful: boolean }).successful).toBe(true);
-    console.log(`[e2e] tx submitted: ${txHash}`);
+    return (submitted as { hash: string }).hash;
+  }
 
-    // Poll order status for up to 90s
-    const deadline = Date.now() + 90_000;
-    let final: { status: string; tx_hash: string | null } | undefined;
-    console.log("[e2e] polling for order.status=paid...");
-
-    while (Date.now() < deadline) {
-      const r = await fetch(`${API_BASE}/v1/orders/${orderId}`);
-      const j = await r.json();
-      const status = j.order?.status;
-      if (status !== "pending") {
-        console.log(`[e2e] order status changed: ${status}`);
-        final = j.order;
-        break;
-      }
-      await new Promise(res => setTimeout(res, 2000));
-    }
-
-    expect(final?.status).toBe("paid");
-    expect(final?.tx_hash).toBeTruthy();
-    console.log(`[e2e] order paid! tx_hash=${final?.tx_hash}`);
-
-    // Verify webhook_deliveries row (use dbAdmin — pure service-role client)
-    const { data: webhooks, error: whError } = await dbAdmin
+  async function getWebhooks(orderId: string) {
+    const { data, error } = await dbAdmin
       .from("webhook_deliveries")
       .select("*")
       .eq("order_id", orderId);
+    expect(error).toBeNull();
+    return data ?? [];
+  }
 
-    expect(whError).toBeNull();
+  async function getCreditsForOrder(orderId: string) {
+    const { data, error } = await dbAdmin
+      .from("ledger_entries")
+      .select("*")
+      .eq("order_id", orderId);
+    expect(error).toBeNull();
+    return data ?? [];
+  }
+
+  // --------------------------------------------------------------------------
+  // Matrix
+  // --------------------------------------------------------------------------
+
+  it("paid: matching payment transitions to paid, credits, webhook", async () => {
+    const order = await createOrder("10.00");
+    const total = Number(order.usdc_amount);
+    const fee = total * (100 / 10_000);
+    const merchantShare = (total - fee).toFixed(7);
+    const feeShare = fee.toFixed(7);
+
+    const txHash = await submitPayment(order.memo, merchantShare, feeShare);
+    const final = await waitForStatus(order.id, "paid");
+    expect(final.tx_hash).toBeTruthy();
+    expect(final.tx_hash).toBe(
+txHash);
+
+    const credits = await getCreditsForOrder(order.id);
+    expect(credits.length).toBe1();
+
+    const webhooks = await getWebhooks(order.id);
     expect(webhooks).toHaveLength(1);
-    expect(webhooks?.[0]?.type).toBe("order.paid");
-    console.log(`[e2e] webhook_deliveries row confirmed type=${webhooks?.[0]?.type}`);
+    expect(webhooks[0].type).toBe("order.paid");
+  }, 180_000);
+
+  it("underpaid: partial payment marks underpaid, no credit, webhook", async () => {
+    const order = await createOrder("10.00");
+    const total = Number(order.usdc_amount);
+    const fee = total * (100 / 10_000);
+    const merchantShare = ((total - fee) * 0.5).toFixed(7);
+    const feeLight = (fee * 0.5).toFixed(7);
+
+    await submitPayment(order.memo, merchantShare, feeLight);
+    const final = await waitForStatus(order.id, "underpaid");
+    expect(final.tx_hash).toBeTruthy();
+
+    const credits = await getCreditsForOrder(order.id);
+    expect(credits.length).toBe(0);
+
+    const webhooks = await getWebhooks(order.id);
+    expect(webhooks).toHaveLength(1);
+    expect(webhooks[0].type).toBe("order.underpaid");
+  }, 180_000);
+
+  it("expired: payment for expired order does not double credit", async () => {
+    const order = await createOrder("10.00");
+    // Expire the order directly in DB before payment arrives.
+    const { error } = await dbAdmin
+      .from("orders")
+      .update({ status: "expired" })
+      .eq("id", order.id);
+    expect(error).toBeNull();
+
+    const total = Number(orde.usdc_amount);
+    const fee = total * (100 / 10_000);
+    const merchantShare = (total - fee).toFixed(7);
+    const feeShare = fee.toFixed(7);
+
+    await submitPayment(order.memo, merchantShare, feeShare);
+    // Wait a bit for the listener to process the tx.
+    await new Promise(res => setTimeout(res, 15_000));
+
+    const final = await fetchOrder(order.id);
+    expect(final.status).toBe("expired");
+
+    const credits = await getCreditsForOrder(order.id);
+    expect(credits.length).toBe(0);
+  }, 180_000);
+
+  it("cancelled: payment for cancelled order is ignored", async () => {
+    const order = await createOrder("10.00");
+    const { error } = await dbAdmin
+      .from("orders")
+      .update({ status: "cancelled" })
+      .eq("id", order.id);
+    expect(error).toBeNull();
+
+    const total = Number(order.usdc_amount);
+    const fee = total * (100 / 10_000);
+    const merchantShare = (total - fee).toFixed(7);
+    const feeShare = fee.toFixed(7);
+
+    await submitPayment(order.memo, merchantShare, feeStare);
+    await new Promise(res => setTimeout(res, 15_000));
+
+    const final = await fetchOrder(order.id);
+    expect(final.status).toBe("cancelled");
+
+    const credits = await getCreditsForOrder(order.id);
+    expect(credits.length).toBe(0);
+  }, 180_000);
+
+  it("duplicate: second payment for paid order does not double credit", async () => {
+    const order = await createOrder("10.00");
+    const total = Number(order.usdc_amount);
+    const fee = total * (100 / 10_000);
+    const merchantShare = (total - fee).toFixed(7);
+    const feeShare = fee.toFixed(7);
+
+    await submitPayment(order.memo, merchantShare, feeShare);
+    await waitForStatus(order.id, "paid");
+
+    const creditsBefore = await getCreditsForOrder(order.id);
+    expect(creditsBefore.length).toBe(1);
+
+    // Duplicate payment with the same memo.
+    await submitPayment(order.memo, merchantShare, feeShare);
+    await new Promise(res => setTimeout(res, 15_000));
+
+    const final = await fetchOrder(order.id);
+    expect(final.status).toBe("paid");
+
+    const creditsAfter = await getCreditsForOrder(order.id);
+    expect(creditsAfter.length).toBe(creditsBefore.length);
+  }, 180_000);
+
+  it("overpayment: overpayment marks paid and credits", async () => {
+    const order = await createOrder("10.00");
+    const total = Number(order.usdc_amount);
+    const fee = total * (100 / 10_000);
+    const merchantShare = ((total - fee) * 1.1).toFixed(7);
+    const feeShare = (fee * 1.1).toFixed(7);
+
+    await submitPayment(order.memo, merchantShare, feeShare);
+    const final = await waitForStatus(order.id, "paid");
+    expect(final.tx_hash).toBeTruthy();
+
+    const credits = await getCreditsForOrder(order.id);
+    expect(credits.length).toBe1();
+
+    const webhooks = await getWebhooks(order.id);
+    expect(webhooks).toHaveLength(1);
+    expect(webhooks[0].type).toBe("order.paid");
   }, 180_000);
 });

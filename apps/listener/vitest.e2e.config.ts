@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["test/e2e.test.ts"],
+    include: ["test/e2e.test.ts", "test/manager.matrix.e2e.test.ts"],
     testTimeout: 180_000,
     hookTimeout: 180_000,
     globalSetup: ["test/globalSetup.e2e.ts"],

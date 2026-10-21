@@ -10,6 +10,9 @@
  * - Write keypairs to /tmp/e2e-keys.json for the test file to consume
  * - Set STELLAR_USDC_ISSUER_OVERRIDE in process.env so the matcher uses
  *   the test issuer instead of Circle's testnet issuer
+ * - Expose the funded accounts via process.env so the manager-level matrix
+ *   (paid/underpaid/expired/cancelled/duplicate/overpaid) can drive the real
+ *   database and Horizon without re-funding accounts.
  */
 
 import { writeFileSync } from "fs";
@@ -114,6 +117,17 @@ export async function setup(): Promise<void> {
 
   // Set override so matcher accepts our test issuer
   process.env.STELLAR_USDC_ISSUER_OVERRIDE = issuer.publicKey();
+
+  // Expose funded accounts to the manager-level matrix tests.
+  process.env.E2E_BUYER_PUBLIC = buyer.publicKey();
+  process.env.E2E_BUYER_SECRET = buyer.secret();
+  process.env.E2E_MERCHANT_PUBLIC = merchant.publicKey();
+  process.env.E2E_MERCHANT_SECRET = merchant.secret();
+  process.env.E2E_PLATFORM_PUBLIC = platform.publicKey();
+  process.env.E2E_PLATFORM_SECRET = platform.secret();
+  process.env.E2E_ISSUER_PUBLIC = issuer.publicKey();
+  process.env.E2E_ISSUER_SECRET = issuer.secret();
+  process.env.E2E_USDC_ASSET = `USDC:${issuer.publicKey()}`;
 
   // Write keypairs to /tmp for the test to consume
   const keys = {
