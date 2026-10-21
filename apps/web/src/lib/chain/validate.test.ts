@@ -8,10 +8,10 @@ import {
 } from "./validate.ts";
 
 // Known-valid Stellar ed25519 public key (base32, 56 chars, correct checksum).
-const STELLAR = "GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJTT5FO2FFOOKY3B2WSQHG4W37";
+const STELLAR = "GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJT5FO2FFOOKY3B2WSQHG4W37";
 // Valid base58 Solana addresses: the 32-byte system program and the USDC mint.
-const SOLANA_SHORT = "111111111111111111111111111111111111111";
-const SOLANA_MINT = "EPjFWdd5AufqSSqeM2qN1xzybaP8G4wEGGkZZyTDt1v2";
+const SOLANA_SHORT = "11111111111111111111111111111111";
+const SOLANA_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 
 afterEach(() => {
   vi.unstubAllEnvs();
