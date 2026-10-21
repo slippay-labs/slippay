@@ -1,4 +1,5 @@
-import { NETWORK, USDC_ASSET_CODE } from "@slippay/shared";
+import { NETWORK, USDC_ASSET_CODE, stellarToStroops, stroopsToStellar } from "@slippay/shared";
+
 
 export interface StellarPaymentEvent {
   memo_type: string;
@@ -100,12 +101,4 @@ export function stellarToStroops(s: string): bigint {
   const stroops = BigInt(intPart!) * 10_000_000n + BigInt(fracPart);
   if (stroops > MAX_STELLAR_STROOPS) throw new Error(`amount_out_of_bound:${s}`);
   return stroops;
-}
-
-export function stroopsToStellar(n: bigint): string {
-  const sign = n < 0n ? "-" : "";
-  const abs = n < 0n ? -n : n;
-  const intPart = abs / 10_000_000n;
-  const fracPart = abs % 10_000_000n;
-  return `${sign}${intPart}.${fracPart.toString().padStart(7, "0")}`;
 }
