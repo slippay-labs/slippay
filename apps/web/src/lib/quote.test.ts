@@ -138,6 +138,77 @@ describe("midRateBRLperUSD — live rate with fallback", () => {
     expect(again).toEqual({ rate: 5.25, stale: false });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it("deduplicates concurrent callers into a single upstream request", async () => {
+    const fetchMock = okFetch(5.1);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const [a, b, c] = await Promise.all([
+      quote.midRateBRLperUSD(),
+      quote.midRateBRLperUSD(),
+      quote.midRateBRLperUSD(),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(a).toEqual({ rate: 5.1, stale: false });
+    expect(b).toEqual(a);
+    expect(c).toEqual(a);
+  });
+
+  it("a cache miss during an in-flight request does not start a second", async () => {
+    let resolveJson!: (v: unknown) => void;
+    const json = new Promise<unknown>((r) => { resolveJson = r; });
+    const fetchMock = vi.fn().mockResolvedValue({ json: () => json });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = quote.midRateBRLperUSD();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const second = quote.midRateBRLperUSD();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    resolveJson({ rates: { BRL: 5.5 } });
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(a).toEqual({ rate: 5.5, stale: false });
+    expect(b).toEqual(a);
+  });
+
+  it("shares an in-flight failure with concurrent callers, then retries fresh", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ json: async () => { throw new Error("bad body"); } })
+      .mockResolvedValueOnce({ json: async () => ({ rates: { BRL: 5.25 } }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const [a, b] = await Promise.all([quote.midRateBRLperUSD(), quote.midRateBRLperUSD()]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(a).toEqual({ rate: 5.4, stale: true });
+    expect(b).toEqual(a);
+
+    const next = await quote.midRateBRLperUSD();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(next).toEqual({ rate: 5.25, stale: false });
+  });
+
+  it("several quote consumers mounting together perform one fetch", async () => {
+    const fetchMock = okFetch(5);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const quotes = await Promise.all([
+      quote.quoteBRLtoUSDC(100),
+      quote.quoteBRLtoUSDC(250),
+      quote.quoteBRLtoUSDC(1_000),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(quotes.map((q) => q.midRate)).toEqual([5, 5, 5]);
+    expect(quotes[0]!.usdcOut.toFixed(7)).toBe("19.6270854");
+    expect(quotes[1]!.usdcOut.toFixed(7)).toBe("49.0677134");
+    expect(quotes[2]!.usdcOut.toFixed(7)).toBe("196.2708538");
+  });
 });
 
 describe("recordConversionIntent — best-effort margin ledger", () => {

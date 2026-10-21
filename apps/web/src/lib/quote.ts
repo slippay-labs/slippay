@@ -31,9 +31,11 @@ export interface Quote {
 }
 
 let cache: { rate: number; at: number } | null = null;
+// Cache the in-flight promise, not just the resolved value: concurrent cold
+// callers (several components mounting in one frame) share a single request.
+let inflight: Promise<{ rate: number; stale: boolean }> | null = null;
 
-export async function midRateBRLperUSD(): Promise<{ rate: number; stale: boolean }> {
-  if (cache && Date.now() - cache.at < 60_000) return { rate: cache.rate, stale: false };
+async function fetchMidRate(): Promise<{ rate: number; stale: boolean }> {
   try {
     const r = await fetch(RATE_URL);
     const j = await r.json();
@@ -41,6 +43,13 @@ export async function midRateBRLperUSD(): Promise<{ rate: number; stale: boolean
     if (rate > 0) { cache = { rate, at: Date.now() }; return { rate, stale: false }; }
   } catch { /* fall through to fallback */ }
   return { rate: FALLBACK_BRL_PER_USD, stale: true };
+}
+
+export async function midRateBRLperUSD(): Promise<{ rate: number; stale: boolean }> {
+  if (cache && Date.now() - cache.at < 60_000) return { rate: cache.rate, stale: false };
+  if (inflight) return inflight;
+  inflight = fetchMidRate().finally(() => { inflight = null; });
+  return inflight;
 }
 
 export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Promise<Quote> {

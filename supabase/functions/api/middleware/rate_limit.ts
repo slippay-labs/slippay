@@ -59,7 +59,7 @@ export function ensureSweepTimer() {
     try {
       if (typeof (sweepTimer as any)?.unref === "function") {
         (sweepTimer as any).unref();
-      } else if (typeof (globalThis as any).Deno.unrefTimer === "function") {
+      } else if (typeof (globalThis as any).Deno?.unrefTimer === "function") {
         (globalThis as any).Deno.unrefTimer(sweepTimer);
       }
     } catch {

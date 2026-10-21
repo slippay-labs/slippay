@@ -45,6 +45,7 @@ const LEGACY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET ?? "";
 const GATEWAY_MATCH = (process.env.SLIPPAY_GATEWAY_MATCH ?? "slippay").toLowerCase();
 const STATE_FILE = process.env.STATE_FILE ?? "./shopify-connector-state.json";
 const WEBHOOK_TOLERANCE_S = 300;
+export const MAX_BODY_BYTES = Number(process.env.MAX_BODY_BYTES ?? 1_048_576);
 const SHOP_RE = /^[a-z0-9][a-z0-9-]*\.myshopify\.com$/;
 
 // ---------- state ----------
@@ -68,10 +69,30 @@ const html = (res, code, body) => {
   res.end(body);
 };
 const redirect = (res, to) => { res.writeHead(302, { location: to }); res.end(); };
-async function readRawBody(req) {
+export class PayloadTooLargeError extends Error {
+  constructor(maxBytes) {
+    super(`Payload exceeds maximum size of ${maxBytes} bytes`);
+    this.name = "PayloadTooLargeError";
+    this.statusCode = 413;
+  }
+}
+
+export async function readRawBody(req, maxBytes = MAX_BODY_BYTES) {
+  const declaredLength = Number(req?.headers?.["content-length"]);
+  if (Number.isFinite(declaredLength) && declaredLength > maxBytes) {
+    throw new PayloadTooLargeError(maxBytes);
+  }
   const chunks = [];
-  for await (const c of req) chunks.push(c);
-  return Buffer.concat(chunks);
+  let total = 0;
+  for await (const c of req) {
+    const buf = Buffer.isBuffer(c) ? c : Buffer.from(c);
+    total += buf.length;
+    if (total > maxBytes) {
+      throw new PayloadTooLargeError(maxBytes);
+    }
+    chunks.push(buf);
+  }
+  return Buffer.concat(chunks, total);
 }
 const parse = (buf) => { try { return JSON.parse(buf.toString("utf8")); } catch { return {}; } };
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -224,6 +245,7 @@ número do seu pedido"</i>.</p>
 
 // ---------- server ----------
 const server = http.createServer(async (req, res) => {
+  try {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   // The connector is reverse-proxied at /shopify/* — accept both forms.
   const path = url.pathname.replace(/^\/shopify(?=\/|$)/, "") || "/";
@@ -305,8 +327,10 @@ const server = http.createServer(async (req, res) => {
 
   // ---- mandatory GDPR webhooks (public app requirement) ----
   if (req.method === "POST" && path.startsWith("/gdpr/")) {
+    const sigHeader = req.headers["x-shopify-hmac-sha256"];
+    if (!sigHeader) return json(res, 401, { error: "missing hmac" });
     const raw = await readRawBody(req);
-    if (!verifyShopifyWebhookHmac(raw, req.headers["x-shopify-hmac-sha256"])) {
+    if (!verifyShopifyWebhookHmac(raw, sigHeader)) {
       return json(res, 401, { error: "bad hmac" });
     }
     // shop/redact: drop everything we hold for the shop.
@@ -323,8 +347,10 @@ const server = http.createServer(async (req, res) => {
 
   // ---- money path: orders/create webhook (modes A + B) ----
   if (req.method === "POST" && path === "/orders-create") {
+    const sigHeader = req.headers["x-shopify-hmac-sha256"];
+    if (!sigHeader) return json(res, 401, { error: "missing shopify hmac" });
     const raw = await readRawBody(req);
-    if (!verifyShopifyWebhookHmac(raw, req.headers["x-shopify-hmac-sha256"])) {
+    if (!verifyShopifyWebhookHmac(raw, sigHeader)) {
       return json(res, 401, { error: "bad shopify hmac" });
     }
     const shop = ((req.headers["x-shopify-shop-domain"] ?? LEGACY_SHOP) + "").toLowerCase();
@@ -376,25 +402,26 @@ const server = http.createServer(async (req, res) => {
 
   // ---- SlipPay order.paid → mark Shopify order paid ----
   if (req.method === "POST" && path === "/slippay-webhook") {
+    const sigHeader = req.headers["x-slippay-signature"];
+    if (!sigHeader) return json(res, 401, { error: "missing slippay signature" });
     const raw = await readRawBody(req);
+    const allSecrets = [SLIPPAY_WEBHOOK_SECRET, ...Object.values(state.shops).map(s => s.slippayWebhookSecret)];
+    if (!verifySlippaySig(raw, sigHeader, allSecrets)) {
+      return json(res, 401, { error: "bad slippay signature" });
+    }
     const b = parse(raw);
     if (b.type !== "order.paid") {
-      // Signature check even for ignored events, against every known secret.
-      const all = [SLIPPAY_WEBHOOK_SECRET, ...Object.values(state.shops).map(s => s.slippayWebhookSecret)];
-      if (!verifySlippaySig(raw, req.headers["x-slippay-signature"], all)) return json(res, 401, { error: "bad slippay signature" });
       return json(res, 200, { received: true, ignored: b.type });
     }
     const d = b.data ?? {};
     const hit = Object.entries(state.orders).find(([, s]) =>
       s.slippayOrderId === d.id || `shopify:${s.shopifyOrderId}` === d.external_ref);
     if (!hit) {
-      const all = [SLIPPAY_WEBHOOK_SECRET, ...Object.values(state.shops).map(s => s.slippayWebhookSecret)];
-      if (!verifySlippaySig(raw, req.headers["x-slippay-signature"], all)) return json(res, 401, { error: "bad slippay signature" });
       return json(res, 200, { received: true, unmatched: d.id });
     }
     const [key, s] = hit;
     const creds = shopCreds(s.shop);
-    if (!verifySlippaySig(raw, req.headers["x-slippay-signature"], [creds.slippayWebhookSecret, SLIPPAY_WEBHOOK_SECRET])) {
+    if (!verifySlippaySig(raw, sigHeader, [creds.slippayWebhookSecret, SLIPPAY_WEBHOOK_SECRET])) {
       return json(res, 401, { error: "bad slippay signature" });
     }
     if (s.status === "paid") return json(res, 200, { received: true, deduped: true });
@@ -449,6 +476,16 @@ const server = http.createServer(async (req, res) => {
     });
   }
   json(res, 404, { error: "not_found", path: url.pathname });
+  } catch (err) {
+    if (err instanceof PayloadTooLargeError) {
+      return json(res, 413, { error: "payload_too_large", message: err.message });
+    }
+    return json(res, 500, { error: "internal_error" });
+  }
 });
 
-server.listen(PORT, () => console.log(`SlipPay×Shopify connector on :${PORT} → ${SLIPPAY_API_BASE} (oauth: ${APP_KEY ? "on" : "off"})`));
+import { fileURLToPath } from "node:url";
+
+if (process.env.SHOPIFY_CONNECTOR_NO_LISTEN !== "1" && process.argv[1] === fileURLToPath(import.meta.url)) {
+  server.listen(PORT, () => console.log(`SlipPay×Shopify connector on :${PORT} → ${SLIPPAY_API_BASE} (oauth: ${APP_KEY ? "on" : "off"})`));
+}
