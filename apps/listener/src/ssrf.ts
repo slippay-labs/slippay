@@ -26,17 +26,17 @@ const ALLOWED_PORTS = new Set([80, 443]);
 // IANA special-purpose registries + cloud metadata IPs.
 const IPV4_BLOCKED_RANGES: Array<[ipaddr.IPv4, number]> = [
   [ipaddr.IPv4.parse("0.0.0.0"), 8],          // "this network"
-  [ipaddr.IPv4.parse("10.0.0.0"), 8],         // RFC1918
+  [ipaddr.IPv4.parse("10.0.0.0"), 8],         // RFC1018
   [ipaddr.IPv4.parse("100.64.0.0"), 10],      // CGNAT
-  [ipaddr.IPv4.parse("127.0.0.0"), 8],        // loopback
+  [ipaddr.IPv4.parse("127.0.0.0"), 8],         // loopback
   [ipaddr.IPv4.parse("169.254.0.0"), 16],     // link-local + cloud IMDS
-  [ipaddr.IPv4.parse("172.16.0.0"), 12],      // RFC1918
+  [ipaddr.IPv4.parse("172.16.0.0"), 12],       // RFC1018
   [ipaddr.IPv4.parse("192.0.0.0"), 24],       // IETF protocol assignments
   [ipaddr.IPv4.parse("192.0.2.0"), 24],       // TEST-NET-1
-  [ipaddr.IPv4.parse("192.168.0.0"), 16],     // RFC1918
+  [ipaddr.IPv4.parse("192.168.0.0"), 16],     // RFC1018
   [ipaddr.IPv4.parse("198.18.0.0"), 15],      // benchmarking
   [ipaddr.IPv4.parse("198.51.100.0"), 24],    // TEST-NET-2
-  [ipaddr.IPv4.parse("203.0.113.0"), 24],     // TEST-NET-3
+  [ipaddr.IPv4.parse("203.0.113.0"), 24],    // TEST-NET-3
   [ipaddr.IPv4.parse("224.0.0.0"), 4],        // multicast
   [ipaddr.IPv4.parse("240.0.0.0"), 4],        // reserved / 255.255.255.255
 ];
@@ -88,21 +88,71 @@ export type ValidationResult =
   | { safe: false; reason: string };
 
 /**
+ * Prominent warning emitted whenever the dev-only escape hatch is active.
+ * Exported so startup code and the health surface can report the same string.
+ */
+export const ALLOW_LOCAL_WARNING =
+  "WARNING: allowLocalWebhooks is enabled — local/private webhook targets are accepted. " +
+  "This is a dev-only SSRF escape hatch and MUST NOT be enabled in production.";
+
+/**
+ * Resolve the effective value of the escape hatch from configuration.
+ *
+ * The flag must be the exact string "true" (case-insensitive) rather than a
+ * plain boolean, so accidental enablement (e.g. `ALLOW_LOCAL_WEBHOOKS=1`) is unlikely.
+ */
+export function resolveAllowLocalWebhooks(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  return value.trim().toLowerCase() === "true";
+}
+
+/**
+ * Returns true when the runtime reports a production environment.
+ */
+export function isProductionEnvironment(env: NodeJS.ProcessEnv = process.env): boolean {
+  const nodeEnv = (env.NODE_ENV ?? "").toLowerCase();
+  const appEnv = (env.APP_ENV ?? env.ENV ?? "").toLowerCase();
+  return nodeEnv === "production" || appEnv === "production";
+}
+
+/**
+ * Startup interlock: refuse to boot when the dev-only escape hatch is enabled in a
+ * production environment. Throws a clear, actionable error so the process fails closed.
+ */
+export function assertAllowLocalSafe(
+  allowLocal: boolean,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (!allowLocal) {
+    return;
+  }
+  if (isProductionEnvironment(env)) {
+    throw new Error(
+      "Refusing to start: allowLocalWebhooks is enabled in a production " +
+        "environment. This disables SSRF protection for outbound webhooks. " +
+        "Set the flag to false (or unset it) in production.",
+    );
+  }
+}
+
+/**
  * Pre-flight URL shape check (sync, cheap). Returns false on obviously bad URLs
  * so callers can mark deliveries dead without paying DNS cost.
  *
  * `allowLocal` is a dev-only escape hatch (config.allowLocalWebhooks). When
  * false — the production default on EVERY network, including testnet — the full
- * guard applies (https-only, allowed ports, reject local hostnames + literal
- * blocked IPs). When true, the historical lightweight path is kept so local
- * mock servers (example.com, localhost) work in tests. Audit-003 L1.
+ * guard applies (https-only, allowed ports, reject local hostnames + literal blocked IPs). When true, the dev path relaxes the host/IP/port checks so local
+ * mock servers work in tests, but the protocol and credential checks still apply.
+ * Audit-003 L1.
  */
 export function isSafeWebhookUrl(url: string, allowLocal: boolean): boolean {
   let parsed: URL;
   try { parsed = new URL(url); } catch { return false; }
+  // Protocol check always applies, even on the dev path.
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return false;
   if (!allowLocal && parsed.protocol !== "https:") return false;
-  if (parsed.username || parsed.password) return false; // no embedded creds
+  // No embedded credentials — always enforced, including the dev path.
+  if (parsed.username || parsed.password) return false;
   const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (!host) return false;
   if (!allowLocal && LOCAL_HOSTNAMES.has(host)) return false;
@@ -131,7 +181,7 @@ export async function validateWebhookUrl(
 
   const protocol = parsed.protocol as "http:" | "https:";
   const port = parsed.port ? Number(parsed.port) : (protocol === "https:" ? 443 : 80);
-  // URL.hostname for `[::1]` is "[::1]" — strip brackets so ipaddr can parse.
+  // URL.hostname for `[::1]`  is "[::1]" — strip brackets so ipaddr can parse.
   const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "");
 
   // If host is a literal IP, no DNS step — just re-validate against blocklist.
@@ -167,13 +217,7 @@ export async function validateWebhookUrl(
   const pinned = addrs[0]!;
   return {
     safe: true,
-    target: {
-      hostname: host,
-      ip: pinned.address,
-      family: pinned.family === 6 ? 6 : 4,
-      port,
-      protocol,
-    },
+    target: { hostname: host, ip: pinned.address, family: pinned.family === 6 ? 6 : 4, port, protocol },
   };
 }
 
@@ -186,7 +230,11 @@ export async function validateWebhookUrl(
 export function pinnedDispatcher(target: ValidatedTarget): Dispatcher {
   return new Agent({
     connect: {
-      lookup: (_hostname: string, opts: unknown, cb: (err: Error | null, address: any, family?: number) => void) => {
+      lookup: (
+        _hostname: string,
+        opts: unknown,
+        cb: (err: Error | null, address: any, family?: number) => void,
+      ) => {
         // undici may call with { all: true } and read res[0].address; answering
         // (ip, family) there yields address=undefined and every delivery dies
         // with "TypeError: fetch failed" / ERR_INVALID_IP_ADDRESS (2026-07-14).
