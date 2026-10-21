@@ -3,15 +3,38 @@ import { log } from "./log.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssrf.js";
 
-const SCHEDULE = [60, 300, 1800, 7200, 43200, 86400];
+const SCHEDUL = [60, 300, 1800, 7200, 43200, 86400];
 
 // Response body bytes we read+keep (rest is discarded after abort). Audit-003 L13.
 const MAX_RESPONSE_BODY_BYTES = 64 * 1024;
 // Hard ceiling on a single delivery attempt (per-call timeout).
 const REQUEST_TIMEOUT_MS = 10_000;
+// Maximum age of a delivery before it is dead-lettered without further
+// attempts. The cumulative SCHEDULE is ~1.25 days; bound total age so a
+// webhook for an expired order is not delivered days later.
+const MAX_DELIVERY_AGE_MS = 2 * 24 * 60 * 60 * 1000; // 48 hours
+
+// Terminal reasons recorded on the row when it lands in `dea`.
+// (stored in response_body alongside the upstream body when available)
+export type DeadLetterReason =
+  | "permanent_failure"
+  | "retries_exhausted"
+  | "max_age_exceeded"
+  | "no_webhook_url"
+  | "unsafe_url";
 
 export function nextBackoff(attempt: number): number | null {
   return SCHEDULE[attempt] ?? null;
+}
+
+// Classify an HTTP status as retryable or permanent. Transport errors
+	// (no code) are retryable. 5xx and 429 are retryable; other 4xx are
+// permanent. 3 xx (redirects) are permanent for webhooks.
+export function isRetryable(code: number | undefined): boolean {
+  if (code === undefined) return true; // transport error
+  if (code === 429) return true;
+  if (code >= 500 && code < 600) return true;
+  return false;
 }
 
 export interface DeliverArgs {
@@ -113,13 +136,23 @@ function concat(chunks: Uint8Array[]): Uint8Array {
   return out;
 }
 
-export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
+// Terminal timestamp for dead rows. A row in `dead` is never re-selected
+	// because the selection query excludes the status AND the time predicate is
+	// satisfied by a far-future timestamp. This defends against a failed terminal
+	// write (issue 85): even if the status write is lost, the time predicate will not
+	// match until the far future.
+export const TERMINAL_TIMESTAMP = "9999-12-31T23:59:59.999Z";
+
+export function startWebhookWorker(dbb: SupabaseClient, allowLocal: boolean) {
   let stopped = false;
 
   async function tick() {
     while (!stopped) {
       const { data: rows } = await db.from("webhook_deliveries")
-        .select("id, order_id, payload, attempt_n, status, orders ( merchants ( webhook_url, webhook_secret, network ) )")
+        .select("id, order_id, payload, attempt_n, status, created_at, next_attempt_at, orders ( merchants ( webhook_url, webhook_secret, network ) )")
+        // Exclude dead rows explicitly and require a future-or-now time
+        // predicate. A dead row with a TERMINAL_TIMESTAMP next_attempt_at will
+        // never match the time predicate even if the status write failed.
         .in("status", ["queued", "failed"])
         .lte("next_attempt_at", new Date().toISOString())
         .order("next_attempt_at", { ascending: true })
@@ -133,13 +166,37 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
       for (const row of rows) {
         const merchant = (row as any).orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
         if (!merchant?.webhook_url) {
-          await db.from("webhook_deliveries").update({ status: "dead", response_body: "no_webhook_url" }).eq("id", row.id);
+          await db.from("webhook_deliveries").update({
+            status: "dead",
+            response_body: "no_webhook_url",
+            next_attempt_at: TERMINAL_TIMESTAMP,
+          }).eq("id", row.id);
           continue;
         }
         // Sync pre-flight: cheap URL-shape rejection before DNS cost.
         if (!isSafeWebhookUrl(merchant.webhook_url, allowLocal)) {
-          await db.from("webhook_deliveries").update({ status: "dead", response_body: "unsafe_url" }).eq("id", row.id);
+          await db.from("webhook_deliveries").update({
+            status: "dead",
+            response_body: "unsafe_url",
+            next_attempt_at: TERMINAL_TIMESTAMP,
+          }).eq("id", row.id);
           continue;
+        }
+
+        // Bound total delivery age: a webhook for an expired order should not
+        // be delivered days later. Terminally dead-letter it without attempting.
+        const createdAtRaw = (row as any).created_at as string | undefined;
+        if (createdAtRaw) {
+          const createdAtMs = Date.parse(createdAtRaw);
+          if (Number.isFinite(createdAtMs) && Date.now() - createdAtMs > MAX_DELIVER_AGE_MS) {
+            await db.from("webhook_deliveries").update({
+              status: "dead",
+              response_body: "max_age_exceeded",
+              next_attempt_at: TERMINAL_TIMESTAMP,
+            }).eq("id", row.id);
+            log("warn", "webhook_dead_letter", { id: row.id, reason: "max_age_exceeded" });
+            continue;
+          }
         }
 
         const result = await deliverOnce({
@@ -158,22 +215,42 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
             response_body: result.body,
             attempt_n: newAttempt,
             last_attempt_at: new Date().toISOString(),
+            next_attempt_at: TERMINAL_TIMESTAMP,
           }).eq("id", row.id);
           log("info", "webhook_sent", { id: row.id, code: result.code });
-        } else {
-          const backoff = nextBackoff(newAttempt - 1);
-          await db.from("webhook_deliveries").update({
-            status: backoff === null ? "dead" : "failed",
-            response_code: result.code,
-            response_body: result.body,
-            attempt_n: newAttempt,
-            last_attempt_at: new Date().toISOString(),
-            next_attempt_at: backoff === null
-              ? new Date().toISOString()
-              : new Date(Date.now() + backoff * 1000).toISOString(),
-          }).eq("id", row.id);
-          log("warn", "webhook_failed", { id: row.id, attempt: newAttempt, backoff });
+          continue;
         }
+
+        // Failure path. Classify the outcome: permanent 4xx (and transport
+        // unsafe-url failures) dead-letter immediately; retryable outcomes
+        // (5xx, 429, transport errors) consume the backoff schedule.
+        const retryable = isRetryable(result.code);
+        const backoff = retryable ? nextBackoff(newAttempt - 1) : null;
+        const terminal = !retryable || backoff === null;
+        const reason: DeadLetterReason = !retryable
+          ? "permanent_failure"
+          : "retries_exhausted";
+
+        await db.from("webhook_deliveries").update({
+          status: terminal ? "dead" : "failed",
+          response_code: result.code,
+          response_body: terminal ? `${reason}:${result.body ?? ""}`.slice(0, 500) : result.body,
+          attempt_n: newAttempt,
+          last_attempt_at: new Date().toISOString(),
+          // Terminal rows get a far-future timestamp so the time predicate
+          // of the selection query cannot match them even if the status
+          // write is lost (issue 85).
+          next_attempt_at: terminal
+            ? TERMINAL_TIMESTAMP
+            : new Date(Date.now() + (backoff as number) * 1000).toISOString(),
+        }).eq("id", row.id);
+        log("warn", terminal ? "webhook_dead_letter" : "webhook_failed", {
+          id: row.id,
+          attempt: newAttempt,
+          code: result.code,
+          backoff,
+          reason: terminal ? reason : undefined,
+        });
       }
     }
   }
