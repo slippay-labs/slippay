@@ -1,8 +1,14 @@
+process.env.SHOPIFY_CONNECTOR_NO_LISTEN = "1";
+
 import { createHmac } from "node:crypto";
+import { Readable } from "node:stream";
 import {
   safeEqual,
   verifyShopifyWebhookHmac,
   verifyShopifyQueryHmac,
+  verifySlippaySig,
+  readRawBody,
+  PayloadTooLargeError,
 } from "../src/index.mjs";
 
 let failures = 0;
@@ -122,6 +128,54 @@ console.log("\n--- Timing-Safe String Comparison Tests ---");
   assert(!safeEqual("abcdef123456", "abcdef123457"), "same length different char returns false");
   assert(!safeEqual("short", "much_longer_string"), "different lengths return false");
   assert(safeEqual("", ""), "empty strings return true");
+}
+
+console.log("\n--- SlipPay Webhook Signature Verification Tests ---");
+
+// 10. SlipPay signature verification (valid, missing, expired, malformed)
+{
+  const rawBody = Buffer.from(JSON.stringify({ type: "order.paid", data: { id: "ord_1" } }));
+  const nowSec = Math.floor(Date.now() / 1000);
+  const validHex = createHmac("sha256", TEST_SECRET).update(`${nowSec}.${rawBody.toString("utf8")}`).digest("hex");
+  const validHeader = `t=${nowSec},v1=${validHex}`;
+
+  assert(verifySlippaySig(rawBody, validHeader, [TEST_SECRET]), "valid SlipPay signature is accepted");
+  assert(!verifySlippaySig(rawBody, "", [TEST_SECRET]), "empty SlipPay signature header is rejected");
+  assert(!verifySlippaySig(rawBody, null, [TEST_SECRET]), "null SlipPay signature header is rejected");
+  assert(!verifySlippaySig(rawBody, `t=${nowSec},v1=deadbeef`, [TEST_SECRET]), "mismatched SlipPay signature is rejected");
+
+  const staleSec = nowSec - 600;
+  const staleHex = createHmac("sha256", TEST_SECRET).update(`${staleSec}.${rawBody.toString("utf8")}`).digest("hex");
+  assert(!verifySlippaySig(rawBody, `t=${staleSec},v1=${staleHex}`, [TEST_SECRET]), "expired SlipPay signature is rejected");
+}
+
+console.log("\n--- Bounded Raw Body Reader Tests ---");
+
+// 11. Bounded body reading and oversized payload rejection
+{
+  const smallStream = Readable.from([Buffer.from("hello "), Buffer.from("world")]);
+  const readBuf = await readRawBody(smallStream, 32);
+  assert(readBuf.toString("utf8") === "hello world", "bounded body reader reads stream within limit");
+
+  const oversizedStream = Readable.from([Buffer.alloc(20, 0x61), Buffer.alloc(20, 0x62)]);
+  let caughtOversized = false;
+  try {
+    await readRawBody(oversizedStream, 32);
+  } catch (err) {
+    caughtOversized = err instanceof PayloadTooLargeError && err.statusCode === 413;
+  }
+  assert(caughtOversized, "streaming payload exceeding maxBytes throws PayloadTooLargeError (413)");
+
+  const declaredOversized = Object.assign(Readable.from([Buffer.from("{}")]), {
+    headers: { "content-length": "1024" },
+  });
+  let caughtHeaderOversized = false;
+  try {
+    await readRawBody(declaredOversized, 128);
+  } catch (err) {
+    caughtHeaderOversized = err instanceof PayloadTooLargeError && err.statusCode === 413;
+  }
+  assert(caughtHeaderOversized, "content-length exceeding maxBytes is rejected before buffering");
 }
 
 console.log(failures === 0 ? "\nALL HMAC TESTS PASSED" : `\n${failures} TEST FAILURES`);
