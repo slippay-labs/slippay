@@ -192,7 +192,18 @@ export function pinnedDispatcher(target: ValidatedTarget): Dispatcher {
   };
 
   return new Agent({
-    connect: {} as Agent.Options["connect"],
+    connect: {
+      lookup: (_hostname: string, opts: unknown, cb: (err: Error | null, address: any, family?: number) => void) => {
+        // undici may call with { all: true } and read res[0].address; answering
+        // (ip, family) there yields address=undefined and every delivery dies
+        // with "TypeError: fetch failed" / ERR_INVALID_IP_ADDRESS (2026-07-14).
+        if (opts && (opts as { all?: boolean }).all) {
+          cb(null, [{ address: target.ip, family: target.family }]);
+        } else {
+          cb(null, target.ip, target.family);
+        }
+      },
+    },
     headersTimeout: 10_000,
     bodyTimeout: 10_000,
     connectTimeout: 5_000,
