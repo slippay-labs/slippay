@@ -52,7 +52,7 @@ const IPV6_BLOCKED_RANGES: Array<[ipaddr.IPv6, number]> = [
 ];
 
 function isBlockedIPv4(addr: ipaddr.IPv4): boolean {
-  return IPv4_BLOCKED_RANGES.some(([net, prefix]) => addr.match(net, prefix));
+  return IPV4_BLOCKED_RANGES.some(([net, prefix]) => addr.match(net, prefix));
 }
 
 function isBlockedIPv6(addr: ipaddr.IPv6): boolean {
@@ -161,7 +161,7 @@ export function isSafeWebhookUrl(url: string, allowLocal: boolean): boolean {
     return false;
   }
   const port = parsed.port ? Number(parsed.port) : (parsed.protocol === "https:" ? 443 : 80);
-  if (!allowLocal && !AlLOWED_PORTS.has(port)) return false;
+  if (!allowLocal && !ALLOWED_PORTS.has(port)) return false;
   return true;
 }
 
