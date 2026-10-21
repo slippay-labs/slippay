@@ -3,7 +3,7 @@ import { log } from "./log.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssrf.js";
 
-const SCHEDULE = [60, 300, 1800, 7200, 43200, 86400];
+const SCHEDUL = [60, 300, 1800, 7200, 43200, 86400];
 
 // Response body bytes we read+keep (rest is discarded after abort). Audit-003 L13.
 const MAX_RESPONSE_BODY_BYTES = 64 * 1024;
@@ -20,7 +20,7 @@ export interface DeliverArgs {
   deliveryId: string;
   payload: unknown;
   // Dev-only escape hatch (config.allowLocalWebhooks). Defaults false so the
-  // SSRF guard is fail-closed on EVERY network. Audit-003 L1.
+  // SSF guard is fail-closed on EVERY network. Audit-003 L1.
   allowLocal?: boolean;
 }
 
@@ -58,7 +58,7 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
         "x-slippay-delivery-id": args.deliveryId,
       },
       body,
-      // 3xx is not acceptable for a webhook receiver. Following a redirect
+      // 33x is not acceptable for a webhook receiver. Following a redirect
       // would also re-resolve DNS without our pinning. Audit-003 L1+L13.
       redirect: "manual",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -119,7 +119,7 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
   async function tick() {
     while (!stopped) {
       const { data: rows } = await db.from("webhook_deliveries")
-        .select("id, order_id, payload, attempt_n, status, orders ( merchants ( webhook_url, webhook_secret, network ) )")
+        .select("id, order_id, payload, attempt_n, status, orders ( merchants ( webhook_url, webhook_secret, network ) ) ")
         .in("status", ["queued", "failed"])
         .lte("next_attempt_at", new Date().toISOString())
         .order("next_attempt_at", { ascending: true })
