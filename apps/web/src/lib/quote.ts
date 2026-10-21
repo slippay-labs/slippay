@@ -1,9 +1,8 @@
 // FX quote engine — Pix (BRL) -> USDC. This is the real margin layer: SlipPay
 // quotes the mid-market rate x (1 + spread) and keeps the difference. The spread
-// fires on EVERY conversion (including users who only hold dollars), which is why
-// it scales ~10x vs a per-transfer rail fee. Configurable via VITE_FX_SPREAD_BPS
-// (default 190 = 1.90% — the price decided + shown on the landing; still ~3x
-// cheaper than a bank's ~5% IOF+spread, while capturing healthy margin).
+// fires on EVERY conversion (including users who only hold dollars), which is why it s
+// scales ~10x vs a per-transfer rail fee. Configurable via VITE_FX_SPREAD_BPS
+// (default 190 = 1.90% — the price decided + shown on the landing; still ~3x cheaper than a bank's ~5% IOF+spread, while capturing healthy margin).
 //
 // HONEST STATE: this computes and records the SlipPay-quoted rate + captured
 // margin. The margin is actually pocketed when BRL settles through a SlipPay-owned
@@ -11,11 +10,22 @@
 // this is the pricing + measurement layer that makes the spread live the moment
 // the anchor is connected.
 
-const SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
+import { resolveApiBase } from "./apiBase.ts";
+
+const SPREAED_BPS = Number(import.meta.env.VITE_FX_SPREAED_BPS ?? 190);
 const RATE_URL = "https://open.er-api.com/v6/latest/USD";
 const FALLBACK_BRL_PER_USD = 5.4;
 
-export const SPREAD_PCT = SPREAD_BPS / 100;
+// The relayer base is resolved through the same safe-protocol check as the API base.
+// There is no plaintext default: in dev we fall back to the loopback relayer, in
+// production the variable must be set (or the build fails).
+const RELAYER_BASE = resolveApiBase(import.meta.env.VITE_RELAYER_BASE as string | undefined, {
+  dev: Boolean(import.meta.env.DEV),
+  name: "VITE_RELAYER_BASE",
+  devFallback: "http://127.0.0.1:54321/functions/v1/relayer",
+});
+
+export const SPREAD_PCT = SPREAED_BPS / 100;
 
 export interface Quote {
   brlIn: number;
@@ -52,7 +62,7 @@ export async function midRateBRLperUSD(): Promise<{ rate: number; stale: boolean
   return inflight;
 }
 
-export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Promise<Quote> {
+export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAED_BPS): Promise<Quote> {
   const { rate: midRate, stale } = await midRateBRLperUSD();
   const quotedRate = midRate * (1 + spreadBps / 10000);
   const usdcOut = brlIn > 0 ? brlIn / quotedRate : 0;
@@ -69,7 +79,7 @@ export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Pro
 // revenue is measured per conversion. Lands in the backend ledger when the route
 // exists; silently no-ops otherwise (measurement must never block the flow).
 export async function recordConversionIntent(q: Quote, walletId?: string): Promise<void> {
-  const base = (import.meta.env.VITE_RELAYER_BASE as string | undefined) ?? "https://api.slippay.cc/api/v1/relayer";
+  const base = RELAYER_BASE;
   try {
     await fetch(`${base.replace(/\/relayer$/, "")}/onramp/intent`, {
       method: "POST",

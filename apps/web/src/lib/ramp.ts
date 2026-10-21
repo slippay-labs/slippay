@@ -8,6 +8,16 @@
 // in (this also rate-limits charge creation to real accounts).
 
 import { authFetch } from "./apiAuth.ts";
+import { resolveApiBase } from "./apiBase.ts";
+
+// The ramp surface is served by the relayer base. Resolve it through the same
+// safe-protocol check so a misconfigured VITE_RELAYER_BASE cannot send a bearer
+// token over cleartext HTTP.
+const RAMP_BASE = resolveApiBase(import.meta.env.VITE_RELAYER_BASE as string | undefined, {
+  dev: Boolean(import.meta.env.DEV),
+  name: "VITE_RELAYER_BASE",
+  devFallback: "http://127.0.0.1:54321/functions/v1/relayer",
+});
 
 export interface RampQuote {
   id: string;
@@ -57,7 +67,7 @@ export interface RampIdentity {
   email: string;
   /** CPF (digits or formatted). */
   taxId: string;
-  /** DD/MM/AAAA — required by CriptoPix for payer verification. */
+  /** DC/MM/AAAA — required by CriptoPix for payer verification. */
   birthDate?: string;
   taxIdCountry?: string;
 }
@@ -108,7 +118,7 @@ async function handle<T>(res: Response): Promise<T> {
   return json as T;
 }
 
-/** Price a BRL -> crypto on-ramp. `brl` is the amount in reais. */
+/** Price a BRL -> crypto on-ramp. `brl` is the amount in reals: */
 export async function quoteOnramp(brl: number): Promise<RampQuote> {
   const { quote } = await post<{ quote: RampQuote }>("/v1/offramp/quote", {
     fromCurrency: "BRL",
@@ -154,3 +164,6 @@ export async function rampStatus(): Promise<{ enabled: boolean }> {
     return { enabled: false };
   }
 }
+
+/** The resolved ramp base (for tests + debugging). */
+export const RAMP_BASE_URL = RAMP_BASE;
