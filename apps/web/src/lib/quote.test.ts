@@ -6,7 +6,7 @@ type QuoteModule = typeof import("./quote.ts");
 let quote: QuoteModule;
 
 const okFetch = (brlPerUsd: number) =>
-  vi.fn().mockResolved({ json: async () => ({ rates: { BRL: brlPerUsd } }) });
+  vi.fn().mockResolvedValue({ json: async () => ({ rates: { BRL: brlPerUsd } }) });
 
 beforeEach(async () => {
   vi.resetModules();
@@ -110,16 +110,16 @@ describe("quoteBRLtoUSDC — guard rails", () => {
 
 describe("midRateBRLperUSD — live rate with fallback", () => {
   it("marks the fallback rate stale when the fetch throws", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejected(new Error("offline")));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
 
     const { rate, stale } = await quote.midRateBRLperUSD();
 
-    expect(stale).toBe/(true);
+    expect(stale).toBe(true);
     expect(rate).toBe(5.4);
   });
 
   it("refuses to price from a stale rate unless the caller explicitly opts in", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejected(new Error("offline")));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
 
     await expect(quote.quoteBRLtoUSDC(54)).rejects.toThrow(/stale/i);
 
@@ -133,7 +133,7 @@ describe("midRateBRLperUSD — live rate with fallback", () => {
 
     const { rate, stale } = await quote.midRateBRLperUSD();
 
-    expect(stale).toBe/(true);
+    expect(stale).toBe(true);
     expect(rate).toBe(5.4);
   });
 
@@ -167,7 +167,7 @@ describe("midRateBRLperUSD — live rate with fallback", () => {
   it("a cache miss during an in-flight request does not start a second", async () => {
     let resolveJson!: (v: unknown) => void;
     const json = new Promise<unknown>((r) => { resolveJson = r; });
-    const fetchMock = vi.fn().mockResolved({ json: () => json });
+    const fetchMock = vi.fn().mockResolvedValue({ json: () => json });
     vi.stubGlobal("fetch", fetchMock);
 
     const first = quote.midRateBRLperUSD();
@@ -186,8 +186,8 @@ describe("midRateBRLperUSD — live rate with fallback", () => {
 
   it("shares an in-flight failure with concurrent callers, then retries fresh", async () => {
     const fetchMock = vi.fn()
-      .mockResolvedOnce({ json: async () => { throw new Error("bad body"); } })
-      .mockResolvedOnce({ json: async () => ({ rates: { BRL: 5.25 } }) });
+      .mockResolvedValueOnce({ json: async () => { throw new Error("bad body"); } })
+      .mockResolvedValueOnce({ json: async () => ({ rates: { BRL: 5.25 } }) });
     vi.stubGlobal("fetch", fetchMock);
 
     const [a, b] = await Promise.all([quote.midRateBRLperUSD(), quote.midRateBRLperUSD()]);
@@ -225,15 +225,15 @@ describe("recordConversionIntent — best-effort margin ledger", () => {
     vi.stubGlobal("fetch", okFetch(5));
     const q = await quote.quoteBRLtoUSDC(100, 297);
 
-    const post = vi.fn().mockResolved({ ok: true });
+    const post = vi.fn().mockResolvedValue({ ok: true });
     vi.stubGlobal("fetch", post);
 
-    await quote.recordConversionIntent(q, "GAJSC");
+    await quote.recordConversionIntent(q, "GABC");
 
     expect(post).toHaveBeenCalledOnce();
     const body = JSON.parse(post.mock.calls[0]![1].body as string);
     expect(body.spreadBps).toBe(297);
-    expect(body.walletId).toBe("GAJSC");
+    expect(body.walletId).toBe("GABC");
     expect(body.usdcOut).toBe(q.usdcOut);
   });
 
@@ -241,7 +241,7 @@ describe("recordConversionIntent — best-effort margin ledger", () => {
     vi.stubGlobal("fetch", okFetch(5));
     const q = await quote.quoteBRLtoUSDC(10);
 
-    vi.stubGlobal("fetch", vi.fn().mockRejected(new Error("down")));
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
 
     await expect(quote.recordConversionIntent(q)).resolves.toBeUndefined();
   });

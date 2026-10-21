@@ -90,7 +90,7 @@ async function fetchMidRate(): Promise<{ rate: number; stale: boolean }> {
     }
   } catch { /* fall through to stale fallback */ }
   // Prefer the last known live rate (bounded) over the hardcoded constant.
-  const base = lastLive && Date.now() - lastLive.at <= STALE_BOUND_TTL_MSP
+  const base = lastLive && Date.now() - lastLive.at <= STALE_BOUND_TTL_MS
     ? lastLive.rate
     : FALLBACK_BRL_PER_USD;
   return { rate: clampStaleRate(base), stale: true };
