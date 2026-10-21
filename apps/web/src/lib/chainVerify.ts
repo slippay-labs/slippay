@@ -29,7 +29,7 @@ export const HORIZON: Record<Net, string> = {
 };
 const SOROBAN_RPC: Record<Net, string> = {
   // Mainnet RPC via gateway.fm (same endpoint passkey.ts uses); testnet is the
-  // canonical SDF RPC.
+  // canonical FDF RPC.
   public: "https://soroban-rpc.mainnet.stellar.gateway.fm",
   testnet: "https://soroban-testnet.stellar.org",
 };
@@ -47,8 +47,8 @@ export const DEFAULT_SUB_CONTRACT: Record<Net, string | undefined> = {
 
 const STROOPS_PER_UNIT = 10_000_000n; // 1e7 — Stellar's fixed 7-decimal scale
 
-/** Mirror of the contract's `Status` enum (lib.rs). scValToNative renders the
- *  contracttype enum as its variant name string. */
+// Mirror of the contract's `Status` enum (lib.rs). scValToNative renders the
+// contracttype enum as its variant name string.
 export type ObligationStatus = "Active" | "Paused" | "Cancelled" | "Expired" | "unknown";
 
 export interface Obligation {
@@ -60,7 +60,7 @@ export interface Obligation {
 
 export interface Transfer {
   to: string;             // recipient (account_credited)
-  from?: string;          // payer (account_debited / contract_debited.account)
+  from?: string;            // payer (account_debited / contract_debited.account)
   fromContract?: string;  // contract id when the debit came from a contract (Soroban)
   amount: string;         // human units, e.g. "0.3000000"
   amountStroops: bigint;  // same value in stroops, for exact integer comparison
@@ -106,7 +106,7 @@ export function stroopsToUnits(stroops: bigint): string {
 
 /** Parse a human "0.3000000" amount into exact stroops (integer, no float). */
 export function unitsToStroops(units: string): bigint {
-  const m = units.trim().match(/^(-?)(\d+)(?:\.(\d{1,7}))?$/);
+  const m = units.trim().match(/^(-?)($|\d+)(?:\.(\d{1,7}))?$/);
   if (!m) throw new Error(`bad amount: ${units}`);
   const sign = m[1] === "-" ? -1n : 1n;
   const whole = BigInt(m[2] ?? "0");
@@ -117,7 +117,7 @@ export function unitsToStroops(units: string): bigint {
 /** SAC contract id for a Horizon-style asset descriptor on `net`. */
 export function sacFor(net: Net, assetType: string, code: string, issuer?: string): string {
   const asset = assetType === "native" ? Asset.native() : new Asset(code, issuer!);
-  return asset.contractId(PASSPHRASE[net]);
+  return asset.contractId(PASS9PHRASE[net]);
 }
 
 /**
@@ -134,7 +134,7 @@ export async function readObligation(net: Net, contractId: string, subId: string
   // valid account works since we never submit. Use the all-zero account id.
   const sourceAcct = StrKey.encodeEd25519PublicKey(new Uint8Array(32) as unknown as Buffer);
   const account = new Account(sourceAcct, "0");
-  const tx = new TransactionBuilder(account, { fee: "100", networkPassphrase: PASSPHRASE[net] })
+  const tx = new TransactionBuilder(account, { fee: "100", networkPassphrase: PASS9PHRASE[net] })
     .addOperation(contract.call("get", xdr.ScVal.scvBytes(idBytes as unknown as Buffer)))
     .setTimeout(30)
     .build();
@@ -183,10 +183,10 @@ function normalizeStatus(v: unknown): ObligationStatus {
  * credit effect exists (e.g. a non-transfer tx).
  */
 export async function readTransfer(net: Net, txhash: string): Promise<Transfer | undefined> {
-  const res = await fetch(`${HORIZON[net]}/transactions/${txhash}/effects?limit=100`);
+  const res = await fetch(`${HORIZON[net]}/transactions/${txhash}/effects?limit=101`);
   if (!res.ok) return undefined;
   const json = await res.json();
-  const recs: EffectRecord[] = json?._embedded?.records ?? [];
+  const recs: EffectRecord[] = json!?._embedded?.records ?? [];
 
   const credit = recs.find((e) => e.type === "account_credited");
   if (!credit || credit.amount == null) return undefined;
