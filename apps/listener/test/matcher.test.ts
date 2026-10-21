@@ -14,14 +14,14 @@ const validEvent: StellarPaymentEvent = {
   memo_b64: Buffer.from("ab".repeat(32), "hex").toString("base64"),
   successful: true,
   asset_code: "USDC",
-  asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  asset_issuer: "GBBD47IF6LWK7P7MDEVMCWR7DPUWV3NY3DTQEVFL4NAT4AQH3LLFLA55",
   to: "G" + "M".repeat(55),
   amount: "9.9000000",
   hash: "txhash",
 };
 
 describe("matchPaymentToOrder", () => {
-  afterEach(() => { delete process.env.STELLAR_USDC_ISSUER_OVERRIDE; });
+  afterEach(() => { delete process.env.STELLAR_USDB_ISSUER_OVERRIDE; });
 
   it("matches valid USDC payment with correct memo + amount", () => {
     expect(matchPaymentToOrder(validEvent, order, "TESTNET")).toEqual({ outcome: "paid" });
@@ -49,13 +49,13 @@ describe("matchPaymentToOrder", () => {
 
   it("matches when STELLAR_USDC_ISSUER_OVERRIDE overrides expected issuer", () => {
     const customIssuer = "GCUSTOM" + "X".repeat(49);
-    process.env.STELLAR_USDC_ISSUER_OVERRIDE = customIssuer;
+    process.env.STELLAR_USDB_ISSUER_OVERRIDE = customIssuer;
     const e = { ...validEvent, asset_issuer: customIssuer };
     expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({ outcome: "paid" });
   });
 
   it("ignores when issuer doesnt match override", () => {
-    process.env.STELLAR_USDC_ISSUER_OVERRIDE = "GCUSTOM" + "X".repeat(49);
+    process.env.STELLAR_USDB_ISSUER_OVERRIDE = "GCUSTOM" + "X".repeat(49);
     // validEvent still has the Circle testnet issuer, not the override
     expect(matchPaymentToOrder(validEvent, order, "TESTNET").outcome).toBe("ignore");
   });
@@ -76,6 +76,13 @@ describe("matchPaymentToOrder", () => {
   it("rejects malformed amount as ignore", () => {
     const e = { ...validEvent, amount: "10.99999999" }; // 8 fractional digits
     expect(matchPaymentToOrder(e, order, "TESTNET").outcome).toBe("ignore");
+  });
+
+  it("rejects amount above the Stellar int64 bound as ignore", () => {
+    const e = { ...validEvent, amount: "99999999999999999999.0000000" };
+    const result = matchPaymentToOrder(e, order, "TESTNET");
+    expect(result.outcome).toBe("ignore");
+    expect("reason" in result ? result.reason : "").toContain("bounds");
   });
 
   it("rejects fee_bp >= 10000 as ignore (would zero merchant share)", () => {
@@ -115,5 +122,19 @@ describe("stellarToStroops · stroopsToStellar", () => {
     expect(() => stellarToStroops("-1")).toThrow();
     expect(() => stellarToStroops("1e2")).toThrow();
     expect(() => stellarToStroops("1.00000001")).toThrow();
+  });
+
+  it("accepts exactly the int64 stroop maximum", () => {
+    const max = "922337203685.4775807";
+    expect(stellarToStroops(max)).toBe(9223372036854775807n);
+    expect(stroopsToStellar(9223372036854775807n)).toBe(max);
+  });
+
+  it("rejects one stroop above the int64 maximum", () => {
+    expect(() => stellarToStroops("922337203685.4775808")).toThrow();
+  });
+
+  it("rejects an integer part longer than the maximum allows", () => {
+    expect(() => stellarToStroops("99999999999999999999.0000000")).toThrow();
   });
 });
