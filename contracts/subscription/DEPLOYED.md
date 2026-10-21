@@ -1,5 +1,8 @@
 # Slippay Subscription Contract — deployed
 
+> Central record of every deployed address and version: [`docs/deployments.md`](../../docs/deployments.md).
+> This file keeps the per-deploy detail; the authoritative list lives in the central record.
+
 ## v0.2 · MAINNET (PRODUCTION · 2026-05-16)
 
 **Contract address**: `CBJMQ6ZYQJ2OMM46FGXPEIKKZDRHHERBXUVE54ZN64FDPKN5DJKSEVQN`

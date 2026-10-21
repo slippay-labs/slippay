@@ -1,13 +1,17 @@
 # Slippay Smart Wallet Contract — deployed
 
-## v0.1 · TESTNET (M6 admin pattern · 2026-05-28)
+The authoritative, full list of every deployed address and version (all networks, all crates) lives in [`docs/deployments.md`](../../docs/deployments.md). This file records only the smart-wallet-specific details and links to the central record rather than duplicating the address list.
 
-**Template wasm hash**: `a2328321a8b0811ccee92edf8555849a4310081efaf26ec89140da31d8eb470c`
-**Template contract**: `CBG62CSWG6FYX6CTH5246V6DLQTIR3GKJEIZEQN3AH4W46E7ES6UNASO`
-**Stellar.expert**: https://stellar.expert/explorer/testnet/contract/CBG62CSWG6FYX6CTH5246V6DLQTIR3GKJEIZEQN3AH4W46E7ES6UNASO
-**Deployer / v0.1 admin**: `GDYKSPEDSST4YSSMNW6LMK27XN6YMM4SEN4RAKCCFT3N74GWPGXAJPQT`
+## v0.1 · TESTNET (>M6 admin pattern · 2026-05-28)
+
+**Template wasm hash**: `a2328321a8b0811ccee92edf8555849a4310081efaf26ec89140da31d8eb470c**
+**Template contract**: `CBG62CSWG6FYX6CTH5G46V6DLQTIR3GKJEIZEQN3AH4W46E7ES6UNASO`
+**Stellar.expert**: https://stellar.expert/explorer/testnet/contract/CBG62CSWG6FYX6CTH5G46V6DLQTIR3GKJEIZEQN3AH4W46E7ES6UNASO
+**Deployer / v0.1 admin**: `GDYKSPEDSST4YSSMNW6LMK27XN6YMM4SEN4RAKCCFT3N74GWPGXAJPQT
 **Soroban SDK**: 26 · **Stellar protocol**: 26 · **Build target**: `wasm32v1-none`
 **Unit tests**: 13/13 passing (`cargo test --release`)
+
+> Full identifiers, deploy dates and current/legacy status for this contract are maintained in [`docs/deployments.md`](../../docs/deployments.md).
 
 ### Live e2e proof on testnet (M6)
 
@@ -32,13 +36,13 @@ held in the spike server.
 `install_policy` and `revoke_policy` now require `admin.require_auth()`.
 The admin address is set once at `init` and stored in instance storage.
 For the spike, callers (the trusted-setup server) pass the deployer's
-classic G-account; the server signs the install/revoke transactions with
+ classic G-account; the server signs the install/revoke transactions with
 that key.
 
 **v0.2 migration:** change the `init` call to set `admin =
 env.current_contract_address()`. install/revoke then trigger the wallet's
-own `__check_auth` which (per Gap 2 closure below) requires a real
-secp256r1 signature from the user's passkey.
+own `__check_auth` which (per Gap 2 closure below) requires a real secp256r1
+signature from the user's passkey.
 
 ### Gap 2 · `__check_auth` signature stub — **still open**
 
@@ -88,12 +92,15 @@ Slippay backend code. 13 unit tests cover them deterministically.
 
 This wallet is intended to be the `buyer` argument in calls to the
 production-deployed slippay-subscription mainnet contract
-(`CBJMQ6ZYQJ2OMM46FGXPEIKKZDRHHERBXUVE54ZN64FDPKN5DJKSEVQN`). When the
+(`CBJMQ6ZYQJ2OMM46FGXPEIKKZDRHHERBXUVE54ZN64FDKN5DJKSEVQN`). When the
 merchant calls `slippay-subscription.charge(id)`, the nested
 `token.transfer(buyer, merchant, amount)` triggers this wallet's
 `__check_auth`. If a matching policy exists, the pull is authorized
 without consulting the passkey — that is the "no extra tap" property
 demanded by the [policy-checkout product spec](../../docs/product/policy-checkout-spec.md).
+
+The full identifier and version of that subscription contract is recorded in
+[`docs/deployments.md`](../../docs/deployments.md).
 
 That wiring is M7 (next milestone), not landed in v0.1.
 

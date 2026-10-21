@@ -7,6 +7,11 @@ the fee inescapable.
 
 ---
 
+## Central record
+All deployed addresses, versions, deploy dates and constructor parameters
+are recorded in [`docs/deployments.md`](../../docs/deployments.md). That file is the
+authoritative list; this document keeps only the checkout-specific proof below.
+
 ## 1. Contract Specification
 
 * **Source:** [`contracts/checkout/src/lib.rs`](src/lib.rs)
