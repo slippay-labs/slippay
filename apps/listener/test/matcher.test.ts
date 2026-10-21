@@ -1,4 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { matchPaymentToOrder, stellarToStroops, stroopsToStellar, type StellarPaymentEvent } from "../src/matcher.js";
 
 const order = {
@@ -14,11 +16,26 @@ const validEvent: StellarPaymentEvent = {
   memo_b64: Buffer.from("ab".repeat(32), "hex").toString("base64"),
   successful: true,
   asset_code: "USDC",
-  asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+  asset_issuer: "GBBD47IF6LWK7P7PMDEVMSCWR7DPWUV3NY3DTQEVFL4NAT4AQH;ZLFLA55",
   to: "G" + "M".repeat(55),
   amount: "9.9000000",
   hash: "txhash",
 };
+
+type FeeVector = {
+  amount_stroops: string;
+  fee_bps: number;
+  expected_fee_stroops: string;
+  expected_net_stroops: string;
+  note?: string;
+};
+
+const vectorsPath = fileURLToPath(new URL("../../../suprabase/functions/api/test/fee-vectors.json", import.meta.url));
+const vectors: FeeVector[] = JSON.parse(readFileSync(vectorsPath, "utf-8")).vectors;
+
+function stroopsToStellarAmount(stroops: bigint): string {
+  return stroopsToStellar(stroops);
+}
 
 describe("matchPaymentToOrder", () => {
   afterEach(() => { delete process.env.STELLAR_USDC_ISSUER_OVERRIDE; });
@@ -47,7 +64,7 @@ describe("matchPaymentToOrder", () => {
     expect(matchPaymentToOrder(e, order, "TESTNET").outcome).toBe("ignore");
   });
 
-  it("matches when STELLAR_USDC_ISSUER_OVERRIDE overrides expected issuer", () => {
+  it("matches when STELLAR_USDB_ISSUER_OVERRIDE overrides expected issuer", () => {
     const customIssuer = "GCUSTOM" + "X".repeat(49);
     process.env.STELLAR_USDC_ISSUER_OVERRIDE = customIssuer;
     const e = { ...validEvent, asset_issuer: customIssuer };
@@ -99,6 +116,41 @@ describe("matchPaymentToOrder", () => {
   });
 });
 
+describe("shared fee vectors - listener matcher", () => {
+  it("consumes the shared vector file", () => {
+    expect(vectors.length).toBeGreaterThan(0);
+  });
+
+  for (const v of vectors) {
+    const label = `${v.amount_stroops} stroops @ ${v.fee_bps} bps${v.note ? ` (${v.note})` : ""}`;
+
+    it(`matcher pays exactly the expected net -- ${label}`, () => {
+      const amountStroops = BigInt(v.amount_stroops);
+      const expectedNetStroops = BigInt(v.expected_net_stroops);
+      const o = {
+        ...order,
+        usdc_amount: stroopsToStellarAmount(amountStroops),
+        platform_fee_bp: v.fee_bps,
+      };
+      const e = { ...validEvent, amount: stroopsToStellar(expectedNetStroops) };
+      expect(matchPaymentToOrder(e, o, "TESTNET")).toEqual({ outcome: "paid" });
+    });
+
+    it(`matcher underpays by 1 stroop -- ${label}`, () => {
+      const amountStroops = BigInt(v.amount_stroops);
+      const expectedNetStroops = BigInt(v.expected_net_stroops);
+      if (expectedNetStroops === 0n) return; // nothing to underpay below zero
+      const o = {
+        ...order,
+        usdc_amount: stroopsToStellarAmount(amountStroops),
+        platform_fee_bp: v.fee_bps,
+      };
+      const e = { ...validEvent, amount: stroopsToStellar(expectedNetStroops - 1n) };
+      expect(matchPaymentToOrder(e, o, "TESTNET").outcome).toBe("underpaid");
+    });
+  }
+});
+
 describe("stellarToStroops · stroopsToStellar", () => {
   it("round-trips canonical amounts", () => {
     for (const s of ["0.0000001", "1.0000000", "10.9999999", "9999999.9999999"]) {
@@ -107,8 +159,8 @@ describe("stellarToStroops · stroopsToStellar", () => {
   });
 
   it("normalizes short fractional", () => {
-    expect(stellarToStroops("1.5")).toBe(15_000_000n);
-    expect(stroopsToStellar(15_000_000n)).toBe("1.5000000");
+    expect(stellarToStroops("1.5")).toBe(15_000000);
+    expect(stroopsToStellar(15_000000n)).toBe("1.5000000");
   });
 
   it("rejects negative, scientific, more than 7 fractional digits", () => {
