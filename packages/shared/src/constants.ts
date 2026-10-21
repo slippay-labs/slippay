@@ -36,3 +36,11 @@ export const DEFAULT_PLATFORM_FEE_BP = 297; // 2.97%
 export const ORDER_DEFAULT_EXPIRY_MINUTES = 30;
 export const API_KEY_PREFIX = "sk_live_";
 export const API_KEY_BYTES = 32;
+
+// FX spread charged on every BRL -> USDC conversion, in basis points (1 bp = 0.01%).
+// This is a revenue control, so it is bounded: a deployment cannot set it below 0
+// (which would pay users to convert) or above MAX_FX_SPREAD_BP. Configure it only
+// here, next to DEFAULT_PLATFORM_FEE_BP; the VITE_FX_SPREAD_BPS override is validated
+// by parseSpreadBps in ./spread.ts.
+export const DEFAULT_FX_SPREAD_BP = 190; // 1.90%
+export const MAX_FX_SPREAD_BP = 1000; // 10% hard ceiling

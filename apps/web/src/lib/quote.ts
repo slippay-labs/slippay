@@ -1,4 +1,5 @@
-// FX quote engine — Pix (BRL) -> USDC. This is the real margin layer: SlipPay
+
+import { MAX_FX_SPREAD_BP, parseSpreadBps } from "@slippay/shared";// FX quote engine — Pix (BRL) -> USDC. This is the real margin layer: SlipPay
 // quotes the mid-market rate x (1 + spread) and keeps the difference. The spread
 // fires on EVERY conversion (including users who only hold dollars), which is why
 // it scales ~10x vs a per-transfer rail fee. Configurable via VITE_FX_SPREAD_BPS
@@ -11,7 +12,13 @@
 // this is the pricing + measurement layer that makes the spread live the moment
 // the anchor is connected.
 
-const SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
+// Bounded, validated spread: throws on a non-numeric or out-of-range value (see
+// packages/shared/src/spread.ts). Default and ceiling live in @slippay/shared constants.
+const SPREAD_BPS = parseSpreadBps(import.meta.env.VITE_FX_SPREAD_BPS);
+
+if (import.meta.env.MODE !== "test") {
+  console.info(`[quote] FX spread: ${SPREAD_BPS} bps (max ${MAX_FX_SPREAD_BP})`);
+}
 const RATE_URL = "https://open.er-api.com/v6/latest/USD";
 const FALLBACK_BRL_PER_USD = 5.4;
 
