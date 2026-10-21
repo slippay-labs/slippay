@@ -33,6 +33,8 @@ jobs:
       run: |
         pnpm --filter @slippay/shopify-connector lint
         pnpm --filter @slippay/vtex-connector lint
+    - name: Verify schema alignment
+      run: pnpm check:schema
     - name: Workspace tests (shared, web, listener)
       run: pnpm -r test
     - name: Connector tests (explicit)
