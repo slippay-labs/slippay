@@ -27,6 +27,45 @@ export type LeaseResult =
   | { acquired: true; release: () => Promise<void> }
   | { acquired: false; heldBy: string; expiresAt: string };
 
+/**
+ * Snapshot of a lease held by this process. Exposed for the health /
+ * metrics surface so an operator (and the orchestrator) can see what this
+ * listener is currently watching and when the lease expires.
+ */
+export type HeldLease = {
+  accountId: string;
+  holderId: string;
+  acquiredAt: string;
+  expiresAt: string;
+};
+
+/**
+ * Tracker of leases currently held by this process. Used by the health
+ * endpoint to report what is watched and to fail the check when a lease
+ * has been lost.
+ */
+const heldLeases = new Map<string, HeldLease>();
+
+export function getHeldLeases(): HeldLease[] {
+  return Array.from(heldLeases.values());
+}
+
+export function isHoldingLease(accountId: string): boolean {
+  return heldLeases.has(accountId);
+}
+
+export function getLeaseExpiry(accountId: string): string | null {
+  return heldLeases.get(accountId)?.expiresAt ?? null;
+}
+
+export function getLeaseHolder(accountId: string): string | null {
+  return heldLeases.get(accountId)?.holderId ?? null;
+}
+
+export function getHeldLeaseCount(): number {
+  return heldLeases.size;
+}
+
 export async function acquireLease(
   db: SupabaseClient,
   accountId: string,
@@ -75,6 +114,13 @@ export async function acquireLease(
     }
   }
 
+  heldLeases.set(accountId, {
+    accountId,
+    holderId: HOLDER_ID,
+    acquiredAt: now.toISOString(),
+    expiresAt: expires.toISOString(),
+  });
+
   let stopped = false;
   const heartbeat = setInterval(async () => {
     if (stopped) return;
@@ -85,7 +131,11 @@ export async function acquireLease(
       .eq("holder_id", HOLDER_ID);
     if (r.error) {
       log("warn", "lease_heartbeat_failed", { account_id: accountId, error: r.error.message });
+      return;
     }
+    // Keep the health snapshot in sync with the extended expiry.
+    const held = heldLeases.get(accountId);
+    if (held) held.expiresAt = nextExpires;
   }, heartbeatMs);
   // Prevent the heartbeat timer from keeping the process alive after shutdown.
   if (typeof heartbeat.unref === "function") heartbeat.unref();
@@ -93,6 +143,7 @@ export async function acquireLease(
   const release = async () => {
     stopped = true;
     clearInterval(heartbeat);
+    heldLeases.delete(accountId);
     const r = await db.from("listener_leases")
       .delete()
       .eq("account_id", accountId)
@@ -100,6 +151,6 @@ export async function acquireLease(
     if (r.error) log("warn", "lease_release_failed", { account_id: accountId, error: r.error.message });
   };
 
-  log("info", "lease_acquired", { account_id: accountId, holder_id: HOLDER_ID, ttl_s: ttl });
+  log("info", "lease_acquired", { account_id: accountId, holder_id: HOLDER_ID, ttl_seconds: ttl });
   return { acquired: true, release };
 }

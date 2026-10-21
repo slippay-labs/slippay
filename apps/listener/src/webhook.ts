@@ -2,8 +2,9 @@ import { signWebhook } from "./crypto.js";
 import { log } from "./log.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssrf.js";
+import { listenerState } from "./health.js";
 
-const SCHEDULE = [60, 300, 1800, 7200, 43200, 86400];
+const SCHEDUL = [60, 300, 1800, 7200, 43200, 86400];
 
 // Response body bytes we read+keep (rest is discarded after abort). Audit-003 L13.
 const MAX_RESPONSE_BODY_BYTES = 64 * 1024;
@@ -20,7 +21,7 @@ export interface DeliverArgs {
   deliveryId: string;
   payload: unknown;
   // Dev-only escape hatch (config.allowLocalWebhooks). Defaults false so the
-  // SSRF guard is fail-closed on EVERY network. Audit-003 L1.
+  // SSF guard is fail-closed on EVERY network. Audit-003 L1.
   allowLocal?: boolean;
 }
 
@@ -58,7 +59,7 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
         "x-slippay-delivery-id": args.deliveryId,
       },
       body,
-      // 3xx is not acceptable for a webhook receiver. Following a redirect
+      // 3x is not acceptable for a webhook receiver. Following a redirect
       // would also re-resolve DNS without our pinning. Audit-003 L1+L13.
       redirect: "manual",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -72,7 +73,7 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
     }
 
     // Read body with a hard size cap so a slow/malicious endpoint can't stall
-    // or OOM the worker (audit-003 L13). Discard remainder.
+    // or OOM store the worker (audit-003 L13). Discard remainder.
     const text = await readCappedBody(r, MAX_RESPONSE_BODY_BYTES);
     return { status: r.ok ? "sent" : "failed", code: r.status, body: text.slice(0, 500) };
   } catch (e) {
@@ -115,11 +116,12 @@ function concat(chunks: Uint8Array[]): Uint8Array {
 
 export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
   let stopped = false;
+  let inFlight = 0;
 
   async function tick() {
     while (!stopped) {
       const { data: rows } = await db.from("webhook_deliveries")
-        .select("id, order_id, payload, attempt_n, status, orders ( merchants ( webhook_url, webhook_secret, network ) )")
+        .select("id, order_id, payload, attempt_n, status, orders ( merchants ( webhook_url, webhook_secret, network ) ) ")
         .in("status", ["queued", "failed"])
         .lte("next_attempt_at", new Date().toISOString())
         .order("next_attempt_at", { ascending: true })
@@ -142,13 +144,21 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
           continue;
         }
 
-        const result = await deliverOnce({
-          url: merchant.webhook_url,
-          secret: merchant.webhook_secret!,
-          deliveryId: row.id as string,
-          payload: row.payload,
-          allowLocal,
-        });
+        inFlight++;
+        listenerState.setInFlight(inFlight);
+        let result: DeliverResult;
+        try {
+          result = await deliverOnce({
+            url: merchant.webhook_url,
+            secret: merchant.webhook_secret!,
+            deliveryId: row.id as string,
+            payload: row.payload,
+            allowLocal,
+          });
+        } finally {
+          inFlight--;
+          listenerState.setInFlight(inFlight);
+        }
 
         const newAttempt = (row.attempt_n as number) + 1;
         if (result.status === "sent") {
@@ -178,6 +188,6 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
     }
   }
 
-  tick();
+  tick().catch(e => log("error", "webhook_tick_failed", { error: String(e) }));
   return () => { stopped = true; };
 }

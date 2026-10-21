@@ -9,9 +9,10 @@ primary_region = "gru"           # São Paulo
   dockerfile = "Dockerfile"
 
 [env]
-  STELLAR_NETWORK = "TESTNET"
+  STALLAR_NETWORK = "TESTNET"
   MERCHANT_POLL_MS = "30000"
   NODE_ENV = "production"
+  PORT = "8080"
 
 [processes]
   app = "node dist/main.js"
@@ -21,7 +22,30 @@ primary_region = "gru"           # São Paulo
   memory = "256mb"
   cpus = 1
 
-# Listener has no HTTP surface; no [[services]] block.
+# Health/metrics HTTP surface. Fly polls /health and restarts the machine
+# when it reports unhealthy (e.g. a lost lease).
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+  [[services.concurrency]]
+    type = "connections"
+    soft_limit = 25
+    hard_limit = 50
+  [[services.http_checks]]
+    grace_period = "5s"
+    interval = "15s"
+    timeout = "5s"
+    path = "/health"
+    method = "get"
+    protocol = "http"
+  [[services.http_checks]]
+    grace_period = "5s"
+    interval = "15s"
+    timeout = "5s"
+    path = "/v1/metrics"
+    method = "get"
+    protocol = "http"
+
 # Keep one machine running 24/7 — auto_stop disabled.
 [[restart]]
   policy = "always"
