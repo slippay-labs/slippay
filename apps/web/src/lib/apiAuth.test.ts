@@ -9,7 +9,8 @@ vi.mock("./auth.tsx", () => ({ supabase: { auth: { getSession } } }));
 
 import { authFetch } from "./apiAuth.ts";
 
-const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:54321/functions/v1/api";
+// The default must be same-origin relative, not a plaintext loopback URL.
+const API_BASE = import.meta.env.VITE_API_BASE ?? "/api";
 
 function sessionWith(accessToken: string) {
   return { data: { session: { access_token: accessToken } } };
@@ -18,6 +19,11 @@ function sessionWith(accessToken: string) {
 describe("authFetch", () => {
   beforeEach(() => {
     getSession.mockReset();
+  });
+
+  it("defaults to a same-origin relative base", () => {
+    expect(API_BASE).toBe("/api");
+    expect(API_BASE).not.toContain("127.0.0.1");
   });
 
   it("attaches the Supabase access token as a bearer header", async () => {
