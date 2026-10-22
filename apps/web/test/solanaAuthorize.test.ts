@@ -72,6 +72,52 @@ function makeNonTransferCheckedTx(): Transaction {
   return tx;
 }
 
+/** Build a tx with fewer than 3 accounts in keys. */
+function makeFewAccountsTx(): Transaction {
+  const mint = usdcMint("devnet");
+  const fromAta = getAssociatedTokenAddressSync(mint, FROM, true);
+  const toAta = getAssociatedTokenAddressSync(mint, TO, true);
+
+  const ix = createTransferCheckedInstruction(
+    fromAta,
+    mint,
+    toAta,
+    FROM,
+    1_000_000n,
+    USDC_DECIMALS,
+  );
+  ix.keys = ix.keys.slice(0, 2);
+
+  const tx = new Transaction();
+  tx.recentBlockhash = DUMMY_BLOCKHASH;
+  tx.feePayer = FROM;
+  tx.add(ix);
+  return tx;
+}
+
+/** Build a tx with truncated instruction data (< 10 bytes). */
+function makeTruncatedDataTx(): Transaction {
+  const mint = usdcMint("devnet");
+  const fromAta = getAssociatedTokenAddressSync(mint, FROM, true);
+  const toAta = getAssociatedTokenAddressSync(mint, TO, true);
+
+  const ix = createTransferCheckedInstruction(
+    fromAta,
+    mint,
+    toAta,
+    FROM,
+    1_000_000n,
+    USDC_DECIMALS,
+  );
+  ix.data = ix.data.slice(0, 5);
+
+  const tx = new Transaction();
+  tx.recentBlockhash = DUMMY_BLOCKHASH;
+  tx.feePayer = FROM;
+  tx.add(ix);
+  return tx;
+}
+
 // ---------------------------------------------------------------------------
 // decodeUsdcTransfer
 // ---------------------------------------------------------------------------
@@ -115,6 +161,47 @@ describe("decodeUsdcTransfer", () => {
     const tx = makeTransferTx();
     expect(() => decodeUsdcTransfer(tx)).not.toThrow();
   });
+
+  // Table-test malformed shapes rejected by decodeUsdcTransfer
+  it.each([
+    {
+      name: "no instructions",
+      buildTx: () => {
+        const tx = new Transaction();
+        tx.recentBlockhash = DUMMY_BLOCKHASH;
+        tx.feePayer = FROM;
+        return tx;
+      },
+      errorPattern: /no instructions/,
+    },
+    {
+      name: "insufficient account keys (< 3)",
+      buildTx: makeFewAccountsTx,
+      errorPattern: /unexpected instruction account count/,
+    },
+    {
+      name: "truncated instruction data (< 10 bytes)",
+      buildTx: makeTruncatedDataTx,
+      errorPattern: /instruction data too short to decode amount/,
+    },
+    {
+      name: "non-TransferChecked discriminant",
+      buildTx: makeNonTransferCheckedTx,
+      errorPattern: /instrução SPL inesperada/,
+    },
+  ])("rejects malformed shape: $name", ({ buildTx, errorPattern }) => {
+    const tx = buildTx();
+    expect(() => decodeUsdcTransfer(tx)).toThrow(errorPattern);
+  });
+
+  it("valid transfer satisfies all decode requirements", () => {
+    const tx = makeTransferTx();
+    const result = decodeUsdcTransfer(tx);
+    expect(result).toHaveProperty("to");
+    expect(result).toHaveProperty("amount");
+    expect(typeof result.to).toBe("string");
+    expect(typeof result.amount).toBe("string");
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -150,8 +237,6 @@ describe("assertTransferMatches", () => {
   });
 
   it("passes when amount differs by exactly 1e-6 (boundary — within tolerance)", () => {
-    // 1e-6 is the tolerance bound; exactly at the bound passes (Math.abs <= 1e-6 is ambiguous,
-    // the code uses > 1e-6, so 1e-6 exactly passes).
     expect(() =>
       assertTransferMatches(
         { to: "AAAA", amount: "12.5" },
@@ -161,8 +246,6 @@ describe("assertTransferMatches", () => {
   });
 
   it("throws when signTransaction would sign a different destination than confirmed", () => {
-    // This is the threat model test: server swaps destination after human confirms.
-    // assertTransferMatches catches it before sign.
     const attackerAta = "attacker111111111111111111111111111111111";
     const userExpected = "correct2222222222222222222222222222222222";
     expect(() =>
@@ -172,16 +255,59 @@ describe("assertTransferMatches", () => {
       ),
     ).toThrow(/destino divergente/);
   });
+
+  // Table test assertTransferMatches failure and success paths
+  it.each([
+    {
+      name: "non-numeric decoded amount",
+      decoded: { to: "DEST", amount: "not-a-number" },
+      expected: { to: "DEST", amount: "10" },
+      errorPattern: /valor não numérico/,
+    },
+    {
+      name: "non-numeric expected amount",
+      decoded: { to: "DEST", amount: "10" },
+      expected: { to: "DEST", amount: "NaN" },
+      errorPattern: /valor não numérico/,
+    },
+    {
+      name: "mismatched destination address",
+      decoded: { to: "DEST_A", amount: "50" },
+      expected: { to: "DEST_B", amount: "50" },
+      errorPattern: /destino divergente/,
+    },
+    {
+      name: "amount difference exceeding 1e-6",
+      decoded: { to: "DEST", amount: "10.000000" },
+      expected: { to: "DEST", amount: "10.000010" },
+      errorPattern: /valor divergente/,
+    },
+  ])("rejects invalid transfer pairing: $name", ({ decoded, expected, errorPattern }) => {
+    expect(() => assertTransferMatches(decoded, expected)).toThrow(errorPattern);
+  });
+
+  it.each([
+    {
+      name: "matching destination and exact amount",
+      decoded: { to: "DEST_OK", amount: "42.123456" },
+      expected: { to: "DEST_OK", amount: "42.123456" },
+    },
+    {
+      name: "matching destination with tolerance <= 1e-6",
+      decoded: { to: "DEST_OK", amount: "100.000000" },
+      expected: { to: "DEST_OK", amount: "100.000001" },
+    },
+  ])("accepts valid transfer pairing: $name", ({ decoded, expected }) => {
+    expect(() => assertTransferMatches(decoded, expected)).not.toThrow();
+  });
 });
 
 // ---------------------------------------------------------------------------
 // Gate order: sign never called before confirm
-// (Integration-level, mocked — does not hit RPC)
 // ---------------------------------------------------------------------------
 
 describe("authorizeSolanaPayment gate order", () => {
   it("never calls signTransaction when confirm returns false", async () => {
-    // We import dynamically to avoid needing a real Connection in all tests.
     const { authorizeSolanaPayment } = await import("../src/lib/solanaAuthorize.ts");
 
     const signCalled: boolean[] = [];
@@ -190,7 +316,6 @@ describe("authorizeSolanaPayment gate order", () => {
       return tx;
     };
 
-    // Use a mock Connection that returns a blockhash without hitting network.
     const fakeConn = {
       getLatestBlockhash: async () => ({ blockhash: DUMMY_BLOCKHASH, lastValidBlockHeight: 0 }),
     } as unknown as Connection;
@@ -202,10 +327,38 @@ describe("authorizeSolanaPayment gate order", () => {
         to: TO,
         usdcAmount: "1",
         signTransaction: fakeSign,
-        // [I-2] confirm now receives ownerAddress too
         confirm: async (_decoded) => false, // user rejects
       }),
     ).rejects.toThrow(/cancelado/);
+
+    expect(signCalled).toHaveLength(0);
+  });
+
+  it("never calls signTransaction when confirm callback throws an error", async () => {
+    const { authorizeSolanaPayment } = await import("../src/lib/solanaAuthorize.ts");
+
+    const signCalled: boolean[] = [];
+    const fakeSign = async (tx: Transaction): Promise<Transaction> => {
+      signCalled.push(true);
+      return tx;
+    };
+
+    const fakeConn = {
+      getLatestBlockhash: async () => ({ blockhash: DUMMY_BLOCKHASH, lastValidBlockHeight: 0 }),
+    } as unknown as Connection;
+
+    await expect(
+      authorizeSolanaPayment({
+        connection: fakeConn,
+        from: FROM,
+        to: TO,
+        usdcAmount: "1",
+        signTransaction: fakeSign,
+        confirm: async () => {
+          throw new Error("modal dismissed unexpectedly");
+        },
+      }),
+    ).rejects.toThrow(/modal dismissed unexpectedly/);
 
     expect(signCalled).toHaveLength(0);
   });
@@ -228,46 +381,44 @@ describe("authorizeSolanaPayment gate order", () => {
         signTransaction: async (tx) => tx,
         confirm: async (decoded) => {
           capturedOwner = decoded.ownerAddress;
-          return false; // cancel so we don't need a real send
+          return false;
         },
       }),
     ).rejects.toThrow(/cancelado/);
 
-    // ownerAddress must be the TO owner address (base58), not the ATA
     expect(capturedOwner).toBe(TO.toBase58());
   });
 
-  it("never calls signTransaction when assertTransferMatches fails", async () => {
+  it("asserts that values shown to confirm callback match the validated values", async () => {
     const { authorizeSolanaPayment } = await import("../src/lib/solanaAuthorize.ts");
 
-    const signCalled: boolean[] = [];
-    const fakeSign = async (tx: Transaction): Promise<Transaction> => {
-      signCalled.push(true);
-      return tx;
-    };
     const fakeConn = {
       getLatestBlockhash: async () => ({ blockhash: DUMMY_BLOCKHASH, lastValidBlockHeight: 0 }),
     } as unknown as Connection;
 
-    // Pass a mismatched 'to' that won't match the derived ATA
-    const wrongTo = SystemProgram.programId; // definitely not a valid recipient ATA owner
+    let receivedInConfirm: { to: string; amount: string; ownerAddress: string } | undefined;
+
     await expect(
       authorizeSolanaPayment({
         connection: fakeConn,
         from: FROM,
-        to: wrongTo,
-        usdcAmount: "1",
-        signTransaction: fakeSign,
-        confirm: async () => true, // confirm is true but assert should fire first
-        // Note: assert compares decoded.to (derived ATA for wrongTo) vs expected ATA for wrongTo.
-        // These actually match since we derive both sides — so we test the assert via
-        // a different approach: we monkeypatch the amount in the expect below.
-        // Actually the assert in authorizeSolanaPayment uses the same to/amount on both sides,
-        // so it always passes. This test verifies the guard in the wrong-confirm path.
+        to: TO,
+        usdcAmount: "15.75",
+        signTransaction: async (tx) => tx,
+        confirm: async (decoded) => {
+          receivedInConfirm = decoded;
+          return false; // abort before send
+        },
       }),
-    ).rejects.toThrow(); // will throw because sendRawTransaction on fake conn
-    // Sign may have been called if assert+confirm both pass (mocked conn can't send)
-    // This test validates the stack doesn't bypass the guard; sign being called here is
-    // expected (assert passed, confirm passed, sign attempted, send threw on fake conn).
+    ).rejects.toThrow(/cancelado/);
+
+    expect(receivedInConfirm).toBeDefined();
+    const mint = usdcMint("devnet");
+    const expectedToAta = getAssociatedTokenAddressSync(mint, TO, true).toBase58();
+
+    // Confirm callback receives exactly what was machine-verified
+    expect(receivedInConfirm!.to).toBe(expectedToAta);
+    expect(receivedInConfirm!.amount).toBe("15.75");
+    expect(receivedInConfirm!.ownerAddress).toBe(TO.toBase58());
   });
 });
