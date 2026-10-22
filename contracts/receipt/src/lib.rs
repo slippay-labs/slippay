@@ -50,8 +50,9 @@
 //! depends on the previous head, rewriting any past commitment changes every
 //! subsequent head — the tamper-evidence property.
 //!
-//! TTL: every persistent `set` is followed by `extend_ttl`, mirroring the
-//! audit-002 F1 pattern from `slippay-subscription`.
+//! TTL: every persistent `set` and read via `Receipt::load` is followed by
+//! `extend_ttl`, mirroring the audit-002 F1 pattern from `slippay-subscription`
+//! so an audited chain cannot archive while actively checked.
 
 #![no_std]
 use soroban_sdk::{
@@ -202,10 +203,16 @@ impl Receipt {
 
 impl Receipt {
     fn load(env: &Env, mandate_id: &BytesN<32>) -> Mandate {
+        let key = DataKey::Mandate(mandate_id.clone());
+        let mandate: Mandate = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(env, Error::NotFound));
         env.storage()
             .persistent()
-            .get(&DataKey::Mandate(mandate_id.clone()))
-            .unwrap_or_else(|| panic_with_error!(env, Error::NotFound))
+            .extend_ttl(&key, TTL_THRESHOLD_LEDGERS, TTL_TARGET_LEDGERS);
+        mandate
     }
 }
 

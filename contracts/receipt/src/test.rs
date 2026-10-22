@@ -13,7 +13,10 @@
 #![cfg(test)]
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as _, BytesN as _, Events, MockAuth, MockAuthInvoke},
+    testutils::{
+        storage::Persistent as _, Address as _, BytesN as _, Events, Ledger as _, MockAuth,
+        MockAuthInvoke,
+    },
     vec, Address, Bytes, BytesN, Env, IntoVal, Symbol,
 };
 
@@ -352,4 +355,84 @@ fn off_chain_verification_and_selective_disclosure() {
     // A wrong amount must NOT open the commitment → binding holds.
     let wrong = ref_commitment(&env, amount + 1, &blinding, &mandate_id, period_index);
     assert_ne!(wrong, commitment, "a different amount cannot open the same commitment");
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// 10. get_* reads extend mandate TTL so an audited chain cannot archive
+// ──────────────────────────────────────────────────────────────────────
+
+#[test]
+fn read_extends_mandate_ttl() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let (id, c) = deploy(&env);
+
+    let mandate_id = BytesN::from_array(&env, &[42u8; 32]);
+    let recorder = Address::generate(&env);
+    c.open_mandate(&mandate_id, &recorder);
+
+    let key = DataKey::Mandate(mandate_id.clone());
+    let initial_ttl = env.as_contract(&id, || {
+        env.storage().persistent().get_ttl(&key)
+    });
+    assert_eq!(initial_ttl, TTL_TARGET_LEDGERS);
+
+    // Advance the ledger sequence past the threshold so remaining TTL < TTL_THRESHOLD_LEDGERS.
+    // initial TTL is 535_000; advancing 520_000 leaves 15_000 (< 17_280 threshold).
+    let advance_ledgers = 520_000u32;
+    env.ledger().with_mut(|li| {
+        li.sequence_number += advance_ledgers;
+    });
+
+    let decayed_ttl = env.as_contract(&id, || {
+        env.storage().persistent().get_ttl(&key)
+    });
+    assert!(
+        decayed_ttl < TTL_THRESHOLD_LEDGERS,
+        "decayed TTL must be below threshold: decayed={decayed_ttl}, threshold={TTL_THRESHOLD_LEDGERS}"
+    );
+
+    // Call a read function (get_mandate) - load should extend TTL back to TTL_TARGET_LEDGERS
+    let m = c.get_mandate(&mandate_id);
+    assert_eq!(m.recorder, recorder);
+
+    let extended_ttl = env.as_contract(&id, || {
+        env.storage().persistent().get_ttl(&key)
+    });
+    assert_eq!(
+        extended_ttl, TTL_TARGET_LEDGERS,
+        "read must extend mandate TTL back to target: extended={extended_ttl}, target={TTL_TARGET_LEDGERS}"
+    );
+
+    // Verify get_head also extends TTL when decayed below threshold
+    env.ledger().with_mut(|li| {
+        li.sequence_number += advance_ledgers;
+    });
+    let decayed_before_head = env.as_contract(&id, || {
+        env.storage().persistent().get_ttl(&key)
+    });
+    assert!(decayed_before_head < TTL_THRESHOLD_LEDGERS);
+
+    let head = c.get_head(&mandate_id);
+    assert_eq!(head, zero32(&env));
+    let extended_ttl_after_head = env.as_contract(&id, || {
+        env.storage().persistent().get_ttl(&key)
+    });
+    assert_eq!(extended_ttl_after_head, TTL_TARGET_LEDGERS);
+
+    // Verify get_count also extends TTL when decayed below threshold
+    env.ledger().with_mut(|li| {
+        li.sequence_number += advance_ledgers;
+    });
+    let decayed_before_count = env.as_contract(&id, || {
+        env.storage().persistent().get_ttl(&key)
+    });
+    assert!(decayed_before_count < TTL_THRESHOLD_LEDGERS);
+
+    let count = c.get_count(&mandate_id);
+    assert_eq!(count, 0);
+    let extended_ttl_after_count = env.as_contract(&id, || {
+        env.storage().persistent().get_ttl(&key)
+    });
+    assert_eq!(extended_ttl_after_count, TTL_TARGET_LEDGERS);
 }
