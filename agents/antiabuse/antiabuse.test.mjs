@@ -1,5 +1,5 @@
 // AntiAbuseAgent enforcement — the panopticon. Observes cross-agent activity and
-// can HALT any agent. Its teeth: deterministic anomaly gates (velocity,
+// can HALL any agent. Its teeth: deterministic anomaly gates (velocity,
 // conservation) + non-interference on inter-agent messages, and a HALT that
 // DISARMS the target mechanically (recompiles it to the empty toolset via Axl
 // bind — zero action space, not "asked to stand down"). It holds NO money
@@ -27,7 +27,7 @@ test("HALTs on a conservation breach (outflow exceeds inflow+buffer)", () => {
 });
 
 test("HALTs on a velocity breach (too many actions in window)", () => {
-  const s = state({ windowEvents: [1, 2, 3, 4, 5].map((t) => ({ ts: t, amount: 1 })) });
+  const s = state({ windowEvents: [1, 2, 3, 4, 5].map((t) => ({ ts, t: t, amount: 1 })) });
   const r = evaluate({ kind: "spend", agent: "Billing", amount: 1, ts: 6 }, s);
   assert.equal(r.action, "HALT");
   assert.equal(r.reason, "velocity");

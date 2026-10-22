@@ -50,6 +50,14 @@
 //! - **Testnet:** `CBO2COBZUTHH4II4JCQRZVO4RKDUIUH4MXZTAWOYVUZIVYI47UIDQCWQ` (`fee_bps = 300`, deployed 2026-06-05)
 //! - **Mainnet:** Pending deployment with canonical `DEFAULT_PLATFORM_FEE_BP = 297` (2.97%).
 
+// Both transfer legs are guarded identically on `amount > 0`. This is not an
+// optimisation: SEP-41 tokens differ on whether a zero-amount transfer is
+// accepted or reverted. Guarding both legs the same way means a zero leg is never
+// attempted, so a payment cannot fail on a configuration that produces a zero
+// amount. The constructor also rejects a 100% fee rate (between the fee and the
+// net one leg is always zero at 100%), so a zero-net payment cannot be
+// configured. The guards remain as defence in depth for any future rate change.
+
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol};
 
 #[contracterror]
@@ -77,7 +85,7 @@ impl Checkout {
     /// - Rejects `fee_bps > 10_000` with `Error::BadConfig`.
     /// - Writes immutable `FeeTo` and `FeeBps` to instance storage.
     pub fn __constructor(env: Env, fee_to: Address, fee_bps: u32) {
-        if fee_bps > 10_000 {
+        if fee_bps >= 10_000 {
             panic_with(&env, Error::BadConfig);
         }
         env.storage().instance().set(&DataKey::FeeTo, &fee_to);
@@ -101,15 +109,22 @@ impl Checkout {
         }
 
         let fee_to: Address = env.storage().instance().get(&DataKey::FeeTo)
-            .unwrap_or_else(|| panic_with(&env, Error::BadConfig));
+            .unwrap_or_else( || panic_with(&env, Error::BadConfig));
         let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps)
-            .unwrap_or_else(|| panic_with(&env, Error::BadConfig));
+            .unwrap_or_else( || panic_with(&env, Error::BadConfig));
 
         let fee: i128 = amount * (fee_bps as i128) / 10_000;
         let net: i128 = amount - fee;
 
+        // Both legs are guarded identically: a zero-amount transfer is skipped.
+        // SEP-41 tokens are inconsistent on zero transfers (some accept, some
+        // revert), so attempting one would make pay fail on a configuration
+        // that produces a zero leg. The constructor forbids a 100% rate, but the
+        // guards keep the invariant local to this function.
         let client = token::Client::new(&env, &token);
-        client.transfer(&from, &merchant, &net);
+        if net > 0 {
+            client.transfer(&from, &merchant, &net);
+        }
         if fee > 0 {
             client.transfer(&from, &fee_to, &fee);
         }
@@ -122,7 +137,7 @@ impl Checkout {
     }
 
     pub fn fee_bps(env: Env) -> u32 {
-        env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
+        env.storage().instance().get(&DataKey::FeeBps).unwrap_or_default(0)
     }
     pub fn fee_to(env: Env) -> Address {
         env.storage().instance().get(&DataKey::FeeTo).unwrap()
