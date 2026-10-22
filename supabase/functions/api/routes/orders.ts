@@ -1,6 +1,16 @@
 import { Hono } from "hono";
 import type { SupabaseClient } from "supabase";
-import { CreateOrderInputSchema, UsdcAmountSchema, LimitQuerySchema, ORDER_DEFAULT_EXPIRY_MINUTES, DEFAULT_PLATFORM_FEE_BP } from "@slippay/shared";
+import {
+  CreateOrderInputSchema,
+  UsdcAmountSchema,
+  LimitQuerySchema,
+  ORDER_DEFAULT_EXPIRY_MINUTES,
+  DEFAULT_PLATFORM_FEE_BP,
+  computeBrlChargeSplit,
+  splitFee,
+  stellarToStroops,
+  stroopsToStellar,
+} from "@slippay/shared";
 import { requireApiKey } from "../middleware/auth_apikey.ts";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
 import { generateMemo } from "../lib/memo.ts";
@@ -60,14 +70,24 @@ r.post("/", requireApiKey, async (c) => {
   let usd_amount: string | null = null;
   let rate_brl_usdc: string | null = null;
 
+  let feeUsdc: string;
+  let netUsdc: string;
+  const feeBp = Number((merchant as { platform_fee_bp?: number }).platform_fee_bp ?? DEFAULT_PLATFORM_FEE_BP);
+
   if (input.usd_amount) {
     usd_amount = input.usd_amount;
     usdc = input.usd_amount;
+    const split = splitFee(stellarToStroops(usdc), feeBp);
+    feeUsdc = stroopsToStellar(split.fee);
+    netUsdc = stroopsToStellar(split.net);
   } else {
     brl_amount = input.brl_amount!;
     const rate = await getBrlPerUsdc();
-    usdc = (parseFloat(input.brl_amount!) / rate).toFixed(7);
     rate_brl_usdc = rate.toFixed(7);
+    const split = computeBrlChargeSplit(brl_amount, rate, feeBp);
+    usdc = split.usdcAmount;
+    feeUsdc = split.feeUsdc;
+    netUsdc = split.netUsdc;
   }
 
   try {
@@ -80,16 +100,6 @@ r.post("/", requireApiKey, async (c) => {
   let memo = await generateMemo();
   const minutes = input.expires_in_minutes ?? ORDER_DEFAULT_EXPIRY_MINUTES;
   const expiresAt = new Date(Date.now() + minutes * 60_000).toISOString();
-
-  // Platform fee calculation per canonical specification: see docs/fees.md.
-  // `usdc` (gross) is what the buyer pays; merchant net = gross − fee; fee_usdc is
-  // persisted per order so capture model A (off-chain invoice) has a ledger to
-  // bill from, maintaining the invariant: net + fee == gross.
-  // Default fee rate is governed by DEFAULT_PLATFORM_FEE_BP (297 bp = 2.97%).
-  const feeBp = Number((merchant as { platform_fee_bp?: number }).platform_fee_bp ?? DEFAULT_PLATFORM_FEE_BP);
-  const grossUsdc = parseFloat(usdc);
-  const feeUsdc = (grossUsdc * feeBp / 10_000).toFixed(7);
-  const netUsdc = (grossUsdc - parseFloat(feeUsdc)).toFixed(7);
 
   const insertPayload = (m: string) => ({
     merchant_id: merchant.id,

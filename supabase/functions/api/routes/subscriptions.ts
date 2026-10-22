@@ -6,6 +6,7 @@ import {
   LimitQuerySchema,
   ORDER_DEFAULT_EXPIRY_MINUTES,
   DEFAULT_PLATFORM_FEE_BP,
+  computeBrlChargeSplit,
 } from "@slippay/shared";
 import { requireApiKey } from "../middleware/auth_apikey.ts";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
@@ -152,14 +153,11 @@ r.post("/:id/charge", requireApiKey, async (c) => {
   }
 
   const rate = await getBrlPerUsdc();
-  const usdc = (parseFloat(sub.brl_amount) / rate).toFixed(7);
+  const feeBp = Number((merchant as { platform_fee_bp?: number }).platform_fee_bp ?? DEFAULT_PLATFORM_FEE_BP);
+  const { usdcAmount: usdc, feeUsdc } = computeBrlChargeSplit(sub.brl_amount, rate, feeBp);
   const memo = await generateMemo();
   const expiresAt = new Date(Date.now() + ORDER_DEFAULT_EXPIRY_MINUTES * 60_000).toISOString();
   const nextChargeAt = new Date(Date.now() + sub.period_seconds * 1000).toISOString();
-
-  const feeBp = Number((merchant as { platform_fee_bp?: number }).platform_fee_bp ?? DEFAULT_PLATFORM_FEE_BP);
-  const grossUsdc = parseFloat(usdc);
-  const feeUsdc = (grossUsdc * feeBp / 10_000).toFixed(7);
 
   const { data: order, error: orderErr } = await sb.from("orders").insert({
     merchant_id: merchant.id,

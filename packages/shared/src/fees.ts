@@ -77,3 +77,48 @@ export function stroopsToStellar(n: bigint): string {
   const fracPart = abs % BigInt(STROOPS_PER_UNIT);
   return `${sign}${intPart}.${fracPart.toString().padStart(7, "0")}`;
 }
+
+/**
+ * Convert a BRL decimal amount string (e.g. "10.00") and a BRL/USDC exchange rate
+ * to integer USDC stroops without floating-point division or rounding errors.
+ */
+export function brlToUsdcStroops(brlAmount: string, rate: number | string): bigint {
+  const rateStr = typeof rate === "number" ? rate.toFixed(7) : rate;
+  const brlStroops = stellarToStroops(brlAmount);
+  const rateStroops = stellarToStroops(rateStr);
+  if (rateStroops <= 0n) throw new Error("invalid_rate");
+  return (brlStroops * STROOPS_PER_UNIT) / rateStroops;
+}
+
+/**
+ * Result of computing canonical order/subscription amounts in integer stroops and Stellar strings.
+ */
+export interface BrlChargeSplit {
+  usdcAmount: string;
+  feeUsdc: string;
+  netUsdc: string;
+  grossStroops: bigint;
+  feeStroops: bigint;
+  netStroops: bigint;
+}
+
+/**
+ * Computes the gross USDC, floored platform fee, and exact merchant net
+ * for a BRL amount and rate according to docs/fees.md.
+ */
+export function computeBrlChargeSplit(
+  brlAmount: string,
+  rate: number | string,
+  feeBp: number,
+): BrlChargeSplit {
+  const grossStroops = brlToUsdcStroops(brlAmount, rate);
+  const { fee: feeStroops, net: netStroops } = splitFee(grossStroops, feeBp);
+  return {
+    usdcAmount: stroopsToStellar(grossStroops),
+    feeUsdc: stroopsToStellar(feeStroops),
+    netUsdc: stroopsToStellar(netStroops),
+    grossStroops,
+    feeStroops,
+    netStroops,
+  };
+}
