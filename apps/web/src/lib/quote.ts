@@ -11,9 +11,18 @@
 // this is the pricing + measurement layer that makes the spread live the moment
 // the anchor is connected.
 
-const SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
+const RAW_SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
+// Spread bounds: reject an out-of-range VITE_FX_SPREAD_BPS rather than pricing
+// from it. 0..10000 bps (0%..100%) is the only sane range; anything else falls
+// back to the default 190 bps so a bad env var can never set the price.
+const DEFAULT_SPREAD_BPS = 190;
+const SPREAD_BPS =
+  Number.isFinite(RAW_SPREAD_BPS) && RAW_SPREAD_BPS >= 0 && RAW_SPREAD_BPS <= 10000
+    ? RAW_SPREAD_BPS
+    : DEFAULT_SPREAD_BPS;
 const RATE_URL = "https://open.er-api.com/v6/latest/USD";
 const FALLBACK_BRL_PER_USD = 5.4;
+const FETCH_TIMEOUT_MS = 5_000;
 
 export const SPREAD_PCT = SPREAD_BPS / 100;
 
@@ -30,18 +39,34 @@ export interface Quote {
   ts: string;
 }
 
+// A stale quote is refused unless the caller explicitly opts in. Pricing from a
+// fallback rate silently is the dangerous path this guards against.
+export class StaleQuoteError extends Error {
+  constructor() {
+    super("FX quote is stale; refusing to price without explicit opt-in");
+    this.name = "StaleQuoteError";
+  }
+}
+
 let cache: { rate: number; at: number } | null = null;
 // Cache the in-flight promise, not just the resolved value: concurrent cold
 // callers (several components mounting in one frame) share a single request.
 let inflight: Promise<{ rate: number; stale: boolean }> | null = null;
 
 async function fetchMidRate(): Promise<{ rate: number; stale: boolean }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const r = await fetch(RATE_URL);
+    const r = await fetch(RATE_URL, { signal: controller.signal });
+    if (!r.ok) return { rate: FALLBACK_BRL_PER_USD, stale: true };
     const j = await r.json();
     const rate = Number(j?.rates?.BRL);
-    if (rate > 0) { cache = { rate, at: Date.now() }; return { rate, stale: false }; }
+    if (Number.isFinite(rate) && rate > 0) {
+      cache = { rate, at: Date.now() };
+      return { rate, stale: false };
+    }
   } catch { /* fall through to fallback */ }
+  finally { clearTimeout(timer); }
   return { rate: FALLBACK_BRL_PER_USD, stale: true };
 }
 
@@ -52,8 +77,13 @@ export async function midRateBRLperUSD(): Promise<{ rate: number; stale: boolean
   return inflight;
 }
 
-export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Promise<Quote> {
+export async function quoteBRLtoUSDC(
+  brlIn: number,
+  spreadBps = SPREAD_BPS,
+  opts: { allowStale?: boolean } = {},
+): Promise<Quote> {
   const { rate: midRate, stale } = await midRateBRLperUSD();
+  if (stale && !opts.allowStale) throw new StaleQuoteError();
   const quotedRate = midRate * (1 + spreadBps / 10000);
   const usdcOut = brlIn > 0 ? brlIn / quotedRate : 0;
   const usdcAtMid = brlIn > 0 ? brlIn / midRate : 0;

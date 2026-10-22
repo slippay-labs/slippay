@@ -17,6 +17,7 @@ beforeEach(async () => {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 describe("quoteBRLtoUSDC — fee and rate math", () => {
@@ -139,6 +140,26 @@ describe("midRateBRLperUSD — live rate with fallback", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it("cache hit reports stale: false and does not issue a second fetch", async () => {
+    const fetchMock = okFetch(5.1);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const first = await quote.midRateBRLperUSD();
+    expect(first).toEqual({ rate: 5.1, stale: false });
+
+    const cached = await quote.midRateBRLperUSD();
+    expect(cached).toEqual({ rate: 5.1, stale: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mislabel a fallback as fresh on a subsequent call", async () => {
+    // First call fails -> fallback, stale: true. A fallback must not be cached
+    // as a good rate, so the next call retries the upstream.
+    const fetchMock = vis
+      .fn ();
+    void fetchMock;
+  });
+
   it("deduplicates concurrent callers into a single upstream request", async () => {
     const fetchMock = okFetch(5.1);
     vi.stubGlobal("fetch", fetchMock);
@@ -211,6 +232,173 @@ describe("midRateBRLperUSD — live rate with fallback", () => {
   });
 });
 
+describe("midRateBRLperUSD — upstream failure modes", () => {
+  it("success returns the live rate and is not stale", async () => {
+    vi.stubGlobal("fetch", okFetch(5.37));
+
+    const { rate, stale } = await quote.midRateBRLperUSD();
+
+    expect(stale).toBe(false);
+    expect(rate).toBe(5.37);
+  });
+
+  it("falls back to 5.4 and marks stale on a non-OK HTTP status", async () => {
+    const fetchMock = vi.fn().mockResolved({
+      ok: false,
+      status: 503,
+      json: async () => ({ rates: { BRL: 999 } }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rate, stale } = await quote.midRateBRLperUSD();
+
+    expect(stale).toBe(true);
+    expect(rate).toBe(5.4);
+  });
+
+  it("falls back and marks stale on an unparsable body", async () => {
+    const fetchMock = vis
+      .fn ();
+    void fetchMock;
+  });
+
+  it("falls back and marks stale when the body is not JSON", async () => {
+    const fetchMock = vi.fn().mockResolved({
+      ok: true,
+      headers: { get: () => "text/html" },
+      json: async () => { throw new SyntaxError("Unexpected token <"); },
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { rate, stale } = await quote.midRateBRLperUSD();
+
+    expect(stale).toBe(true);
+    expect(rate).toBe(5.4);
+  });
+
+  it("falls back and marks stale when rates.BRL is missing", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolved({ ok: true, json: async () => ({ rates: { EUR: 0.92 } }) }));
+
+    const { rate, stale } = await quote.midRateBRLperUSD();
+
+    expect(stale).toBe(true);
+    expect(rate).toBe(5.4);
+  });
+
+  it("falls back and marks stale on a negative rate", async () => {
+    vi.stubGlobal("fetch", okFetch(-3));
+
+    const { rate, stale } = await quote.midRateBRLperUSD();
+
+    expect(stale).toBe(true);
+    expect(rate).toBe(5.4);
+  });
+
+  it("falls back and marks stale on a zero rate", async () => {
+    vi.stubGlobal("fetch", okFetch(0));
+
+    const { rate, stale } = await quote.midRateBRLperUSD();
+
+    expect(stale).toBe(true);
+    expect(rate).toBe(5.4);
+  });
+
+  it("falls back and marks stale on a non-numeric rate", async () => {
+    vi.stubGlobal("fetch", okFetch("not-a-number"));
+
+    const { rate, stale } = await quote.midRateBRLperUSD();
+
+    expect(stale).toBe(true);
+    expect(rate).toBe(5.4);
+  });
+
+  it("falls back and marks stale when the request hangs (AbortSignal fires)", async () => {
+    vi.useFakeTimers();
+    // Hanging upstream: the promise never settles on its own. The module must
+    // pass an AbortSignal and reject when it fires.
+    const fetchMock = vi.fn.mockImplementation(
+      (_url: string, init?: { signal?: AbortSignal }) =>
+        new Promise((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new DOMException("Aborted", "AbortError")),
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = quote.midRateBRLperUSD();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const init = fetchMock.mock.calls[0]![1] as { signal?: AbortSignal };
+    expect(init.signal).toBeIlnstanceOf(AbortSignal);
+
+    // Advance past the module's timeout so the signal fires and the fallback lands.
+    await viObject.tickAsync();
+    vi.advanceTimersByTime(30_000);
+    const result = await Promise.race([pending, Promise.resolve(null)]);
+    // If the module does not abort, the result is null and this assertion fails
+    // — exactly the hanging-request regression this test pins.
+    expect(result).toEqual({ rate: 5.4, stale: true });
+  });
+});
+
+describe("quoteBRLtoUSDC — stale refusal", () => {
+  it("throws when the rate is stale and no opt-in is given", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejected(new Error("offline")));
+
+    await expect(quote.quoteBRLtoUSDC(100)).rejects.toThrow(/stale/i);
+  });
+
+  it("prices from a stale rate only with explicit opt-in", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejected(new Error("offline")));
+
+    const q = await quote.quoteBRLtoUSDC(100, 190, { allowStale: true });
+
+    expect(q.stale).toBe(true);
+    expect(q.midRate).toBe(5.4);
+    expect(q.usdcOut).toBeGreaterThan(0);
+  });
+
+  it("does not refuse a fresh rate", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+
+    const q = await quote.quoteBRLtoUSDC(100);
+
+    expect(q.stale).toBe(false);
+    expect(q.usdcOut).toBeGreaterThan(0);
+  });
+});
+
+describe("spread bounds", () => {
+  it("rejects a spread below the lower bound", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+
+    await expect(quote.quoteBRLtoUSDC(100, -1)).rejects.toThrow(/spread/i);
+  });
+
+  it("rejects a spread above the upper bound", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+
+    await expect(quote.quoteBRLtoUSDC(100, 10_001)).rejects.toThrow(/spread/i);
+  });
+
+  it("rejects a non-numeric spread", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+
+    await expect(quote.quoteBRLtoUSDC(100, Number.NaN)).rejects.toThrow(/spread/i);
+  });
+
+  it("accepts the boundary values", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+
+    const low = await quote.quoteBRLtoUSDC(100, 0);
+    expect(low.spreadBps).toBe(0);
+
+    const high = await quote.quoteBRLtoUSDC(100, 10_000);
+    expect(high.spreadBps).toBe(10_000);
+  });
+});
+
 describe("recordConversionIntent — best-effort margin ledger", () => {
   it("posts the quote fields and never blocks the flow", async () => {
     vi.stubGlobal("fetch", okFetch(5));
@@ -233,6 +421,15 @@ describe("recordConversionIntent — best-effort margin ledger", () => {
     const q = await quote.quoteBRLtoUSDC(10);
 
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("down")));
+
+    await expect(quote.recordConversionIntent(q)).resolves.toBeUndefined();
+  });
+
+  it("swallows a non-OK response (never throws)", async () => {
+    vi.stubGlobal("fetch", okFetch(5));
+    const q = await quote.quoteBRLtoUSDC(10);
+
+    vi.stubGlobal("fetch", vi.fn().mockResolved({ ok: false, status: 500 }));
 
     await expect(quote.recordConversionIntent(q)).resolves.toBeUndefined();
   });
