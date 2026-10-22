@@ -20,6 +20,13 @@ jobs:
     - uses: denoland/setup-deno@22d081ff2d3a40755e97629de92e3bcbfa7cf2ed
       with:
         deno-version: v2.x
+    - name: Cache Deno dependencies
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/deno
+        key: deno-${{ runner.os }}-${{ hashFiles('supabase/functions/**/deno.lock', 'supabase/functions/**/deno.json') }}
+        restore-keys: |
+          deno-${{ runner.os }}-
     - uses: supabase/setup-cli@b60b5899c73b63a2d2d651b1e90db8d4c9392f51
       with:
         version: latest
@@ -35,6 +42,11 @@ jobs:
       run: pnpm -r test
     - name: Start local Supabase stack
       run: supabase start
+    - name: Type check API edge function (deno check)
+      run: |
+        cd supabase/functions/api
+        deno check --env-file=../../../.env.local.ci index.ts || \
+          deno check index.ts
     - name: API edge function tests (deno)
       env:
         SUPABASE_URL: http://127.0.0.1:54321
@@ -43,8 +55,8 @@ jobs:
         RATE_BRL_USDC: '5.80'
         API_KEY_PEPPER: 'ci-test-api-key-pepper-at-least-32-characters-long'
         CHECKOUT_TOKEN_SECRET: 'ci-test-checkout-token-secret-at-least-32-chars'
-      run: "cd supabase/functions/api\ndeno test --allow-all --no-check --env-file=../../../.env.local.ci\
-        \ test/ || \\\n  deno test --allow-all --no-check test/\n"
+      run: "cd supabase/functions/api\ndeno test --allow-all --env-file=../../../.env.local.ci\
+        \ test/ || \\\n  deno test --allow-all test/\n"
     - name: Build web
       run: pnpm --filter @slippay/web build
     - name: Build listener
