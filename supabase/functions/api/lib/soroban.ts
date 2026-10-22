@@ -15,18 +15,47 @@ export interface SorobanConfig {
   passphrase: string;
 }
 
+export const DEFAULT_SOROBAN_RPC: Record<"testnet" | "mainnet", string> = {
+  testnet: "https://soroban-testnet.stellar.org",
+  mainnet: "https://soroban-mainnet.stellar.org",
+};
+
+export function resolveSorobanRpcUrl(network: "testnet" | "mainnet"): string {
+  const globalRpc = Deno.env.get("SOROBAN_RPC");
+  if (globalRpc && globalRpc.trim().length > 0) return globalRpc.trim();
+
+  const envKey = network === "mainnet" ? "SOROBAN_RPC_MAINNET" : "SOROBAN_RPC_TESTNET";
+  const netRpc = Deno.env.get(envKey);
+  if (netRpc && netRpc.trim().length > 0) return netRpc.trim();
+
+  return DEFAULT_SOROBAN_RPC[network];
+}
+
+export function getSorobanConfig(network: "testnet" | "mainnet"): SorobanConfig {
+  return {
+    network,
+    rpcUrl: resolveSorobanRpcUrl(network),
+    passphrase: network === "mainnet" ? Networks.PUBLIC : Networks.TESTNET,
+  };
+}
+
 export const SOROBAN_NET: Record<"testnet" | "mainnet", SorobanConfig> = {
-  testnet: {
-    network: "testnet",
-    rpcUrl: "https://soroban-testnet.stellar.org",
-    passphrase: Networks.TESTNET,
+  get testnet() {
+    return getSorobanConfig("testnet");
   },
-  mainnet: {
-    network: "mainnet",
-    rpcUrl: "https://soroban-mainnet.stellar.org",
-    passphrase: Networks.PUBLIC,
+  get mainnet() {
+    return getSorobanConfig("mainnet");
   },
 };
+
+export class SorobanRpcTransportError extends Error {
+  public readonly rpcUrl: string;
+  constructor(message: string, rpcUrl: string) {
+    super(message);
+    this.name = "SorobanRpcTransportError";
+    this.rpcUrl = rpcUrl;
+  }
+}
 
 export interface BuildChargeTxArgs {
   contractId: string;
@@ -62,14 +91,30 @@ export interface BuildChargeTxResult {
 export async function buildChargeTransaction(
   args: BuildChargeTxArgs,
 ): Promise<BuildChargeTxResult> {
-  const cfg = SOROBAN_NET[args.network];
+  const cfg = getSorobanConfig(args.network);
   const rpc = new SorobanRpc.Server(cfg.rpcUrl);
 
   // 1. Load buyer account (need its sequence number)
   let account;
   try {
     account = await rpc.getAccount(args.buyerAddress);
-  } catch (e) {
+  } catch (e: unknown) {
+    const msg = String((e as Error)?.message ?? e);
+    // Audit-004 · M7: Distinguish transport / network / connection errors from account missing.
+    // If Soroban RPC is unreachable, degraded, or returns gateway/timeout errors, report as transport error.
+    if (
+      msg.includes("fetch failed") ||
+      msg.includes("ECONNREFUSED") ||
+      msg.includes("ENOTFOUND") ||
+      msg.includes("ETIMEDOUT") ||
+      msg.includes("network") ||
+      msg.includes("502") ||
+      msg.includes("503") ||
+      msg.includes("504") ||
+      msg.includes("Failed to fetch")
+    ) {
+      throw new SorobanRpcTransportError(`soroban RPC unreachable at ${cfg.rpcUrl}: ${msg}`, cfg.rpcUrl);
+    }
     throw new Error(`buyer account not found on ${args.network}: ${args.buyerAddress}`);
   }
 
@@ -91,7 +136,13 @@ export async function buildChargeTransaction(
     .build();
 
   // 4. Simulate to discover auth requirements + resource fees + return value
-  const sim = await rpc.simulateTransaction(tx);
+  let sim;
+  try {
+    sim = await rpc.simulateTransaction(tx);
+  } catch (e: unknown) {
+    const msg = String((e as Error)?.message ?? e);
+    throw new SorobanRpcTransportError(`soroban RPC simulate failed at ${cfg.rpcUrl}: ${msg}`, cfg.rpcUrl);
+  }
   if (SorobanRpc.Api.isSimulationError(sim)) {
     return {
       unsigned_xdr: tx.toXDR(),

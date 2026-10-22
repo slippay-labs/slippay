@@ -40,6 +40,9 @@ const apiEnv = {
   STELLAR_NETWORK: env.STELLAR_NETWORK || "TESTNET",
   CHECKOUT_BASE_URL: env.CHECKOUT_BASE_URL || "https://api.slippay.cc",
   RATE_BRL_USDC: env.RATE_BRL_USDC || "",
+  SOROBAN_RPC_TESTNET: env.SOROBAN_RPC_TESTNET || "",
+  SOROBAN_RPC_MAINNET: env.SOROBAN_RPC_MAINNET || "",
+  SOROBAN_RPC: env.SOROBAN_RPC || "",
 };
 
 const listenerEnv = {
