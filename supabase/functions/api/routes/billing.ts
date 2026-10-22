@@ -3,6 +3,98 @@ import type { SupabaseClient } from "supabase";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
 import { mapDbError } from "../lib/db-error.ts";
 
+export const MAX_BILLING_WINDOW_DAYS = 366;
+export const MAX_BILLING_WINDOW_MS = MAX_BILLING_WINDOW_DAYS * 24 * 60 * 60 * 1000;
+
+export type BillingWindowResult =
+  | { ok: true; from: Date; to: Date; fromIso: string; toIso: string }
+  | { ok: false; error: string; detail: string; status: 400 };
+
+/**
+ * Validates and normalises the billing window from query parameters.
+ * Rejects malformed dates, reversed windows, and windows exceeding MAX_BILLING_WINDOW_DAYS.
+ */
+export function validateBillingWindow(
+  rawFrom?: string,
+  rawTo?: string,
+  now = new Date()
+): BillingWindowResult {
+  let fromDate: Date;
+  let toDate: Date;
+
+  if (rawFrom !== undefined) {
+    if (!rawFrom.trim()) {
+      return {
+        ok: false,
+        error: "invalid_from_date",
+        detail: "Query parameter 'from' cannot be empty",
+        status: 400,
+      };
+    }
+    const parsed = new Date(rawFrom);
+    if (isNaN(parsed.getTime())) {
+      return {
+        ok: false,
+        error: "invalid_from_date",
+        detail: "Query parameter 'from' must be a valid date",
+        status: 400,
+      };
+    }
+    fromDate = parsed;
+  } else {
+    fromDate = new Date(now.getFullYear(), now.getMonth(), 1);
+  }
+
+  if (rawTo !== undefined) {
+    if (!rawTo.trim()) {
+      return {
+        ok: false,
+        error: "invalid_to_date",
+        detail: "Query parameter 'to' cannot be empty",
+        status: 400,
+      };
+    }
+    const parsed = new Date(rawTo);
+    if (isNaN(parsed.getTime())) {
+      return {
+        ok: false,
+        error: "invalid_to_date",
+        detail: "Query parameter 'to' must be a valid date",
+        status: 400,
+      };
+    }
+    toDate = parsed;
+  } else {
+    toDate = now;
+  }
+
+  if (fromDate.getTime() >= toDate.getTime()) {
+    return {
+      ok: false,
+      error: "invalid_window_range",
+      detail: "'from' must be strictly before 'to'",
+      status: 400,
+    };
+  }
+
+  if (toDate.getTime() - fromDate.getTime() > MAX_BILLING_WINDOW_MS) {
+    return {
+      ok: false,
+      error: "window_too_large",
+      detail: `Billing window exceeds the maximum allowed range of ${MAX_BILLING_WINDOW_DAYS} days`,
+      status: 400,
+    };
+  }
+
+  return {
+    ok: true,
+    from: fromDate,
+    to: toDate,
+    fromIso: fromDate.toISOString(),
+    toIso: toDate.toISOString(),
+  };
+}
+
 type Vars = { merchant: { id: string; platform_fee_bp?: number; [k: string]: unknown }; supabase: SupabaseClient };
 const r = new Hono<{ Variables: Vars }>();
 
@@ -16,10 +108,13 @@ r.get("/fees", requireApiKeyOrJwt, async (c) => {
   const merchant = c.get("merchant");
   const sb = c.get("supabase");
 
-  const now = new Date();
-  const defFrom = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  const from = c.req.query("from") ?? defFrom;
-  const to = c.req.query("to") ?? now.toISOString();
+  const windowRes = validateBillingWindow(c.req.query("from"), c.req.query("to"));
+  if (!windowRes.ok) {
+    return c.json({ error: windowRes.error, detail: windowRes.detail }, windowRes.status);
+  }
+
+  const from = windowRes.fromIso;
+  const to = windowRes.toIso;
 
   // Only paid orders are billable.
   const { data, error } = await sb
