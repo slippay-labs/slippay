@@ -60,3 +60,40 @@ test("end-to-end: a Settlement agent bound away from transfer_funds cannot be gi
   // The model literally has no transfer_funds schema to call.
   assert.equal(tools.find((t) => t.name === "transfer_funds"), undefined);
 });
+
+// ---- Boundary and malformed-input cases ----
+
+test("binding to every registry capability yields the full set (upper bound)", () => {
+  const all = Object.keys(REGISTRY);
+  const tools = compileToolset(all, REGISTRY);
+  assert.equal(tools.length, all.length);
+  assert.deepEqual(tools.map((t) => t.name).sort(), [...all].sort());
+});
+
+test("binding to a single capability yields exactly one tool (lower bound)", () => {
+  const tools = compileToolset(["transfer_funds"], REGISTRY);
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0].name, "transfer_funds");
+});
+
+test("duplicate capabilities do not duplicate tool schemas", () => {
+  const tools = compileToolset(["read_balance", "read_balance"], REGISTRY);
+  const names = tools.map((t) => t.name);
+  assert.deepEqual(names, ["read_balance"]);
+});
+
+test("malformed bind declarations fail closed", () => {
+  // Missing the `bindd keyword.
+  assert.throws(() => parseBind("Settlement -> [read_balance]"));
+  // Missing the `->` arrow.
+  assert.throws(() => parseBind("bind Settlement [read_balance]"));
+  // Missing the bracketed capability list.
+  assert.throws(() => parseBind("bind Settlement -> read_balance"));
+  // Empty string.
+  assert.throws(() => parseBind(""));
+});
+
+test("compiling against a missing registry fails closed", () => {
+  assert.throws(() => compileToolset(["read_balance"], undefined));
+  assert.throws(() => compileToolset(["read_balance"], {}));
+});

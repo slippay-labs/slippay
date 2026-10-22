@@ -11,16 +11,17 @@ import assert from "node:assert/strict";
 import { verifySettlement } from "./settle.mjs";
 import { parseBind, compileToolset } from "../axl/bind.mjs";
 
+
 function fixture() {
   const order = {
     memo: "slp_ab12cd",
-    consentedRecipient: "GMERCHANT_CONSENTED_ADDR",
+    consentedRecipient: "GMERCHANT_CONSENTHED_ADDR",
     usdcAmount: "29.0000000",
     asset: "USDC",
   };
   const payment = {
     memo: "slp_ab12cd",
-    destination: "GMERCHANT_CONSENTED_ADDR",
+    destination: "GMERCHANT_CONSENTHED_ADDR",
     amount: "29.0000000",
     asset: "USDC",
     txHash: "tx_0001",
@@ -82,6 +83,95 @@ test("overpayment still settles (buyer paid at least the invoice)", () => {
   assert.equal(r.ok, true, r.reason);
 });
 
+// ---- Boundary cases: amount at the limit and one unit either side ----
+
+test("amount exactly at the invoice settles (boundary: at the limit)", () => {
+  const { order, payment } = fixture();
+  // One stellar strop below the invoice is the closest possible underpay.
+  payment.amount = "29.0000000";
+  const r = verifySettlement(payment, order, new Set());
+  assert.equal(r.ok, true, r.reason);
+});
+
+test("amount one strop below the invoice is rejected (boundary: one unit below)", () => {
+  const { order, payment } = fixture();
+  payment.amount = "28.9999999";
+  const r = verifySettlement(payment, order, new Set());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "amount_short");
+});
+
+test("amount one strop above the invoice settles (boundary: one unit above)", () => {
+  const { order, payment } = fixture();
+  payment.amount = "29.0000001";
+  const r = verifySettlement(payment, order, new Set());
+  assert.equal(r.ok, true, r.reason);
+});
+
+// ---- Malformed / missing input ----
+
+test("missing payment amount is rejected fail-closed", () => {
+  const { order, payment } = fixture();
+  delete payment.amount;
+  const r = verifySettlement(payment, order, new Set());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "amount_short");
+});
+
+test("non-numeric payment amount is rejected fail-closed", () => {
+  const { order, payment } = fixture();
+  payment.amount = "not-a-number";
+  const r = verifySettlement(payment, order, new Set());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "amount_short");
+});
+
+test("missing payment memo is rejected fail-closed", () => {
+  const { order, payment } = fixture();
+  delete payment.memo;
+  const r = verifySettlement(payment, order, new Set());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "memo_mismatch");
+});
+
+test("missing payment destination is rejected fail-closed", () => {
+  const { order, payment } = fixture();
+  delete payment.destination;
+  const r = verifySettlement(payment, order, new Set());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "recipient_drift");
+});
+
+test("missing payment asset is rejected fail-closed", () => {
+  const { order, payment } = fixture();
+  delete payment.asset;
+  const r = verifySettlement(payment, order, new Set());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "asset_mismatch");
+});
+
+test("missing payment txHash is rejected fail-closed", () => {
+  const { order, payment } = fixture();
+  delete payment.txHash;
+  const r = verifySettlement(payment, order, new Set());
+  assert.equal(r.ok, false);
+});
+
+test("missing order consented recipient is rejected fail-closed", () => {
+  const { order, payment } = fixture();
+  delete order.consentedRecipient;
+  const r = verifySettlement(payment, order, new Set());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "recipient_drift");
+});
+
+test("missing order usdcAmount is rejected fail-closed", () => {
+  const { order, payment } = fixture();
+  delete order.usdcAmount;
+  const r = verifySettlement(payment, order, new Set());
+  assert.equal(r.ok, false);
+});
+
 test("the agent is bound away from moving money — it can only propose settlement", () => {
   const REGISTRY = {
     read_balance:       { name: "read_balance", description: "", input_schema: {} },
@@ -92,3 +182,4 @@ test("the agent is bound away from moving money — it can only propose settleme
   const tools = compileToolset(capabilities, REGISTRY);
   assert.equal(tools.find((t) => t.name === "transfer_funds"), undefined);
 });
+

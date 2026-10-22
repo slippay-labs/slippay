@@ -19,7 +19,7 @@ function fixture() {
     mandateId: "m_" + "a".repeat(30),
     merchantKey: merchant.publicKey(),
     buyer: "GBUYER" + "B".repeat(50),
-    amount: "29000000", // 29 USDC, consented
+    amount: "29000000", // 29 USDc, consented
     token: "USDC_CONTRACT",
     recipient: "GMERCHANT_RECV" + "C".repeat(42),
     periodSeconds: 2592000,
@@ -81,4 +81,110 @@ test("free-text merchant metadata is inert — injection in a note cannot flip t
   const r = authorizeIntent(intent, mandate, new Set());
   // Authorized purely on crypto+consent; the note has zero effect either way.
   assert.equal(r.ok, true, r.reason);
+});
+
+// --- Boundary cases: amount exactly at the consented limit and one unit either side ---
+
+test("amount exactly at the consented limit is authorized", () => {
+  const { merchant, mandate, intent } = fixture();
+  intent.amount = mandate.amount; // 29000000 == consent
+  intent.signature = signIntent(merchant, intent);
+  const r = authorizeIntent(intent, mandate, new Set());
+  assert.equal(r.ok, true, r.reason);
+});
+
+test("amount one unit below the consented limit is authorized", () => {
+  const { merchant, mandate, intent } = fixture();
+  intent.amount = (BigInt(mandate.amount) - 1n).toString();
+  intent.signature = signIntent(merchant, intent);
+  const r = authorizeIntent(intent, mandate, new Set());
+  assert.equal(r.ok, true, r.reason);
+});
+
+test("amount one unit above the consented limit is rejected as term_drift", () => {
+  const { merchant, mandate, intent } = fixture();
+  intent.amount = (BigInt(mandate.amount) + 1n).toString();
+  intent.signature = signIntent(merchant, intent);
+  const r = authorizeIntent(intent, mandate, new Set());
+  assert.equal(r.ok, false);
+  assert.equal(r.reason, "term_drift");
+});
+
+// --- Boundary cases: periodIndex against maxPeriods ---
+
+test("periodIndex exactly at maxPeriods is authorized", () => {
+  const { merchant, mandate, intent } = fixture();
+  intent.periodIndex = mandate.maxPeriods;
+  intent.signature = signIntent(merchant, intent);
+  const r = authorizeIntent(intent, mandate, new Set());
+  assert.equal(r.ok, true, r.reason);
+});
+
+test("periodIndex one below maxPeriods is authorized", () => {
+  const { merchant, mandate, intent } = fixture();
+  intent.periodIndex = mandate.maxPeriods - 1;
+  intent.signature = signIntent(merchant, intent);
+  const r = authorizeIntent(intent, mandate, new Set());
+  assert.equal(r.ok, true, r.reason);
+});
+
+test("periodIndex one above maxPeriods is rejected", () => {
+  const { merchant, mandate, intent } = fixture();
+  intent.periodIndex = mandate.maxPeriods + 1;
+  intent.signature = signIntent(merchant, intent);
+  const r = authorizeIntent(intent, mandate, new Set());
+  assert.equal(r.ok, false);
+});
+
+// --- Malformed / missing input fields ---
+
+test("missing mandate is rejected fail-closed", () => {
+  const { intent } = fixture();
+  const r = authorizeIntent(intent, undefined, new Set());
+  assert.equal(r.ok, false);
+});
+
+test("missing intent is rejected fail-closed", () => {
+  const { mandate } = fixture();
+  const r = authorizeIntent(undefined, mandate, new Set());
+  assert.equal(r.ok, false);
+});
+
+test("intent missing a signature is rejected fail-closed", () => {
+  const { mandate, intent } = fixture();
+  delete intent.signature;
+  const r = authorizeIntent(intent, mandate, new Set());
+  assert.equal(r.ok, false);
+});
+
+test("intent missing the mandateId is rejected fail-closed", () => {
+  const { merchant, mandate, intent } = fixture();
+  delete intent.mandateId;
+  intent.signature = signIntent(merchant, intent);
+  const r = authorizeIntent(intent, mandate, new Set());
+  assert.equal(r.ok, false);
+});
+
+test("non-numeric amount is rejected fail-closed", () => {
+  const { merchant, mandate, intent } = fixture();
+  intent.amount = "not-a-number";
+  intent.signature = signIntent(merchant, intent);
+  const r = authorizeIntent(intent, mandate, new Set());
+  assert.equal(r.ok, false);
+});
+
+test("unrecognised token is rejected fail-closed", () => {
+  const { merchant, mandate, intent } = fixture();
+  intent.token = "EVIL_TOKEN";
+  intent.signature = signIntent(merchant, intent);
+  const r = authorizeIntent(intent, mandate, new Set());
+  assert.equal(r.ok, false);
+});
+
+test("tampered consent digest is rejected fail-closed", () => {
+  const { mandate, intent } = fixture();
+  // Merchant mutates the consented amount after the buyer signed off on it.
+  mandate.amount = "99000000";
+  const r = authorizeIntent(intent, mandate, new Set());
+  assert.equal(r.ok, false);
 });
