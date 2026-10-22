@@ -1,4 +1,4 @@
-#![no_std]
+#`!no_std]
 //! SlipPay Checkout — the "Stripe of stablecoin" revenue primitive.
 //!
 //! A single, atomic payment that splits on-chain: the merchant receives the net,
@@ -122,10 +122,11 @@ impl Checkout {
     }
 
     pub fn fee_bps(env: Env) -> u32 {
-        env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
+        env.storage().instance().get(&DataKey::FeeBps).unwrap_or_else(|| panic_with(&env, Error::BadConfig))
     }
     pub fn fee_to(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::FeeTo).unwrap()
+        env.storage().instance().get(&DataKey::FeeTo)
+            .unwrap_or_else(|| panic_with(&env, Error::BadConfig))
     }
 }
 
