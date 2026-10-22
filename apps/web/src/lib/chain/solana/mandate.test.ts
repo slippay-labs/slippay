@@ -21,6 +21,7 @@ import { Keypair, PublicKey, SystemProgram } from "@solana/web3.js";
 import { TOKEN_PROGRAM_ID } from "@solana/spl-token";
 import {
   mandatePda, orderIdFromHex, MANDATE_PROGRAM_ID, SlippayMandate, BN,
+  validateIdlProgramId, USDC_MINTS, assertUsdcMint, IDL_PROGRAM_VERSION,
 } from "./mandate.ts";
 
 describe("orderIdFromHex", () => {
@@ -58,6 +59,56 @@ describe("mandatePda", () => {
     const mint = Keypair.generate().publicKey;
     expect(mandatePda(owner, mint).equals(mandatePda(owner, mint))).toBe(true);
     expect(mandatePda(owner, mint).equals(mandatePda(owner, Keypair.generate().publicKey))).toBe(false);
+  });
+});
+
+describe("IDL program id validation", () => {
+  it("records the program version the IDL describes", () => {
+    expect(typeof IDL_PROGRAM_VERSION).toBe("string");
+    expect(IDL_PROGRAM_VERSION.length).toBeGreaterThan(0);
+  });
+
+  it("accepts an IDL whose address matches the configured program id", () => {
+    const idl = { address: MANDATE_PROGRAM_ID.toBase58(), metadata: { version: IDL_PROGRAM_VERSION } };
+    expect(() => validateIdlProgramId(idl, MANDATE_PROGRAM_ID)).not.toThrow();
+  });
+
+  it("fails closed when the IDL address does not match the configured program id", () => {
+    const other = Keypair.generate().publicKey.toBase58();
+    const idl = { address: other, metadata: { version: IDL_PROGRAM_VERSION } };
+    expect(() => validateIdlProgramId(idl, MANDATE_PROGRAM_ID)).toThrow(
+      /IDL program address mismatch/i,
+    );
+  });
+
+  it("fails closed when the IDL is missing an address", () => {
+    expect(() => validateIdlProgramId({} as any, MANDATE_PROGRAM_ID)).toThrow(/IDL address missing/i);
+  });
+});
+
+describe("USDC mint validation", () => {
+  it("records an expected mint per cluster", () => {
+    expect(USDC_MINTS).toHaveProperty("mainnet-beta");
+    expect(USDC_MINTS).toHaveProperty("devnet");
+  });
+
+  it("accepts the expected mint for each cluster", () => {
+    for (const [cluster, mint] of Object.entries(USDC_MINTS)) {
+      expect(() => assertUsdcMint(cluster as any, mint)).not.toThrow();
+    }
+  });
+
+  it("rejects a mint that does not match the cluster", () => {
+    const wrong = Keypair.generate().publicKey.toBase58();
+    expect(() => assertUsdcMint("mainnet-beta", wrong)).toThrow(
+      /USDC mint mismatch/i,
+    );
+  });
+
+  it("rejects an unknown cluster", () => {
+    expect(() => assertUsdcMint("testnet" as any, USDC_MINTS.devnet)).toThrow(
+      /USDC mint mismatch/i,
+    );
   });
 });
 
