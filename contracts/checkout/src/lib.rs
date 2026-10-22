@@ -50,6 +50,8 @@
 //! - **Testnet:** `CBO2COBZUTHH4II4JCQRZVO4RKDUIUH4MXZTAWOYVUZIVYI47UIDQCWQ` (`fee_bps = 300`, deployed 2026-06-05)
 //! - **Mainnet:** Pending deployment with canonical `DEFAULT_PLATFORM_FEE_BP = 297` (2.97%).
 
+/// Never return a plausible business value for a missing configuration.
+
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol};
 
 #[contracterror]
@@ -121,11 +123,22 @@ impl Checkout {
         fee
     }
 
+    /// Returns the configured fee in basis points.
+    ///
+    /// Panics with `Error::BadConfig` when the contract is unconfigured, matching
+    /// `pay` and `fee_to`. A configured zero-fee deployment returns a real `0`.
     pub fn fee_bps(env: Env) -> u32 {
-        env.storage().instance().get(&DataKey::FeeBps).unwrap_or(0)
+        env.storage().instance().get(&DataKey::FeeBps)
+            .unwrap_or_else(|| panic_with(&env, Error::BadConfig))
     }
+
+    /// Returns the configured fee recipient.
+    ///
+    /// Panics with Error::BadConfig when the contract is unconfigured, matching
+    /// `pay` and `fee_bps`.
     pub fn fee_to(env: Env) -> Address {
-        env.storage().instance().get(&DataKey::FeeTo).unwrap()
+        env.storage().instance().get(&DataKey::FeeTo)
+            .unwrap_or_else(|| panic_with(&env, Error::BadConfig))
     }
 }
 
