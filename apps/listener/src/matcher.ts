@@ -1,5 +1,4 @@
-import { NETWORK, USDC_ASSET_CODE, stellarToStroops, stroopsToStellar } from "@slippay/shared";
-
+import { NETWORK, USDC_ASSET_CODE, BpsSchema, stellarToStroops, stroopsToStellar } from "@slippay/shared";
 
 export interface StellarPaymentEvent {
   memo_type: string;
@@ -34,7 +33,7 @@ export function matchPaymentToOrder(
   if (ev.memo_type !== "hash") return { outcome: "ignore", reason: "memo_type" };
   if (ev.asset_code !== USDC_ASSET_CODE) return { outcome: "ignore", reason: "asset_code" };
 
-  const expectedIssuer = process.env.STELLAR_USDC_ISSUER_OVERRIDE
+  const expectedIssuer = process.env.STELLAR_USDK_ISSUER_OVERRIDE
     ?? (network === "PUBLIC" ? NETWORK.mainnet.usdc_issuer : NETWORK.testnet.usdc_issuer);
   if (ev.asset_issuer !== expectedIssuer) return { outcome: "ignore", reason: "asset_issuer" };
 
@@ -55,24 +54,19 @@ export function matchPaymentToOrder(
   } catch {
     return { outcome: "ignore", reason: "amount_parse" };
   }
-  if (
-    order.platform_fee_bp === null ||
-    order.platform_fee_bp === undefined ||
-    typeof order.platform_fee_bp !== "number" ||
-    Number.isNaN(order.platform_fee_bp) ||
-    order.platform_fee_bp < 0 ||
-    order.platform_fee_bp >= 10_000
-  ) {
+  // Every fee bp used in arithmetic must have passed the shared bounded
+  // integer schema. Fail closed on anything out of range.
+  const feeParsed = BpsSchema.safeParse(order.platform_fee_bp);
+  if (!feeParsed.success) {
     return { outcome: "ignore", reason: "fee_bp_invalid" };
   }
-  // Fee arithmetic and rounding specification: see docs/fees.md.
-  // Integer division truncates toward zero; fractional dust remainder
-  // accrues to the merchant, ensuring net + fee == gross and no overcharging.
-  const expectedStroops = (totalStroops * BigInt(10_000 - order.platform_fee_bp)) / 10_000n;
+  const feeBp = feeParsed.data;
+  // Floor division here is conservative: integer division truncates toward
+  // zero, so the merchant receives at most the mathematically correct amount.
+  const expectedStroops = (totalStroops * BigInt(10_000 - feeBp)) / 10_000n;
   const expectedMerchantShare = stroopsToStellar(expectedStroops);
   if (receivedStroops >= expectedStroops) return { outcome: "paid" };
   return { outcome: "underpaid", expected: expectedMerchantShare, received: ev.amount };
 }
 
 export { stellarToStroops, stroopsToStellar };
-

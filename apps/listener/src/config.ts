@@ -1,9 +1,15 @@
+import { parseBps } from "@slippay/shared";
+
 function need(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`missing env ${name}`);
   return v;
 }
 const rawNetwork = (process.env.STELLAR_NETWORK ?? "TESTNET").toUpperCase() as "TESTNET" | "PUBLIC";
+
+// Fail closed at startup: an out-of-range configured fee throws here rather
+// than silently producing nonsensical arithmetic per request.
+const platformFeeBp = parseBps(Number(process.env.PLATFORM_FEE_BP ?? "0"), "PLATFORM_FEE_BP");
 
 export const config = {
   supabaseUrl: need("SUPABASE_URL"),
@@ -23,4 +29,7 @@ export const config = {
   // targets so local mock servers work in tests. NEVER set in production.
   allowLocalWebhooks: (process.env.ALLOW_LOCAL_WEBHOOKS ?? "") === "1",
   merchantPollMs: Number(process.env.MERCHANT_POLL_MS ?? "30000"),
+  // Platform fee in basis points, parsed through the shared bounded schema
+  // at the boundary so an out-of-range config fails at startup.
+  platformFeeBp,
 };

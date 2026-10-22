@@ -1,10 +1,12 @@
-import { config } from "./config.js";
+import { config, validateConfig } from "./config.js";
 import { db } from "./db.js";
 import { startManager } from "./manager.js";
 import { startWebhookWorker } from "./webhook.js";
 import { log } from "./log.js";
 
 async function main() {
+  // Fail close on out-of-range configuration at startup.
+  validateConfig(config);
   log("info", "listener_starting", { network: config.network });
   const stop = startManager(db);
   const stopWebhook = startWebhookWorker(db, config.allowLocalWebhooks);

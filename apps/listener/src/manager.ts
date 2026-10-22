@@ -3,6 +3,7 @@ import { watchAccount } from "./horizon.js";
 import { log } from "./log.js";
 import { config } from "./config.js";
 import { acquireLease } from "./lease.js";
+import { feeBpsSchema } from "@slippay/shared";
 
 interface Active { stop: () => void; releaseLease: () => Promise<void>; }
 
@@ -13,9 +14,17 @@ export function startManager(db: SupabaseClient) {
     // Only watch merchants on the same network this listener streams (audit:
     // a testnet merchant left active would otherwise stream-error forever on a
     // mainnet listener). Fail-closed: a row with a null/other network is skipped.
-    const { data, error } = await db.from("merchants").select("stellar_address").eq("active", true).eq("network", config.merchantNetwork).not("stellar_address", "is", null);
+    const { data, error } = await db.from("merchants").select("stellar_address, fee_bps").eq("active", true).eq("network", config.merchantNetwork).not("stellar_address", "is", null);
     if (error) { log("error", "manager_query_failed", { error: error.message }); return; }
-    const desired = new Set((data ?? []).map(r => r.stellar_address as string));
+    const desired = new Set<string>();
+    for (const r of data ?? []) {
+      const parsed = feeBpsSchema.safeParse(r.fee_bps);
+      if (!parsed.success) {
+        log("error", "manager_invalid_fee_bps", { addr: r.stellar_address, feeBps: r.fee_bps });
+        continue;
+      }
+      desired.add(r.stellar_address as string);
+    }
 
     for (const addr of desired) {
       if (!active.has(addr)) {
