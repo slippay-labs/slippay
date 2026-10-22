@@ -43,8 +43,7 @@ jobs:
         RATE_BRL_USDC: '5.80'
         API_KEY_PEPPER: 'ci-test-api-key-pepper-at-least-32-characters-long'
         CHECKOUT_TOKEN_SECRET: 'ci-test-checkout-token-secret-at-least-32-chars'
-      run: "cd supabase/functions/api\ndeno test --allow-all --no-check --env-file=../../../.env.local.ci\
-        \ test/ || \\\n  deno test --allow-all --no-check test/\n"
+      run: cd supabase/functions/api && deno test --allow-all --no-check --env-file=../../../.env.local.ci test/
     - name: Build web
       run: pnpm --filter @slippay/web build
     - name: Build listener
