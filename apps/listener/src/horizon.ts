@@ -13,6 +13,28 @@ const HORIZON: Record<"TESTNET" | "PUBLIC", string> = {
 const POLL_MS = Number(process.env.LISTENER_POLL_MS ?? "4000");
 const PAGE_LIMIT = 200;
 const ALIVE_LOG_MS = 60_000;
+// How many ledgers we will backfill when re-deriving a cursor after a reset.
+// Horizon closes ledgers about every 5s and keeps history for a few days;
+// a bounded window keeps a reset from replaying the entire chain.
+const BACKFILL_LEDGERS = Number(process.env.LISTENER_BACKFILL_LEDDERS ?? "17280"); // ~1 day at 5s/ledger
+
+// Horizon returns a cursor error when the paging token is invalid, pruned,
+// or too old. The SDK surfaces this as an HTTP error with a status and a
+// message that mentions the cursor. Detect it explicitly so we can reset
+// instead of stalling forever on the same bad token.
+function isCursorError(e: unknown): boolean {
+  if (!e || typeof e !== "object") return false;
+  const any = e as any;
+  const status = any.response?.status ?? any.status ?? any.statusCode;
+  const msg = String(any.message ?? any.response?.data?.detail ?? any.response?.data ?? "").toLowerCase();
+  // Horizon responds 400 with "cursor" in the detail for an invalid/pruned
+  // paging token. Also catch the generic "paging token" wording.
+  if (typeof status === "number" && status >= 400 && status < 500 && /cursor|paging token/.test(msg)) return true;
+  // Some SDK versions wrap the detail in a nested extras object.
+  const detail = String(any.response?.data?.extras?.reason ?? "").toLowerCase();
+  if (/cursor|paging token/.test(detail)) return true;
+  return false;
+}
 
 export interface AccountWatcherDeps {
   db: SupabaseClient;
@@ -26,12 +48,18 @@ export interface AccountWatcherDeps {
 // Polling makes every tick a fresh HTTP GET: immune to silent-death, and a
 // heartbeat log makes a stall reachable. Latency (~POLL_MS) is fine — x402 buyers
 // poll for tens of seconds. One poller per account is still gated by the lease.
-export async function watchAccount({ db, network, accountId }: AccountWatcherDeps): Promise<() => void> {
+export async function watchAccount({ db, network, accountId }: AccountWatcherDeps): Promise<{ stop: () => void; reset: () => Promise<void> }> {
   const server = new Horizon.Server(HORIZON[network]);
 
-  // Resume cursor. If none, start at the current head so we don't replay history.
-  const { data: stateRow } = await db.from("listener_state").select("paging_token").eq("account_id", accountId).maybeSingle();
+  // Resume cursor + last-processed ledger + last poll time. If no cursor,
+  // start at the current head so we don't replay history.
+  const { data: stateRow } = await db
+    .from("listener_state")
+    .select("paging_token, last_ledger, last_polled_at")
+    .eq("account_id", accountId)
+    .maybeSingle();
   let cursor: string | undefined = stateRow?.paging_token ?? undefined;
+  let lastLedger: number | null = (stateRow?.last_ledger as number | null) ?? null;
   if (!cursor) {
     try {
       const head = await server.payments().forAccount(accountId).order("desc").limit(1).call();
@@ -39,7 +67,42 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
     } catch (e) { log("error", "head_fetch_error", { account: accountId, error: String(e) }); }
   }
 
-  log("info", "poller_open", { account: accountId, cursor: cursor ?? "head", pollMs: POLL_MS });
+  log("info", "poller_open", { account: accountId, cursor: cursor ?? "head", pollMs: POLL_MS, lastLedger });
+
+  // Re-derive the cursor from a safe ledger sequence when the persisted one
+  // is invalid/pruned. We backfill at most BACKFILL_LEDGERS from the current
+  // head. If the gap from the last successfully processed ledger exceeds the
+  // window, payments may have been missed — alert for manual reconciliation.
+  async function resetCursor(): Promise<void> {
+    const head = await server.ledgers().order("desc").limit(1).call();
+    const headLedger = head.records[0]?.sequence;
+    if (!headLedger) throw new Error("head_ledger_unavailable");
+    const safeLedger = Math.max(1, headLedger - BACKFILL_LEDGERS);
+    const gap = lastLedger !== null ? headLedger - lastLedger : null;
+    if (gap !== null && gap > BACKFILL_LEDGERS) {
+      // Reset would skip beyond the backfill window: payments may have been
+      // missed. Emit a high-signal alert so operators reconcile manually.
+      log("error", "cursor_reset_beyond_window", {
+        account: accountId, headLedger, lastLedger, gap, backfillLedgers: BACKFILL_LEDGERS,
+      });
+    } else {
+      log("warn", "cursor_reset", { account: accountId, headLedger, lastLedger, safeLedger });
+    }
+    // Find the first payment at or after the safe ledger to seed the cursor.
+    // Horizon payments can be filtered by ledger via the `join()` or by
+    // paging through the cursor derived from the ledger's paging token.
+    const ledgerResp = await server.ledgers().ledger(safeLedger).call();
+    const token = ledgerResp.paging_token;
+    if (!token) throw new Error("safe_ledger_token_unavailable");
+    cursor = token;
+    await db.from("listener_state").upsert({
+      account_id: accountId,
+      paging_token: cursor,
+      last_ledger: lastLedger,
+      last_polled_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+  }
 
   async function processRecord(raw: any): Promise<void> {
     if (raw.type !== "payment") return;
@@ -93,6 +156,9 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
   let stopped = false;
   let lastAliveLog = 0;
   let consecutiveErrors = 0;
+  // Guard so a cursor reset is not attempted on every tick while Horizon is
+  // unavailable. Only one reset in flight at a time.
+  let resetting = false;
 
   async function tick(): Promise<void> {
     if (stopped) return;
@@ -103,16 +169,51 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
       for (const raw of page.records) {
         await processRecord(raw);
         cursor = raw.paging_token;
-        await db.from("listener_state").upsert({ account_id: accountId, paging_token: cursor, updated_at: new Date().toISOString() });
+        // Track the last ledger we successfully processed so a future reset
+        // can detect whether it would skip beyond the backfill window.
+        if (typeof raw.ledger === "number") lastLedger = raw.ledger;
+        await db.from("listener_state").upsert({
+          account_id: accountId,
+          paging_token: cursor,
+          last_ledger: lastLedger,
+          last_polled_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
+      }
+      // Even an empty page is a successful poll — record the poll time so a
+      // stall is detectable after the fact.
+      if (page.records.length === 0) {
+        await db.from("listener_state").upsert({
+          account_id: accountId,
+          paging_token: cursor,
+          last_ledger: lastLedger,
+          last_polled_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
       }
       consecutiveErrors = 0;
       const now = Date.now();
       if (now - lastAliveLog > ALIVE_LOG_MS) {
-        log("info", "poller_alive", { account: accountId, cursor: cursor ?? "head" });
+        log("info", "poller_alive", { account: accountId, cursor: cursor ?? "head", lastLedger });
         lastAliveLog = now;
       }
     } catch (e) {
       consecutiveErrors++;
+      // An invalid/pruned cursor is external state that can be invalidated.
+      // Detect it explicitly and re-derive the cursor from a safe ledger
+      // instead of stalling forever on the same bad token.
+      if (isCursorError(e) && !resetting) {
+        resetting = true;
+        try {
+          await resetCursor();
+          consecutiveErrors = 0;
+        } catch (re) {
+          log("error", "cursor_reset_failed", { account: accountId, error: String(re) });
+        } finally {
+          resetting = false;
+        }
+        return;
+      }
       log("error", "poll_error", { account: accountId, error: String(e), consecutive: consecutiveErrors });
     }
   }
@@ -120,5 +221,9 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
   const iv = setInterval(() => { void tick(); }, POLL_MS);
   void tick();
 
-  return () => { stopped = true; clearInterval(iv); };
+  return {
+    stop: () => { stopped = true; clearInterval(iv); },
+    // Exposed for tests and operators to force a reset outside the error path.
+    reset: async () => { await resetCursor(); },
+  };
 }
