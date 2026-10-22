@@ -23,6 +23,26 @@ const r = new Hono();
 // 4P's documented webhook source IP (allowlist as defense-in-depth).
 const FOURP_WEBHOOK_IP = "44.196.63.157";
 
+/**
+ * Redacts sensitive credentials (token, notification_token, etc.) from a query/URL string
+ * to prevent leaking bearer credentials into reverse proxy / CDN / application logs.
+ */
+export function redactSensitiveQueryParams(rawUrl: string): string {
+  try {
+    const parsed = new URL(rawUrl, "http://localhost");
+    let changed = false;
+    for (const key of ["token", "notification_token", "notificationToken"]) {
+      if (parsed.searchParams.has(key)) {
+        parsed.searchParams.set(key, "[REDACTED]");
+        changed = true;
+      }
+    }
+    return changed ? `${parsed.pathname}${parsed.search}` : rawUrl;
+  } catch {
+    return rawUrl;
+  }
+}
+
 function client(): FourPClient | null {
   const apiKey = Deno.env.get("FOURP_API_KEY")?.trim();
   if (!apiKey) return null;
@@ -63,13 +83,23 @@ r.post("/webhook", async (c) => {
     console.log(`4p webhook from unexpected ip chain: ${xff.join(",")}`);
   }
 
+  // Issue #497: Stop accepting the notification token from query parameters.
+  // Bearer secrets in URLs leak into proxy access logs, CDNs, Referer headers, and error reports.
+  // We accept the token from the JSON body only and redact query params in logs.
+  const queryToken = c.req.query("token") || c.req.query("notification_token") || c.req.query("notificationToken");
+  if (queryToken) {
+    console.warn(`4p webhook received forbidden query credentials on ${redactSensitiveQueryParams(c.req.url)}`);
+  }
+
   let token: string | undefined;
   try {
     const body = await c.req.json();
     token = body?.token ?? body?.notification_token ?? body?.notificationToken;
-  } catch { /* token may be in query */ }
-  token = token ?? c.req.query("token") ?? c.req.query("notification_token");
-  if (!token) return c.json({ error: "missing_token" }, 400);
+  } catch { /* malformed or missing body */ }
+
+  if (!token || typeof token !== "string" || token.trim().length === 0) {
+    return c.json({ error: "missing_token" }, 400);
+  }
 
   try {
     const n = await cl.getNotification(token); // resolves only for real 4P tokens
