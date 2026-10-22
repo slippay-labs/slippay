@@ -15,7 +15,7 @@ export const config = {
   // and the stream errors forever. Map the Stellar-facing shape to that column.
   merchantNetwork: rawNetwork === "TESTNET" ? "testnet" : "mainnet",
   // Fail-closed gating flag: anything not explicitly TESTNET is treated as
-  // mainnet. `network` keeps its Stellar-facing "TESTNET"|"PUBLIC" shape (used
+  // mainnet. `network` keeps its Stellar-facing "TESTNET" | "PUBLIC" shape (used
   // by horizon/manager); this flag is the one the SSRF guard keys off of so a
   // PUBLIC network can never silently disable the webhook blocklist (audit-003).
   isMainnet: rawNetwork !== "TESTNET",
@@ -23,4 +23,8 @@ export const config = {
   // targets so local mock servers work in tests. NEVER set in production.
   allowLocalWebhooks: (process.env.ALLOW_LOCAL_WEBHOOKS ?? "") === "1",
   merchantPollMs: Number(process.env.MERCHANT_POLL_MS ?? "30000"),
+  // Maximum number of rate-limiter buckets to track. When the table is full,
+  // new keys are rejected (429) rather than evicting tracked buckets, so a
+  // caller flooding with rotating keys cannot reset another caller's spent budget.
+  maxBuckets: Number(process.env.RATE_LIMIT_MAX_BUCKETS ?? "10000"),
 };
