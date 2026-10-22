@@ -67,6 +67,23 @@ describe("assertPaymentMatches", () => {
     const s = decodeTx(sampleXdr("10.5"), "PUBLIC");
     expect(() => assertPaymentMatches(s, { destination: DEST, amount: "10.6", assetCode: "USDC" })).toThrow();
   });
+  it("passes on exact 7th-decimal match", () => {
+    const s = decodeTx(sampleXdr("10.1234567"), "PUBLIC");
+    expect(() => assertPaymentMatches(s, { destination: DEST, amount: "10.1234567", assetCode: "USDC" })).not.toThrow();
+  });
+  it("rejects a one-stroop difference at the 7th decimal", () => {
+    const s = decodeTx(sampleXdr("10.1234567"), "PUBLIC");
+    expect(() => assertPaymentMatches(s, { destination: DEST, amount: "10.1234568", assetCode: "USDC" })).toThrow();
+  });
+  it("rejects a one-stroop difference the other direction", () => {
+    const s = decodeTx(sampleXdr("10.1234568"), "PUBLIC");
+    expect(() => assertPaymentMatches(s, { destination: DEST, amount: "10.1234567", assetCode: "USDC" })).toThrow();
+  });
+  it("rejects amounts that are not valid Stellar decimals", () => {
+    const s = decodeTx(sampleXdr("10.5"), "PUBLIC");
+    expect(() => assertPaymentMatches(s, { destination: DEST, amount: "10.12345678", assetCode: "USDC" })).toThrow();
+    expect(() => assertPaymentMatches(s, { destination: DEST, amount: "abc", assetCode: "USDC" })).toThrow();
+  });
   it("throws on asset mismatch (XLM where USDC expected)", () => {
     const s = decodeTx(xlmXdr(), "PUBLIC");
     expect(() => assertPaymentMatches(s, { destination: DEST, amount: "10.5", assetCode: "USDC" })).toThrow(/ativo/);

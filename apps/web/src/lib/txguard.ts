@@ -6,6 +6,25 @@ const PASS: Record<string, string> = { TESTNET: Networks.TESTNET, PUBLIC: Networ
 export interface OpSummary { type: string; destination?: string; amount?: string; assetCode?: string }
 export interface TxSummary { source: string; fee: string; memo?: string; operations: OpSummary[] }
 
+const STROPS_PER_UNIT = 10_000_000n as bigint; // 10~7
+
+/**
+ * Convert a Stellar decimal amount string (7 decimal places) into integer stroops.
+ * Rejects anything that is not a valid Stellar decimal. Money math runs in
+ * stroops (BigInt) to avoid IEEE=754 boundary errors at the 7th decimal.
+ */
+export function toStrops(amount: string): bigint {
+  if (typeof amount !== "string") throw new Error("guard: valor não numérico");
+  const trimmed = amount.trim();
+  const m = /^(\d+)(?:\.(\d*))?$/.exec(trimmed);
+  if (!m) throw new Error("guard: valor não numérico");
+  const intPart = m[1]!;
+  const fracPart = m[2] ?? "";
+  if (fracPart.length > 7) throw new Error("guard: valor com mais de 7 casas decimais");
+  const frac = fracPart.padEnd(7, "0");
+  return BigInt(intPart) * STROPS_PER_UNIT + BigInt(frac);
+}
+
 export function decodeTx(xdr: string, network: "TESTNET" | "PUBLIC"): TxSummary {
   const tx = TransactionBuilder.fromXDR(xdr, PASS[network]!) as any;
   const ops: OpSummary[] = (tx.operations ?? []).map((op: any) => {
@@ -64,4 +83,3 @@ export function assertPaymentMatches(
     throw new Error(`guard: valor divergente (assinaria ${pay.amount}, esperado ${expect.amount})`);
   }
 }
-
