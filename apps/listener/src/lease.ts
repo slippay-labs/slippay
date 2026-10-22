@@ -76,23 +76,60 @@ export async function acquireLease(
   }
 
   let stopped = false;
-  const heartbeat = setInterval(async () => {
+  let inFlight = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  // Self-scheduling chain: the next tick is only armed after the current
+  // heartbeat write has settled. This prevents overlapping updates from
+  // racing each other and writing an earlier expires_at over a later one.
+  const runHeartbeat = async () => {
     if (stopped) return;
-    const nextExpires = new Date(Date.now() + ttl * 1000).toISOString();
-    const r = await db.from("listener_leases")
-      .update({ expires_at: nextExpires })
-      .eq("account_id", accountId)
-      .eq("holder_id", HOLDER_ID);
-    if (r.error) {
-      log("warn", "lease_heartbeat_failed", { account_id: accountId, error: r.error.message });
+    if (inFlight) {
+      // Should be unreachable with the chain, but keep the guard as a
+      // defense-in-depth and make the condition observable.
+      log("warn", "lease_heartbeat_skipped", {
+        account_id: accountId,
+        reason: "previous_heartbeat_in_flight",
+      });
+      return;
     }
-  }, heartbeatMs);
-  // Prevent the heartbeat timer from keeping the process alive after shutdown.
-  if (typeof heartbeat.unref === "function") heartbeat.unref();
+    inFlight = true;
+    try {
+      const nextExpires = new Date(Date.now() + ttl * 1000).toISOString();
+      // Monotonic write: never shorten an existing lease. Supabase doesn't
+      // expose a greatest() expression in the builder, so we read the
+      // current value and only apply the update if our proposal is later.
+      // The conditional `.lte("expires_at", ...)` makes the compare-and-set
+      // atomic on the database side.
+      const update = await db.from("listener_leases")
+        .update({ expires_at: nextExpires })
+        .eq("account_id", accountId)
+        .eq("holder_id", HOLDER_ID)
+        .lte("expires_at", nextExpires);
+      if (update.error) {
+        log("warn", "lease_heartbeat_failed", { account_id: accountId, error: update.error.message });
+      }
+    } catch (err) {
+      log("warn", "lease_heartbeat_failed", {
+        account_id: accountId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      inFlight = false;
+      if (!stopped) {
+        timer = setTimeout(() => { void runHeartbeat(); }, heartbeatMs);
+        // Prevent the heartbeat timer from keeping the process alive after shutdown.
+        if (typeof timer.unref === "function") timer.unref();
+      }
+    }
+  };
+
+  timer = setTimeout(() => { void runHeartbeat(); }, heartbeatMs);
+  if (typeof timer.unref === "function") timer.unref();
 
   const release = async () => {
     stopped = true;
-    clearInterval(heartbeat);
+    if (timer !== undefined) clearTimeout(timer);
     const r = await db.from("listener_leases")
       .delete()
       .eq("account_id", accountId)
