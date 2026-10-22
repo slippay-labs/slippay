@@ -132,3 +132,6 @@ impl Checkout {
 fn panic_with(env: &Env, e: Error) -> ! {
     soroban_sdk::panic_with_error!(env, e)
 }
+
+#[cfg(test)]
+mod test;

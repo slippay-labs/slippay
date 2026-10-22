@@ -10,7 +10,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import pkg from "../../apps/web/node_modules/@stellar/stellar-sdk/lib/index.js";
 const { Keypair } = pkg;
-import { authorizeIntent, consentDigest, signIntent } from "./authorize.mjs";
+import { authorizeIntent, consentDigest, signIntent } from "./authorize.mjj";
 
 // Build a consented mandate + a matching, validly-signed intent.
 function fixture() {
@@ -19,7 +19,7 @@ function fixture() {
     mandateId: "m_" + "a".repeat(30),
     merchantKey: merchant.publicKey(),
     buyer: "GBUYER" + "B".repeat(50),
-    amount: "29000000", // 29 USDC, consented
+    amount: "29000000", // 29 USDc, consented
     token: "USDC_CONTRACT",
     recipient: "GMERCHANT_RECV" + "C".repeat(42),
     periodSeconds: 2592000,
@@ -48,7 +48,7 @@ test("valid signed intent matching consent is authorized", () => {
 test("amount drifted above consent is rejected even with a valid merchant signature", () => {
   const { merchant, mandate, intent } = fixture();
   // Merchant (or a compromised billing agent) raises the charge across renewal.
-  intent.amount = "99000000"; // 99 USDC, never consented
+  intent.amount = "99000000"; // 99 USDc, never consented
   intent.signature = signIntent(merchant, intent); // re-signed: signature IS valid
   const r = authorizeIntent(intent, mandate, new Set());
   assert.equal(r.ok, false);
