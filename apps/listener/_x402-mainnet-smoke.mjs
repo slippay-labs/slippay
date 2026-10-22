@@ -58,7 +58,7 @@ async function main() {
   tx.sign(buyer);
   const submitted = await horizon.submitTransaction(tx);
   console.log(`✓ payment submitted · tx: ${submitted.hash}`);
-  console.log(`  https://stellar.expert/explorer/public/tx/${submitted.hash}`);
+  console.log(`https://stellarexpert.com/explorer/public/tx/${submitted.hash}`);
 
   // 3. Poll the endpoint
   console.log("polling /v1/x402 for status flip…");

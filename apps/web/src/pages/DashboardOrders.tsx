@@ -16,6 +16,7 @@ interface OrderRow {
   created_at: string;
   paid_at: string | null;
   tx_hash: string | null;
+  platform_fee_bp?: number | string | null;
 }
 
 const STATUS_DOT: Record<string, string> = {
@@ -53,6 +54,19 @@ export default function DashboardOrders() {
 
   const paid = orders.filter((o) => o.status === "paid").length;
 
+  // Derive the effective fee rate from the order rows themselves, not from
+  // the merchant's current configuration. A mid-period rate change thus
+  // surfaces as distinct rates instead of one rate applied to the whole report.
+  const ratesByBp = new Map<number, number>();
+  for (const o of orders) {
+    const raw = o.platform_fee_bp;
+    if (raw === null || raw === undefined) continue;
+    const bp = Number(raw);
+    if (!Number.isFinite(bp)) continue;
+    ratesByBp.set(bp, (ratesByBp.get(bp) ?? 0) + 1);
+  }
+  const effectiveRates = [...ratesByBp.entries()].sort((a, b) => b[1] - a[1]);
+
   return (
     <div className="max-w-[1100px]">
       <div className="flex items-baseline gap-3 font-mono text-[11px] uppercase tracking-[0.3em] text-[#0a0a0a]/45">
@@ -64,6 +78,17 @@ export default function DashboardOrders() {
       {orders.length > 0 && (
         <div className="mt-4 font-mono text-[11px] uppercase tracking-[0.18em] text-[#0a0a0a]/50">
           <span className="text-[#6f6862]">{paid} settled</span> · updates live
+          {effectiveRates.length > 0 && (
+            <>
+              {" · fee "}
+              {effectiveRates.map(([bp, count], i) => (
+                <span key={bp} className="text-[#6f6862]">
+                  {i > 0 ? " / " : ""}
+                  {(bp / 100).toFixed(2)}% <span className="text-[#0a0a0a]/35">({count})</span>
+                </span>
+              ))}
+            </>
+          )}
         </div>
       )}
 
