@@ -462,7 +462,7 @@ slippay/
   supabase/
     functions/api/   deno + hono REST endpoints (build unsigned XDR; never custodial)
     migrations/      schema, RLS, pg_cron, subscriptions
-  scripts/           e2e + deploy + autocharge scheduler
+  scripts/           e2e + deploy + autocharge scheduler + demo tooling (see scripts/README.md)
   docs/              full documentation (start at docs/README.md)
 ```
 
