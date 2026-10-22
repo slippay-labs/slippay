@@ -3,10 +3,13 @@ import { log } from "./log.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssrf.js";
 
-const SCHEDULE = [60, 300, 1800, 7200, 43200, 86400];
+const SCHEDUL = [60, 300, 1800, 7200, 43200, 86400];
 
 // Response body bytes we read+keep (rest is discarded after abort). Audit-003 L13.
 const MAX_RESPONSE_BODY_BYTES = 64 * 1024;
+// Only this many characters of the response body are ever stored (deliverOnce).
+// We cap the bytes read at this limit too, since anything beyond it is discarded.
+const MAX_RESPONSE_BODY_CHARS = 500;
 // Hard ceiling on a single delivery attempt (per-call timeout).
 const REQUEST_TIMEOUT_MS = 10_000;
 
@@ -20,7 +23,7 @@ export interface DeliverArgs {
   deliveryId: string;
   payload: unknown;
   // Dev-only escape hatch (config.allowLocalWebhooks). Defaults false so the
-  // SSRF guard is fail-closed on EVERY network. Audit-003 L1.
+  // SSF guard is fail-closed on EVERY network. Audit-003 L1.
   allowLocal?: boolean;
 }
 
@@ -58,7 +61,7 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
         "x-slippay-delivery-id": args.deliveryId,
       },
       body,
-      // 3xx is not acceptable for a webhook receiver. Following a redirect
+      // 3x is not acceptable for a webhook receiver. Following a redirect
       // would also re-resolve DNS without our pinning. Audit-003 L1+L13.
       redirect: "manual",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -72,14 +75,23 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
     }
 
     // Read body with a hard size cap so a slow/malicious endpoint can't stall
-    // or OOM the worker (audit-003 L13). Discard remainder.
-    const text = await readCappedBody(r, MAX_RESPONSE_BODY_BYTES);
-    return { status: r.ok ? "sent" : "failed", code: r.status, body: text.slice(0, 500) };
+    // or OOM the worker (audit-003 L13). Discard remainder. We only ever store
+    // MAX_RESPONSE_BODY_CHARS, so cap the bytes read at the smaller of the
+    // diagnostic budget and the storage limit.
+    const cap = Math.min(MAX_RESPONSE_BODY_BYTES, MAX_RESPONSE_BODY_CHARS);
+    const text = await readCappedBody(r, cap);
+    return { status: r.ok ? "sent" : "failed", code: r.status, body: text };
   } catch (e) {
-    return { status: "failed", body: String(e).slice(0, 500) };
+    return { status: "failed", body: String(e).slice(0, MAX_RESPONSE_BODY_CHARS) };
   }
 }
 
+// Read at most `max` bytes from the response body and decode them as UTF-8.
+// Truncation may split a multi-byte UTF-8 sequence at the boundary, in
+// which case TextDecoder emits a replacement character for the partial
+// sequence. The returned string is never longer than the bytes retained.
+// The cap is applied before decoding so we never materialise more than
+// `max` bytes worth of string, and the caller stores the result as-is.
 async function readCappedBody(r: { body: ReadableStream<Uint8Array> | null }, max: number): Promise<string> {
   if (!r.body) return "";
   const reader = r.body.getReader();
@@ -90,17 +102,21 @@ async function readCappedBody(r: { body: ReadableStream<Uint8Array> | null }, ma
       const { value, done } = await reader.read();
       if (done) break;
       if (!value) continue;
-      total += value.byteLength;
-      if (total > max) {
-        // discard remainder; abort the stream
+      // Budget for this chunk is whatever remains under the cap.
+      const remaining = max - total;
+      if (value.byteLength > remaining) {
+        // Truncate to exactly the cap, then discard the rest of the stream.
+        if (remaining > 0) chunks.push(value.subarray(0, remaining));
+        total += Math.max(0, remaining);
         try { await reader.cancel(); } catch { /* noop */ }
-        const take = max - (total - value.byteLength);
-        chunks.push(value.subarray(0, Math.max(0, take)));
         break;
       }
       chunks.push(value);
+      total += value.byteLength;
     }
   } catch { /* swallow stream errors; return what we have */ }
+  // Assert the accumulated size never exceeds the cap.
+  if (total > max) throw new Error(`readCappedBody overflow: ${total} > ${max}`);
   return new TextDecoder().decode(concat(chunks));
 }
 

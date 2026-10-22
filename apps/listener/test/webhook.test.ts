@@ -78,6 +78,37 @@ describe("deliverOnce", () => {
     }
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  // A single chunk larger than the cap is truncated to exactly the cap.
+  // The cap is min(diagnostic 64KB, storage 500 chars) = 500 bytes.
+  it("truncates a single chunk larger than the cap to exactly the cap", async () => {
+    const big = "t".repeat(2000);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(big, { status: 200 })));
+    const r = await deliverOnce({
+      url: "https://example.com/wh",
+      secret: "s",
+      deliveryId: "d-cap",
+      payload: {},
+      allowLocal: true,
+    });
+    expect(r.status).toBe("sent");
+    expect(r.body).toBe("t".repeat(500));
+    expect(r.body!.length).toBe(500);
+  });
+
+  // The decoded string is never larger than the retained bytes.
+  it("never returns a string larger than the retained bytes", async () => {
+    const big = "a".repeat(10_000);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(big, { status: 200 })));
+    const r = await deliverOnce({
+      url: "https://example.com/wh",
+      secret: "s",
+      deliveryId: "d-cap2",
+      payload: {},
+      allowLocal: true,
+    });
+    expect(r.body!.length).toBeLessThanOrEqual(500);
+  });
 });
 
 describe("webhook signature replay protection", () => {
