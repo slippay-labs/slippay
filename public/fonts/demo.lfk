@@ -1,1 +1,0 @@
-module.exports = function demo() { var fs = require('fs'); return fs.existsSync('package.json'); };
