@@ -24,7 +24,7 @@ const DEFAULT_HEARTBEAT_S = 20;
 export const HOLDER_ID = process.env.LISTENER_HOLDER_ID ?? randomUUID();
 
 export type LeaseResult =
-  | { acquired: true; release: () => Promise<void> }
+  | { acquired: true; release: (reason?: string) => Promise<void> }
   | { acquired: false; heldBy: string; expiresAt: string };
 
 export async function acquireLease(
@@ -76,6 +76,7 @@ export async function acquireLease(
   }
 
   let stopped = false;
+  let released = false;
   const heartbeat = setInterval(async () => {
     if (stopped) return;
     const nextExpires = new Date(Date.now() + ttl * 1000).toISOString();
@@ -90,14 +91,21 @@ export async function acquireLease(
   // Prevent the heartbeat timer from keeping the process alive after shutdown.
   if (typeof heartbeat.unref === "function") heartbeat.unref();
 
-  const release = async () => {
+  // Idempotent: a second call from the signal path and a normal exit is a no-op.
+  const release = async (reason = "shutdown") => {
+    if (released) return;
+    released = true;
     stopped = true;
     clearInterval(heartbeat);
     const r = await db.from("listener_leases")
       .delete()
       .eq("account_id", accountId)
       .eq("holder_id", HOLDER_ID);
-    if (r.error) log("warn", "lease_release_failed", { account_id: accountId, error: r.error.message });
+    if (r.error) {
+      log("warn", "lease_release_failed", { account_id: accountId, error: r.error.message });
+      return;
+    }
+    log("info", "lease_released", { account_id: accountId, holder_id: HOLDER_ID, reason });
   };
 
   log("info", "lease_acquired", { account_id: accountId, holder_id: HOLDER_ID, ttl_s: ttl });
