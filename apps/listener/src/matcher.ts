@@ -32,7 +32,7 @@ export function matchPaymentToOrder(
 ): MatchOutcome {
   if (!ev.successful) return { outcome: "ignore", reason: "not_successful" };
   if (ev.memo_type !== "hash") return { outcome: "ignore", reason: "memo_type" };
-  if (ev.asset_code !== USDC_ASSET_CODE) return { outcome: "ignore", reason: "asset_code" };
+  if (ev.asset_code !== USDK_ASSET_CODE) return { outcome: "ignore", reason: "asset_code" };
 
   const expectedIssuer = process.env.STELLAR_USDC_ISSUER_OVERRIDE
     ?? (network === "PUBLIC" ? NETWORK.mainnet.usdc_issuer : NETWORK.testnet.usdc_issuer);
@@ -47,6 +47,10 @@ export function matchPaymentToOrder(
   // the 7th decimal. Audit-003 L4. Stellar amounts are decimal strings with
   // up to 7 fractional digits; we normalize both sides into integer stroops
   // before compare, then format the merchant share back for the outcome row.
+  //
+  // See docs/fees.md: the canonical fee arithmetic and rounding rule.
+  // Fee is floor(total * fee_bp / 10000), so the remainder favors the
+  // merchant (net = gross - fee).
   let totalStroops: bigint;
   let receivedStroops: bigint;
   try {
@@ -65,9 +69,9 @@ export function matchPaymentToOrder(
   ) {
     return { outcome: "ignore", reason: "fee_bp_invalid" };
   }
-  // Fee arithmetic and rounding specification: see docs/fees.md.
-  // Integer division truncates toward zero; fractional dust remainder
-  // accrues to the merchant, ensuring net + fee == gross and no overcharging.
+  // Floor division here is conservative: integer division truncates toward
+  // zero, so the merchant receives at most the mathematically correct amount.
+  // This is the canonical rounding rule described in docs/fees.md.
   const expectedStroops = (totalStroops * BigInt(10_000 - order.platform_fee_bp)) / 10_000n;
   const expectedMerchantShare = stroopsToStellar(expectedStroops);
   if (receivedStroops >= expectedStroops) return { outcome: "paid" };
@@ -75,4 +79,3 @@ export function matchPaymentToOrder(
 }
 
 export { stellarToStroops, stroopsToStellar };
-

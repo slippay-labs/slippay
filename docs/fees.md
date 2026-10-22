@@ -1,19 +1,23 @@
-# Fee Arithmetic and Rounding Specification
+# Fee arithmetic and rounding rule
 
-This specification formalizes the canonical arithmetic, rounding direction,
-persisted ledger identities, and overpayment policy for SlipPay platform fees.
+This document is the canonical specification for how SlipPay computes its platform fee. Every
+implementation — the Stellar listener matcher, the Solana client, the on-chain checkout contract,
+and the orders API — must agree with this document. The test suite in issue 79 uses the
+worked examples below as its acceptance vectors.
 
-Every implementation in this repository—the API routes, the payment matcher,
-the Solana client SDK, and the Soroban checkout contract—must conform to
-the rules defined here.
+## Rate unit
 
----
+The fee rate is expressed in **basis points** (b). One basis point is one-hundredth of a
+percent (1 bp = 0.01%), so 10,000 bp = 100%.
 
-## 1. Rate Unit and Bounds
+- The rate is an integer in the range **0 ≤ b < 10,000**.
+- A negative rate, a non-integer rate, or a rate ≥ 10,000 is invalid. Implementations
 
-Platform fees are denominated in **basis points** (`bp`):
+must reject such a rate rather than coerce it.
 
-$$\text{1 bp} = 0.01\% = 10^{-4} = 0.0001$$
+  In the listener this is the `fee_bp_invalid` ignore reason; in the Solana client it throws ``invalid_fee_bp``;
+
+  in the contract the constructor rejects `fee_bps > 10_000`.
 
 ### Defined Bounds
 
@@ -27,91 +31,185 @@ $$\text{1 bp} = 0.01\% = 10^{-4} = 0.0001$$
 * **Per-Merchant Override:** The fee rate is stored on `merchants.platform_fee_bp` and defaults to `297` (`DEFAULT_PLATFORM_FEE_BP`).
 * **Order Snapshot:** When an order is created, `orders.platform_fee_bp` snapshots the merchant's current fee rate, making the fee for that order immutable.
 
----
+## Formula
 
-## 2. Canonical Fee Formula
+Given a gross amount `G` (in the smallest integer unit of the asset — stroops for Stellar
 
-Fee math is executed in **integer base units** (Stellar stroops, Solana lamport-equivalents, or Soroban integer units) to eliminate IEEE-754 floating-point inaccuracies.
+USDC, 6-decimal base units for Solana USDC, and the token's base unit on Soroban) and a
+rate `b` in basis-points:
 
-### The Equations
+```
+fee      = floor(G * b / 10,000)
+net      = G - fee
+```
 
-Given:
-* $\text{gross}$ = Total amount authorized/paid by the buyer in integer base units ($10^7$ stroops for Stellar USDC, $10^6$ units for Solana USDC).
-* $\text{fee\_bp}$ = Fee rate in basis points ($0 \le \text{fee\_bp} \le 10000$).
+The formula is evaluated in **integer arithmetic** only. No floating-point is permitted at
+the money boundary. Implementations use `BigInt` (TypeScript) or `i128` (Soroban) so that
+the product `G * b` cannot overflow for any realistic amount.
 
-The platform fee is:
+## Rounding direction and who bears it
 
-$$\text{fee} = \left\lfloor \frac{\text{gross} \times \text{fee\_bp}}{10000} \right\rfloor$$
+The fee is **truncated toward zero** (floor for non-negative amounts). The remainder of an
+inexact division is retained by the **merchant**. In other words, the fee is always the
+largest integer not exceeding the mathematically exact fee, and the merchant never receives
+less than the exact net rounded down. This is conservative for the merchant and cannot produce
+dust: the two legs always sum to the gross amount exactly.
 
-The merchant net share is:
+```net + fee = G  (always, exactly)
+```
 
-$$\text{net} = \text{gross} - \text{fee}$$
-
----
-
-## 3. The Fundamental Accounting Identity
-
-The two splits must always sum to the gross amount:
-
-$$\text{net} + \text{fee} \equiv \text{gross}$$
+The remainder of an inexact division is at most 9,000 basis-point-units of the gross
+denominator (that is, less than one basis-point of `G — at most 9999/10000 of a basis
+point), so it is always sub-cent and never accumulates into a visible amount on a single
+payment.
 
 ### Conservation of Funds
 * **Zero Dust Variance:** No base units are created or lost during the split.
 * **Never calculate net independently via division:** Computing $\text{net} = \lfloor \text{gross} \times (10000 - \text{fee\_bp}) / 10000 \rfloor$ produces a 1-unit dust mismatch when division is inexact ($\text{net} + \text{fee} = \text{gross} - 1$). The net share **must** always be derived as $\text{gross} - \text{fee}$.
 
----
+## Persisted columns and identities
 
-## 4. Rounding Direction and Beneficiary
+When an order is settled, the following values are persisted in the `orders` table. They
+identity must hold for every paid order:
 
-* **Rounding Direction:** Integer floor division ($\lfloor \cdot \rfloor$), truncating towards zero.
-* **Beneficiary:** **The Merchant.**
-* **Dust Policy:** Any remainder $r = (\text{gross} \times \text{fee\_bp}) \pmod{10000}$ that cannot be evenly divided is discarded from the platform fee. The platform fee rounds down; the merchant retains the fractional dust.
-* **Guarantee:** SlipPay never overcharges the merchant beyond the mathematically contracted fee.
+| column            | meaning                                         |
+||-------------------|--------------------------------------------------------------|
+| `usdc_amount`    | gross amount `G` the payer is charged (decimal string)          |
+| `platform_fee_bp` | the rate `b` applied to this order (integer)                |
+| `net_amount`      | merchant share, `G - fee`                                   |
+| `fee_amount`      | platform share, `floor(G * b / 10,000)`                       |
 
----
+The identity `net_amount + fee_amount = usdc_amount` is invariant and is asserted by the
+test suite. Amounts are stored as decimal strings at the asset's native precision
+(7 fractional digits for Stellar USDC, 6 for Solana USDC, the token's decimals for Soroban)
+and compared as integers.
 
-## 5. Persisted Columns and Ledger Identities
+## Overpayment policy
 
-In the database schema (`orders` table), amounts are persisted with exact decimal scale:
+An overpayment is any payment whose received amount is greater than or equal to the
+expected merchant share. The order is considered **paid** and the excess is not refunded
+automatically; it is reconciled out of band by the operator (issue 74). The fee is computed
+against the order's gross amount, *not* against the received amount, so an overpayment
+does not inflate the fee.
 
-```
-               [ Buyer Pays Gross ]
-                  (usdc_amount)
-                        |
-        +---------------+---------------+
-        |                               |
-        v                               v
-[ Merchant Net Share ]         [ SlipPay Platform Fee ]
-(usdc_amount - fee_usdc)              (fee_usdc)
-```
+An underpayment is any payment whose received amount is strictly less than the expected
+merchant share. The order is marked `underpaid` and the expected and received amounts are
+recorded for reconciliation.
 
-| Table Column | SQL Type | Description | Invariant Constraint |
-|---|---|---|---|
-| `usdc_amount` | `numeric(20,7)` | Total gross USDC paid by buyer | `usdc_amount > 0` |
-| `platform_fee_bp` | `integer` | Snapshot of fee basis points | `0 <= platform_fee_bp <= 1000` |
-| `fee_usdc` | `numeric(20,7)` | Calculated platform fee | `fee_usdc >= 0`, `scale <= 7` |
+## Worked examples
 
-**Persisted Ledger Rule:**
-$$\text{merchant\_net} = \text{orders.usdc\_amount} - \text{orders.fee\_usdc}$$
+All examples use a rate of `b = 100` (1.00%) unless noted otherwise. Amounts are shown in
+the asset's human decimal form and in its base unit.
 
----
+### Example 1 — exact division (Stellar, 7 dp)
 
-## 6. Overpayment and Underpayment Policy
+- Gross: `10.0000000` USDC = `100_000_000` stroops
 
-### Overpayment (`received > expected`)
-When a payer sends more than the expected amount (e.g., duplicate submission, transposed digits, or estimation buffer):
-1. **Order State:** Marked as `paid` if $\text{received} \ge \text{expected}$.
-2. **Surplus Ledger:** The surplus amount $\text{surplus} = \text{received} - \text{expected}$ must be computed and recorded.
-3. **Alert Threshold:** Any surplus exceeding operational limits triggers an alert for reconciliation.
-4. **Settlement Disposition:** The excess funds reside at the merchant's destination address (non-custodial). The merchant ledger credits the surplus.
+- Rate: `100` bp
 
-### Underpayment (`received < expected`)
-* Any transaction where $\text{received} < \text{expected}$ (even by 1 stroop / base unit) is marked `underpaid`.
-* Floating-point comparisons must never be used to evaluate payment adequacy.
+- Fee: `floor(100_000_000 * 100 / 10000) = 1_000_000` stroops = `1.0000000` USDC
 
----
+- Net: `10_000_000` stroops = `9.0000000` USDC
 
-## 7. Worked Examples and Vectors
+- Identity: `9.0000000 + 1.0000000 = 10.0000000` ✓
+
+### Example 2 — inexact division, remainder to merchant (Stellar, 7 dp)
+
+- Gross: `0.0000001` USDC = `1` stroop
+
+- Rate: `100` bp
+
+- Exact fee: `1 * 100 / 10000 = 0.01` stroop
+
+- Fee: `floor(0.01) = 0` stroops
+
+- Net: `1 - 0 = 1` stroop = `0.0000001` USDC, so the merchant keeps the remainder
+
+- Identity: `0.0000001 + 0.0000000 = 0.0000001` ✓
+
+### Example 3 — inexact division, remainder to merchant (Stellar, 7 dp)
+
+- Gross: `12.3456789` USDC = `123_445_6789` stroops
+
+- Rate: `100` b`
+
+- Exact fee: `123_445_6789 * 100 / 10_000 = 1_234_456.789` stroops
+
+- Fee: `floor(1234456.789) = 1_234_456` stroops = `0.1234560` USDC, remainder `0.789`
+
+  stroops retained by the merchant
+
+- Net: `123_445_6789 - 1_234_456 = 122_211_2333` stroops = `12.2211233` USDC
+
+- Identity: `12.2211233 + 0.1234560 = 12.3456789` ✓
+
+### Example 4 — inexact division (Solana, 6 dp)
+
+- Gross: `12.500000` USDC = `12_300_000` units
+
+- Rate: `100` b`
+
+- Exact fee: `12_300_000 * 100 / 10_000 = 123_000` units (exact)
+
+- Fee: `123_000` units = `0.123000` USDC
+
+- Net: `12_177_000` units = `12.177000` USDC, so the merchant keeps the remainder
+
+- Identity: `12.177000 + 0.123000 = 12.500000` ✓
+
+### Example 5 — inexact division (Solana, 6 dp)
+
+- Gross: `0.000001` USDC = `1` unit
+
+- Rate: `100` bp
+
+- Exact fee: `1 * 100 / 10_000 = 0.01` units
+
+- Fee: `floor(0.01) = 0` units
+
+- Net: `1` unit = `0.000001` USDC, remainder retained by the merchant
+
+- Identity: `0.000001 + 0.000000 = 0.000001` ✓
+
+### Example 6 — zero rate
+
+- Gross: `100.0000000` USDC = `1_000_000_000` stroops
+
+- Rate: `0` b`
+
+- Fee: `0` stroops
+
+- Net: `1_000_000_000` stroops = `100.0000000` USDC, merchant keeps everything
+
+- Identity: `100.0000000 + 0.0000000 = 100.0000000` ✓
+
+### Example 7 — overpayment
+
+- Order gross: `10.0000000` USDC = `100_000_000` stroops
+
+- Rate: `100` b`
+
+- Expected merchant share: `9.0000000` USDC = `90_000_000` stroops
+
+- Received: `10.5000000` USDC = `105_000_000` stroops
+
+- Outcome: `paid` (any received ≥ share is paid); the excess `0.5000000` USDC is reconciled
+
+  out of band (issue 74). The fee is computed from the order gross, not the received amount.
+
+### Example 8 — underpayment
+
+- Order gross: `10.0000000` USDC = `100_000_000` stroops
+
+- Rate: `100` b`
+
+- Expected merchant share: `9.0000000` USDC = `90_000_000` stroops
+
+- Received: `8.9999999` USDC = `89_999_999` stroops
+
+- Outcome: `underpaid`; expected `9.0000000`, received `8.9999999`. The order is not
+
+  settled and is recorded for reconciliation.
 
 ### Vector 1: Standard Exact Settlement
 * **Gross:** `100.0000000 USDC` ($1,000,000,000$ stroops)
@@ -144,17 +242,18 @@ When a payer sends more than the expected amount (e.g., duplicate submission, tr
 * $\text{net} = 500,000,000 \text{ stroops}$ (`50.0000000 USDC`)
 * **Sum Check:** $500,000,000 + 0 = 500,000,000 \text{ stroops}$ $\checkmark$
 
----
+## Implementation map
 
-## 8. Implementation Reference
+Each implementation cites this document as its source of truth:
 
-The following implementations embody this specification:
+- `apps/listener/src/matcher.ts` — Stellar matcher (BigInt stroops)
 
-1. **API Orders Route:** [`supabase/functions/api/routes/orders.ts`](../supabase/functions/api/routes/orders.ts)
-   * Snapshots `platform_fee_bp` and computes `fee_usdc`.
-2. **Listener Payment Matcher:** [`apps/listener/src/matcher.ts`](../apps/listener/src/matcher.ts)
-   * Evaluates on-chain Stellar payment events against expected merchant net stroops.
-3. **Solana Client SDK:** [`apps/web/src/lib/chain/solana/usdc.ts`](../apps/web/src/lib/chain/solana/usdc.ts)
-   * Implements `splitFee(totalBaseUnits, platformFeeBp)`.
-4. **Soroban Smart Contract:** [`contracts/checkout/src/lib.rs`](../contracts/checkout/src/lib.rs)
-   * Enforces atomic on-chain fee splitting via SEP-41 token transfers.
+- `apps/web/src/lib/chain/solana/usdc.ts` — Solana client (BigInt base units)
+
+- `contracts/checkout/src/lib.rs` — on-chain checkout contract (i128 base units)
+
+- `src/routes/orders.ts` — orders API (creation and persistence)
+
+The merchant-facing API reference links here for the definitive rule on fees and
+
+overpayment.

@@ -27,6 +27,12 @@
 //! - **Conservation Identity:** `net + fee == amount` holds identically for all amounts.
 //!   Zero dust variance is created or lost.
 //!
+//! Canonical fee arithmetic, rounding direction, bounds, and overpayment
+//! policy are specified in `docs/fees.md`; this contract implements that spec.
+//!
+//! `from.require_auth()` — the payer authorizes the whole charge once; the two
+//! nested SEP-41 transfers settle atomically (Soroban reverts on any failure).
+//!
 //! # Edge Cases & Behaviors
 //! - **Zero Fee / Micro-Payments (`fee == 0`):** When `amount * fee_bps < 10_000` (e.g., small
 //!   micro-payments or `fee_bps == 0`), `fee` rounds down to 0 and `net == amount`. The second
