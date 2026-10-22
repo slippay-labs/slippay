@@ -1,0 +1,5 @@
+# Pinned dependencies for the agent governance eval harness.
+# Install with: pip install -r eval/requirements.txt
+# Run with: python eval/agent_governance_eval.py
+
+pytest==8.3.2

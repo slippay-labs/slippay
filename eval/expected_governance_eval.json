@@ -1,0 +1,15 @@
+{
+  "cases": 40,
+  "cap_only": {
+    "detected": 28,
+    "false_positives": 4,
+    "detection_rate": 0.7,
+    "false_positive_rate": 0.1
+  },
+  "cap_plus_drift": {
+    "detected": 40,
+    "false_positives": 1,
+    "detection_rate": 1.0,
+    "false_positive_rate": 0.025
+  }
+}
