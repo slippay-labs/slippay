@@ -47,6 +47,9 @@ dependencies:
   # crash reporting (PII scrubbed before leaving device)
   sentry_flutter: ^8.10.0
 
+  # open external explorer URL from receipt
+  url_launcher: ^6.3.0
+
   cupertino_icons: ^1.0.8
 
 dev_dependencies:

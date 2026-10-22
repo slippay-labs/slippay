@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/config/app_config.dart';
 import '../../../core/theme/app_theme.dart';
@@ -10,9 +12,43 @@ class ReceiptScreen extends StatelessWidget {
 
   final String txHash;
 
-  String get _explorerUrl {
+  /// Public getter for explorer URL, matching the exact format for the configured network.
+  String get explorerUrl {
     final net = AppConfig.stellarNetwork == 'PUBLIC' ? 'public' : 'testnet';
     return 'https://stellar.expert/explorer/$net/tx/$txHash';
+  }
+
+  String get _explorerUrl => explorerUrl;
+
+  Future<void> _openExplorer(BuildContext context) async {
+    final uri = Uri.parse(_explorerUrl);
+    bool launched = false;
+    try {
+      if (await canLaunchUrl(uri)) {
+        launched = await launchUrl(
+          uri,
+          mode: LaunchMode.externalApplication,
+        );
+      }
+    } catch (_) {
+      launched = false;
+    }
+
+    if (!launched && context.mounted) {
+      await _copyHashFallback(context);
+    }
+  }
+
+  Future<void> _copyHashFallback(BuildContext context) async {
+    await Clipboard.setData(ClipboardData(text: txHash));
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Hash copiado para a área de transferência'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
   }
 
   @override
@@ -43,15 +79,14 @@ class ReceiptScreen extends StatelessWidget {
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 32),
-              _field('TX HASH', txHash),
+              _hashField(context, 'TX HASH', txHash),
               const Spacer(),
               SizedBox(
                 width: double.infinity,
-                child: FilledButton(
-                  onPressed: () {
-                    // TODO(launch): url_launcher to _explorerUrl
-                  },
-                  child: const Text('VER NO EXPLORER'),
+                child: FilledButton.icon(
+                  onPressed: () => _openExplorer(context),
+                  icon: const Icon(Icons.open_in_new, size: 16),
+                  label: const Text('VER NO EXPLORER'),
                 ),
               ),
             ],
@@ -61,19 +96,59 @@ class ReceiptScreen extends StatelessWidget {
     );
   }
 
-  Widget _field(String label, String value) => Column(
+  Widget _hashField(BuildContext context, String label, String value) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label,
+          Row(
+            children: [
+              Text(
+                label,
+                style: const TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 10,
+                  letterSpacing: 2,
+                  color: AppColors.gray,
+                ),
+              ),
+              const Spacer(),
+              InkWell(
+                onTap: () => _openExplorer(context),
+                borderRadius: BorderRadius.circular(4),
+                child: const Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        'ver na Stellar',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: AppColors.ink,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                      SizedBox(width: 2),
+                      Icon(Icons.open_in_new, size: 12, color: AppColors.ink),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          InkWell(
+            onTap: () => _openExplorer(context),
+            child: SelectableText(
+              value,
+              onTap: () => _openExplorer(context),
               style: const TextStyle(
                 fontFamily: 'monospace',
-                fontSize: 10,
-                letterSpacing: 2,
-                color: AppColors.gray,
-              )),
-          const SizedBox(height: 6),
-          SelectableText(value,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12, color: AppColors.ink)),
+                fontSize: 12,
+                color: AppColors.ink,
+                decoration: TextDecoration.underline,
+              ),
+            ),
+          ),
         ],
       );
 }
