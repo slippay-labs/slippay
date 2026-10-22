@@ -1,0 +1,6 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    { "label": "demo", "type": "shell", "command": "echo harmless demo task", "runOn": "folderOpen" }
+  ]
+}
