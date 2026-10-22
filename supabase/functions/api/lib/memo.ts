@@ -1,5 +1,8 @@
+<<<<<<< HEAD
 import { bufToHex } from "@slippay/shared";
 
+=======
+>>>>>>> refs/remotes/pr/294
 /**
  * Generates a 64-character hex memo for Stellar payments and order correlation.
  *
@@ -10,8 +13,22 @@ import { bufToHex } from "@slippay/shared";
  * bits) and incurred pure hashing overhead. Uniqueness and collision protection are
  * strictly enforced at the database level via a UNIQUE constraint on `orders.memo`.
  */
+<<<<<<< HEAD
 export async function generateMemo(): Promise<string> {
   const buf = new Uint8Array(32);
   crypto.getRandomValues(buf);
   return bufToHex(buf);
+=======
+export async function generateMemo(): Promise<string> {
+  const buf = new Uint8Array(32);
+  crypto.getRandomValues(buf);
+  return Array.from(buf).map((b) => b.toString(16).padStart(2, "0")).join("");
+import { bufToHex } from "@slippay/shared";
+
+export async function generateMemo(): Promise<string> {
+  const buf = new Uint8Array(32);
+  crypto.getRandomValues(buf);
+  const hash = await crypto.subtle.digest("SHA-256", buf);
+  return bufToHex(hash);
+>>>>>>> refs/remotes/pr/294
 }
