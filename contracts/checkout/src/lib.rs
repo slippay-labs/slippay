@@ -58,6 +58,7 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Ad
 pub enum Error {
     BadConfig = 1,
     BadAmount = 2,
+    Overflow = 3,
 }
 
 #[contracttype]
@@ -105,8 +106,20 @@ impl Checkout {
         let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps)
             .unwrap_or_else(|| panic_with(&env, Error::BadConfig));
 
-        let fee: i128 = amount * (fee_bps as i128) / 10_000;
-        let net: i128 = amount - fee;
+        // Checked arithmetic on the amount path: a silent wrap here would produce a
+        // wrong (and potentially negative) fee, so fail loudly instead.
+        let fee: i128 = amount
+            .checked_mul(fee_bps as i128)
+            .and_then(|v| v.checked_div(10_000))
+            .unwrap_or_else(|| panic_with(&env, Error::Overflow));
+        let net: i128 = amount
+            .checked_sub(fee)
+            .unwrap_or_else(|| panic_with(&env, Error::Overflow));
+
+        // Explicitly assert both legs are non-negative before any transfer.
+        if net < 0 || fee < 0 {
+            panic_with(&env, Error::Overflow);
+        }
 
         let client = token::Client::new(&env, &token);
         client.transfer(&from, &merchant, &net);
