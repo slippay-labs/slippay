@@ -536,3 +536,216 @@ fn invalid_config_rejected() {
     );
     assert!(res2.is_err());
 }
+
+// ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Issue #312: Comprehensive Autocharge, Attestation Gate & Versioning Suite
+// ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+
+#[test]
+fn autocharge_rejects_when_cancelled() {
+    let f = setup();
+    let id_arr = [21u8; 32];
+    let id = BytesN::from_array(&f.env, &id_arr);
+    f.env.ledger().with_mut(|l| { l.timestamp = 1_000_000; });
+
+    f.contract.create(&f.buyer, &f.merchant, &f.token, &10_000_000_i128, &(30 * DAY), &12, &0, &id);
+    let exp = f.env.ledger().sequence() + 100_000;
+    f.sac_user.approve(&f.buyer, &f.contract.address, &100_000_000_i128, &exp);
+
+    // Cancel subscription
+    f.contract.cancel(&id);
+
+    // Autocharge must reject Cancelled subscription
+    let res = f.contract.try_autocharge(&id);
+    assert_eq!(res.err().unwrap().unwrap(), Error::NotActive.into());
+}
+
+#[test]
+fn autocharge_rejects_when_expired() {
+    let f = setup();
+    let id_arr = [22u8; 32];
+    let id = BytesN::from_array(&f.env, &id_arr);
+    let t0 = 1_000_000u64;
+    let expires = t0 + 60 * DAY;
+    f.env.ledger().with_mut(|l| { l.timestamp = t0; });
+
+    f.contract.create(&f.buyer, &f.merchant, &f.token, &10_000_000_i128, &(30 * DAY), &12, &expires, &id);
+    let exp = f.env.ledger().sequence() + 100_000;
+    f.sac_user.approve(&f.buyer, &f.contract.address, &100_000_000_i128, &exp);
+
+    // Charge 1 at t0 succeeds
+    f.contract.autocharge(&id);
+
+    // Advance time past expiry
+    f.env.ledger().with_mut(|l| { l.timestamp = expires + 1; });
+
+    let res = f.contract.try_autocharge(&id);
+    assert_eq!(res.err().unwrap().unwrap(), Error::Expired.into());
+}
+
+#[test]
+fn autocharge_rejects_when_max_periods_reached() {
+    let f = setup();
+    let id_arr = [23u8; 32];
+    let id = BytesN::from_array(&f.env, &id_arr);
+    f.env.ledger().with_mut(|l| { l.timestamp = 1_000_000; });
+
+    // max_periods = 2
+    f.contract.create(&f.buyer, &f.merchant, &f.token, &10_000_000_i128, &(30 * DAY), &2, &0, &id);
+    let exp = f.env.ledger().sequence() + 100_000;
+    f.sac_user.approve(&f.buyer, &f.contract.address, &100_000_000_i128, &exp);
+
+    // Charge 1
+    f.contract.autocharge(&id);
+
+    // Charge 2
+    f.env.ledger().with_mut(|l| { l.timestamp += 30 * DAY; });
+    f.contract.autocharge(&id);
+
+    // Charge 3 (exceeding max_periods) must fail because status became Expired
+    f.env.ledger().with_mut(|l| { l.timestamp += 30 * DAY; });
+    let res = f.contract.try_autocharge(&id);
+    assert_eq!(res.err().unwrap().unwrap(), Error::NotActive.into());
+
+    let sub = f.contract.get(&id);
+    assert_eq!(sub.status, Status::Expired);
+    assert_eq!(sub.charges_done, 2);
+}
+
+#[test]
+fn autocharge_attested_rejects_when_cancelled_or_expired() {
+    let id_arr = [24u8; 32];
+    let (f, id) = setup_attested(&id_arr);
+    let not_after = 2_000_000u64;
+    let (pk, sig) = sign_attestation(&TEST_DOMAIN, &[1u8; 32], &id_arr, 0, not_after);
+    f.contract.set_attester(&id, &BytesN::from_array(&f.env, &pk));
+
+    // Cancel subscription
+    f.contract.cancel(&id);
+
+    // Attested autocharge on cancelled sub must fail with NotActive
+    let res = f.contract.try_autocharge_attested(&id, &not_after, &BytesN::from_array(&f.env, &sig));
+    assert_eq!(res.err().unwrap().unwrap(), Error::NotActive.into());
+}
+
+#[test]
+fn autocharge_attested_rejects_foreign_sub_id() {
+    let id_arr1 = [25u8; 32];
+    let id_arr2 = [26u8; 32];
+    let (f, id1) = setup_attested(&id_arr1);
+    let not_after = 2_000_000u64;
+
+    // Attester is bound to sub 1
+    let (pk, _sig1) = sign_attestation(&TEST_DOMAIN, &[1u8; 32], &id_arr1, 0, not_after);
+    f.contract.set_attester(&id1, &BytesN::from_array(&f.env, &pk));
+
+    // Sign for sub 2 instead
+    let (_pk2, sig_for_sub2) = sign_attestation(&TEST_DOMAIN, &[1u8; 32], &id_arr2, 0, not_after);
+
+    // Replaying sub 2 signature on sub 1 must fail
+    let res = f.contract.try_autocharge_attested(&id1, &not_after, &BytesN::from_array(&f.env, &sig_for_sub2));
+    assert!(res.is_err(), "Foreign sub attestation must reject");
+}
+
+#[test]
+fn autocharge_attested_rejects_future_charges_done() {
+    let id_arr = [27u8; 32];
+    let (f, id) = setup_attested(&id_arr);
+    let not_after = 2_000_000u64;
+
+    // Attestation signed for charges_done = 5, but contract state has charges_done = 0
+    let (pk, sig_skipped) = sign_attestation(&TEST_DOMAIN, &[1u8; 32], &id_arr, 5, not_after);
+    f.contract.set_attester(&id, &BytesN::from_array(&f.env, &pk));
+
+    let res = f.contract.try_autocharge_attested(&id, &not_after, &BytesN::from_array(&f.env, &sig_skipped));
+    assert!(res.is_err(), "Attestation for mismatched charges_done must reject");
+}
+
+struct SubFeeVector {
+    amount: i128,
+    fee_bps: u32,
+    expected_fee: i128,
+    expected_net: i128,
+}
+
+#[test]
+fn subscription_fee_split_matches_shared_vector_table() {
+    let vectors = [
+        SubFeeVector { amount: 1, fee_bps: 297, expected_fee: 0, expected_net: 1 },
+        SubFeeVector { amount: 33, fee_bps: 297, expected_fee: 0, expected_net: 33 },
+        SubFeeVector { amount: 34, fee_bps: 297, expected_fee: 1, expected_net: 33 },
+        SubFeeVector { amount: 100, fee_bps: 297, expected_fee: 2, expected_net: 98 },
+        SubFeeVector { amount: 10_000, fee_bps: 297, expected_fee: 297, expected_net: 9_703 },
+        SubFeeVector { amount: 10_000_000, fee_bps: 297, expected_fee: 297_000, expected_net: 9_703_000 },
+        SubFeeVector { amount: 1_000_000_000, fee_bps: 297, expected_fee: 29_700_000, expected_net: 970_300_000 },
+        SubFeeVector { amount: 10_000_000, fee_bps: 1_000, expected_fee: 1_000_000, expected_net: 9_000_000 },
+        SubFeeVector { amount: 10_000_000, fee_bps: 0, expected_fee: 0, expected_net: 10_000_000 },
+    ];
+
+    for (i, v) in vectors.iter().enumerate() {
+        let f = setup_with_fee(v.fee_bps);
+        let id_arr = [(100 + i as u8); 32];
+        let id = BytesN::from_array(&f.env, &id_arr);
+        f.env.ledger().with_mut(|l| { l.timestamp = 1_000_000; });
+
+        f.contract.create(&f.buyer, &f.merchant, &f.token, &v.amount, &(30 * DAY), &0, &0, &id);
+        let exp = f.env.ledger().sequence() + 100_000;
+        f.sac_user.approve(&f.buyer, &f.contract.address, &(v.amount * 2), &exp);
+
+        let merch_before = f.sac_user.balance(&f.merchant);
+        let plat_before = f.sac_user.balance(&f.platform);
+        let buyer_before = f.sac_user.balance(&f.buyer);
+
+        f.contract.autocharge(&id);
+
+        assert_eq!(f.sac_user.balance(&f.merchant) - merch_before, v.expected_net);
+        assert_eq!(f.sac_user.balance(&f.platform) - plat_before, v.expected_fee);
+        assert_eq!(buyer_before - f.sac_user.balance(&f.buyer), v.amount);
+        assert_eq!(v.expected_net + v.expected_fee, v.amount);
+    }
+}
+
+#[test]
+fn versioning_semantics_live_versions_matrix() {
+    // v0.1 behaviour: Buyer must sign every charge, fee_bps = 0
+    let f1 = setup_with_fee(0);
+    let id1 = BytesN::from_array(&f1.env, &[51u8; 32]);
+    f1.env.ledger().with_mut(|l| { l.timestamp = 1_000_000; });
+    f1.contract.create(&f1.buyer, &f1.merchant, &f1.token, &10_000_000_i128, &(30 * DAY), &0, &0, &id1);
+    f1.contract.charge(&id1);
+    assert_eq!(f1.sac_user.balance(&f1.merchant), 10_000_000);
+    assert_eq!(f1.sac_user.balance(&f1.platform), 0);
+
+    // v0.2 behaviour: Standing allowance enables scheduler autocharge with 0 fee
+    let f2 = setup_with_fee(0);
+    let id2 = BytesN::from_array(&f2.env, &[52u8; 32]);
+    f2.env.ledger().with_mut(|l| { l.timestamp = 1_000_000; });
+    f2.contract.create(&f2.buyer, &f2.merchant, &f2.token, &10_000_000_i128, &(30 * DAY), &0, &0, &id2);
+    let exp2 = f2.env.ledger().sequence() + 100_000;
+    f2.sac_user.approve(&f2.buyer, &f2.contract.address, &10_000_000_i128, &exp2);
+    f2.contract.autocharge(&id2);
+    assert_eq!(f2.sac_user.balance(&f2.merchant), 10_000_000);
+    assert_eq!(f2.sac_user.balance(&f2.platform), 0);
+
+    // v0.4 behaviour: Attestation gate + 2.97% platform fee captured on-chain
+    let f4 = setup_with_fee(297);
+    let id4_arr = [54u8; 32];
+    let id4 = BytesN::from_array(&f4.env, &id4_arr);
+    f4.env.ledger().with_mut(|l| { l.timestamp = 1_000_000; });
+    f4.contract.create(&f4.buyer, &f4.merchant, &f4.token, &10_000_000_i128, &(30 * DAY), &0, &0, &id4);
+    let exp4 = f4.env.ledger().sequence() + 100_000;
+    f4.sac_user.approve(&f4.buyer, &f4.contract.address, &10_000_000_i128, &exp4);
+
+    let not_after = 2_000_000u64;
+    let (pk, sig) = sign_attestation(&TEST_DOMAIN, &[1u8; 32], &id4_arr, 0, not_after);
+    f4.contract.set_attester(&id4, &BytesN::from_array(&f4.env, &pk));
+
+    // Ungated autocharge must be refused
+    assert_eq!(f4.contract.try_autocharge(&id4).err().unwrap().unwrap(), Error::AttesterRequired.into());
+
+    // Attested autocharge settles with 2.97% split (297,000 fee, 9,703,000 net)
+    f4.contract.autocharge_attested(&id4, &not_after, &BytesN::from_array(&f4.env, &sig));
+    assert_eq!(f4.sac_user.balance(&f4.merchant), 9_703_000);
+    assert_eq!(f4.sac_user.balance(&f4.platform), 297_000);
+}
+
