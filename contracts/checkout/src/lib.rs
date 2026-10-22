@@ -49,6 +49,14 @@
 //! # Deployed Instances
 //! - **Testnet:** `CBO2COBZUTHH4II4JCQRZVO4RKDUIUH4MXZTAWOYVUZIVYI47UIDQCWQ` (`fee_bps = 300`, deployed 2026-06-05)
 //! - **Mainnet:** Pending deployment with canonical `DEFAULT_PLATFORM_FEE_BP = 297` (2.97%).
+//!
+//! Deploy-time guards (configuration is immutable, so there is no second chance):
+//!   - `fee_to` must not be the contract's own address — a fee with no
+//!     withdrawal path would be irrecoverable.
+//!   - `fee_to` must not equal the merchant in `pay` — otherwise the split
+//!     collapses into two transfers to the same account and the platform
+//!     silently collects nothing. Rejected outright rather than documented
+//!     as a deliberate collapse.
 
 use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Address, Env, Symbol};
 
@@ -58,6 +66,7 @@ use soroban_sdk::{contract, contracterror, contractimpl, contracttype, token, Ad
 pub enum Error {
     BadConfig = 1,
     BadAmount = 2,
+    BadRecipient = 3,
 }
 
 #[contracttype]
@@ -75,10 +84,16 @@ impl Checkout {
     ///
     /// # Invariants
     /// - Rejects `fee_bps > 10_000` with `Error::BadConfig`.
+    /// - Rejects `fee_to` equal to the contract's own address: the crate has no
+    ///   transfer-out function, so a fee sent to the contract itself would be
+    ///   trapped irrecoverably.
     /// - Writes immutable `FeeTo` and `FeeBps` to instance storage.
     pub fn __constructor(env: Env, fee_to: Address, fee_bps: u32) {
         if fee_bps > 10_000 {
             panic_with(&env, Error::BadConfig);
+        }
+        if fee_to == env.current_contract_address() {
+            panic_with(&env, Error::BadRecipient);
         }
         env.storage().instance().set(&DataKey::FeeTo, &fee_to);
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
@@ -88,6 +103,8 @@ impl Checkout {
     ///
     /// # Semantics & Atomicity
     /// - Rejects `amount <= 0` with `Error::BadAmount`.
+    /// - Rejects `merchant == fee_to`: the split would collapse into two transfers
+    ///   to the same account, silently meaning the platform collects nothing.
     /// - Calculates `fee = amount * fee_bps / 10_000` (truncates towards zero; dust favours merchant).
     /// - Derives `net = amount - fee` guaranteeing `net + fee == amount`.
     /// - Transfers `net` to `merchant`.
@@ -103,7 +120,11 @@ impl Checkout {
         let fee_to: Address = env.storage().instance().get(&DataKey::FeeTo)
             .unwrap_or_else(|| panic_with(&env, Error::BadConfig));
         let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps)
-            .unwrap_or_else(|| panic_with(&env, Error::BadConfig));
+            .unwrap_or_else(|| panic_with(&env, Error::BadRecipient));
+
+        if merchant == fee_to {
+            panic_with(&env, Error::BadRecipient);
+        }
 
         let fee: i128 = amount * (fee_bps as i128) / 10_000;
         let net: i128 = amount - fee;
