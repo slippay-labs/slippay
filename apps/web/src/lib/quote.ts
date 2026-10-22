@@ -1,9 +1,16 @@
-// FX quote engine — Pix (BRL) -> USDC. This is the real margin layer: SlipPay
-// quotes the mid-market rate x (1 + spread) and keeps the difference. The spread
-// fires on EVERY conversion (including users who only hold dollars), which is why
-// it scales ~10x vs a per-transfer rail fee. Configurable via VITE_FX_SPREAD_BPS
-// (default 190 = 1.90% — the price decided + shown on the landing; still ~3x
-// cheaper than a bank's ~5% IOF+spread, while capturing healthy margin).
+// FX quote engine -- Pix (BRL) -> USDC. This is the FX-spread revenue
+// line, distinct from the per-order platform fee. SlipPay quotes the mid-market
+// rate x (1 + spread) and keeps the difference. The spread fires on EVERY conversion
+// (including users who only hold dollars), so it is a per-conversion charge that
+// stacks on top of the per-order platform fee. The platform fee is not collected here
+// and is not derived from this spread; the two are separate revenue lines.
+//
+// Canonical spread: FX_SPREAD_BPS = 190 bp (1.90%), configurable via VITE_FX_SPREAD_BPS
+// (default 190 = 1.90%). This is the single source of truth for the spread; docs must
+// cite this constant (FX_SPREAD_BPS) rather than restating a rate.
+//
+// NOTE: the platform fee (per order) is a different charge with its own constant;
+// do not conflate the two in docs or code.
 //
 // HONEST STATE: this computes and records the SlipPay-quoted rate + captured
 // margin. The margin is actually pocketed when BRL settles through a SlipPay-owned
@@ -11,7 +18,8 @@
 // this is the pricing + measurement layer that makes the spread live the moment
 // the anchor is connected.
 
-const SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
+export const FX_SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
+const SPREAD_BPS = FX_SPREAD_BPS;
 const RATE_URL = "https://open.er-api.com/v6/latest/USD";
 const FALLBACK_BRL_PER_USD = 5.4;
 
@@ -39,7 +47,7 @@ async function fetchMidRate(): Promise<{ rate: number; stale: boolean }> {
   try {
     const r = await fetch(RATE_URL);
     const j = await r.json();
-    const rate = Number(j?.rates?.BRL);
+    const rate = Number(j.rates?.BRL);
     if (rate > 0) { cache = { rate, at: Date.now() }; return { rate, stale: false }; }
   } catch { /* fall through to fallback */ }
   return { rate: FALLBACK_BRL_PER_USD, stale: true };

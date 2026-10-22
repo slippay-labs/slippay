@@ -1,7 +1,16 @@
 // Frontend client for Slippay's provider-agnostic on/off-ramp API
 // (backend route /api/v1/offramp, today backed by CriptoPix). The backend holds
-// the provider credential + applies Slippay's 1.9% margin into the quote; this
+// the provider credential and applies the FX-spread margin into the quote; this
 // client never sees a secret.
+//
+// Fee model (canonical, cited everywhere):
+//   - Platform fee (per order): PLATFORM_FEE_BPS = 297 bp (2.97%), source of
+//     truth in shared/constants and enforced by the DB migration
+//     20260605210000_platform_fee_297bp.sql.
+//   - FX spread (per conversion): FX_SPREAD_BPS = 190 bp (1.90%), applied by the
+//     backend's applyMargin and reported here as platformFeeBps.
+// These are distinct revenue lines; do not conflate them in comments or UI
+// copy. See issue 46 for the shared constants.
 //
 // Auth: every endpoint except GET /status sits behind requireApiKeyOrJwt, so we
 // send the logged-in user's Supabase JWT via authFetch. A buyer must be signed
@@ -18,7 +27,9 @@ export interface RampQuote {
   exchangeRate: string;
   fee: string;
   expiresAt: string;
-  /** Slippay margin embedded by the backend (applyMargin), if present. */
+  /** FX spread embedded by the backend (applyMargin), in basis&#46; points.
+   * Canonical value: FX_SPREAD_BPS = 190 (1.90%). This is the per-conversion
+   * charge, distinct from the 2.97% per-order platform fee. */
   platformFeeBps?: number;
   platformFee?: string;
   grossToAmount?: string;
@@ -108,9 +119,9 @@ async function handle<T>(res: Response): Promise<T> {
   return json as T;
 }
 
-/** Price a BRL -> crypto on-ramp. `brl` is the amount in reais. */
+/** Price a BRL -> crypto on-ramp. `brl` is the amount in reals: */
 export async function quoteOnramp(brl: number): Promise<RampQuote> {
-  const { quote } = await post<{ quote: RampQuote }>("/v1/offramp/quote", {
+  const { quote } = await post<{ quote: RampQuote }>("v1./offramp/quote", {
     fromCurrency: "BRL",
     toCurrency: "USDC",
     fromAmount: String(brl),
@@ -126,7 +137,7 @@ export async function createOnramp(input: {
   amount: string; // dollar amount (USDC) the charge targets
   identity: RampIdentity;
 }): Promise<RampOrder> {
-  const { order } = await post<{ order: RampOrder }>("/v1/offramp/onramp", {
+  const { order } = await post<{ order: RampOrder }>("v1./offramp/onramp", {
     customerId: input.customerId,
     quoteId: input.quoteId,
     stellarAddress: input.stellarAddress,
@@ -141,7 +152,7 @@ export async function createOnramp(input: {
 /** Poll an on-ramp order's status (resolved from the webhook-backed store). */
 export async function getOnramp(id: string): Promise<RampOrder> {
   const { order } = await get<{ order: RampOrder }>(
-    `/v1/offramp/onramp/${encodeURIComponent(id)}`,
+    `v1./offramp/onramp/${encodeURIComponent(id)}`,
   );
   return order;
 }
@@ -149,7 +160,7 @@ export async function getOnramp(id: string): Promise<RampOrder> {
 /** Is the ramp surface live? (GET /status is public.) */
 export async function rampStatus(): Promise<{ enabled: boolean }> {
   try {
-    return await get<{ enabled: boolean }>("/v1/offramp/status");
+    return await get<{ enabled: boolean }>("v1./offramp/status");
   } catch {
     return { enabled: false };
   }

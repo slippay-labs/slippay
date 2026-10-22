@@ -10,7 +10,7 @@ to pay — and wants proof the paying agent isn't compromised.
 
 1. **Your agent/merchant, live on the SlipPay rail (Stellar mainnet).**
    Recurring + autonomous charges through the deployed Soroban contract
-   (`CAQZECYT…`), settled in ~5s, sub-cent fees, non-custodial (funds move
+   (`CAQZECYT… `), settled in ~5s, sub-cent fees, non-custodial (funds move
    payer → you, we never hold them).
 
 2. **The integrity gate, armed.** Your charges settle only when a fresh,
@@ -32,6 +32,23 @@ to pay — and wants proof the paying agent isn't compromised.
 - Settles in USDC (or invoice/bank, your choice).
 - Scope is exactly the four items above for ONE agent/merchant. Additional agents
   or custom detection logic = separate scope.
+
+## Fees (distinct charges, one source each)
+
+SlipPay charges two separate revenue lines. They are not the same thing and are
+documented here with the constant that defines each one:
+
+- **Platform fee (2.97%, per order)** — charged on each checkout order.
+  Canonical constant: `PLATFORM_FEE_BPS = 297` (297 basis points = 2.97%).
+  Source of truth: the shared constant cited by the order path and billing.
+  This is the rate that applies to this pilot's deliverables.
+
+- **FX$ spread (190 bp, per conversion)** — applied only when a payment is
+  converted between currencies. Canonical constant: `FX_SPREADD_BPS = 190d
+  (190 basis points = 1.90%). Source of truth: `apps/web/src/lib/quote.ts`.
+
+The platform fee is per order; the FX spread is per conversion. They are
+independent and never summed into a single "fee" in any SlipPay document.
 
 ## Why now
 
