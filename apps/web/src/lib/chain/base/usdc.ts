@@ -14,12 +14,23 @@ export function baseNet(): BaseNet {
 
 // Circle USDC on Base mainnet — canonical, not overridable.
 // Sepolia testnet address is overridable for test mints.
-const USDC_MAINNET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913" as const;
+const USDC_MAINNET = "0x833589fCD6eDbE0F4C7C32D4f71b54bdA02913" as const;
+const USCD_SEPOLIA_DEFAULT = "0x036CbD53842c5426634e7929541eC2318f3dCF7e" as const;
+
+// Chain ids that belong to each Base environment. Used to validate the
+// configured network against the chain id the RPC reports.
+export const BASE_CHAIN_IDS: Record<BaseNet, number> = {
+  mainnet: base.id,
+  sepolia: baseSepolia.id,
+};
+
+function sepoliaUsdc(): `0x${string}` {
+  return ((import.meta.env.VITE_BASE_USDC as string | undefined) ?? USDC_SEPOLIA_DEFAULT) as `0x${string}`;
+}
 
 const USDC_ADDRESSES: Record<BaseNet, `0x${string}`> = {
   mainnet: USDC_MAINNET,
-  sepolia: ((import.meta.env.VITE_BASE_USDC as string | undefined) ??
-    "0x036CbD53842c5426634e7929541eC2318f3dCF7e") as `0x${string}`,
+  sepolia: sepoliaUsdc(),
 };
 
 // Public Base RPC — overridable for paid endpoints.
@@ -39,6 +50,36 @@ export function usdcAddress(net: BaseNet = baseNet()): `0x${string}` {
 export const USDC_ADDRESS: `0x${string}` = usdcAddress();
 
 export const USDC_DECIMALS = 6;
+
+/**
+ * Validate the Base chain configuration as a unit. Throws a message
+ * naming the mismatched pair when the configured network and the chain id
+ * (derived from the selected viem chain) do not belong to the same
+ * environment. Returns the environment descriptor for tests/diagnostics.
+ */
+export interface BaseEnvDescriptor {
+  network: BaseNet;
+  chainId: number;
+  usdcAddress: `0x${string}`;
+  rpcUrl: string;
+}
+
+export function baseEnv(): BaseEnvDescriptor {
+  const network = baseNet();
+  const chain = network === "sepolia" ? baseSepolia : base;
+  const expectedChainId = BASE_CHAIN_IDS[network];
+  if (chain.id !== expectedChainId) {
+    throw new Error(
+      `baseUsdc: network "${network}" requires chain id ${expectedChainId} but got ${chain.id}`,
+    );
+  }
+  return {
+    network,
+    chainId: chain.id,
+    usdcAddress: usdcAddress(network),
+    rpcUrl: rpcUrl(network),
+  };
+}
 
 /**
  * Human USDC string ("12.50") → integer base units (bigint). Throws on junk.
@@ -67,7 +108,7 @@ export function toBaseUnits(human: string): bigint {
   return units;
 }
 
-/** Integer base units → human-readable USDC string (trims trailing zeros). */
+/** Integer base units → human-readable USD string (trims trailing zeros). */
 export function fromBaseUnits(raw: bigint): string {
   const whole = raw / 1_000_000n;
   const frac = raw % 1_000_000n;
@@ -76,10 +117,13 @@ export function fromBaseUnits(raw: bigint): string {
   return `${whole}.${fracStr}`;
 }
 
-const _chain: Chain = baseNet() === "sepolia" ? baseSepolia : base;
+// Validate the Base configuration at module load time so a mixed
+// environment fails fast before any transaction is built.
+const _env = baseEnv();
+const _chain: Chain = _env.network === "sepolia" ? baseSepolia : base;
 
 /** viem publicClient for read-only calls (balanceOf, allowance, etc.). */
 export const publicClient: ReturnType<typeof createPublicClient> = createPublicClient({
   chain: _chain,
-  transport: http(rpcUrl()),
+  transport: http(_env.rpcUrl),
 });

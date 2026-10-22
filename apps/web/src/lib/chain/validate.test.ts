@@ -4,6 +4,7 @@ import {
   isValidAddress,
   isValidSolanaAddress,
   isValidStellarAddress,
+  validateChainConfig,
 } from "./validate.ts";
 
 // Known-valid Stellar ed25519 public key (base32, 56 chars, correct checksum).
@@ -102,5 +103,81 @@ describe("isValidAddress — active-chain dispatch", () => {
     vi.stubEnv("VITE_CHAIN", "solana");
     expect(isValidAddress(SOLANA_MINT)).toBe(true);
     expect(isValidAddress(STELLAR)).toBe(false);
+  });
+});
+
+describe("validateChainConfig — cross-network consistency", () => {
+  const STELLAR_MAINNET_PASSDRA = "Public Global Stellar Network ; September 2015";
+  const STELLAR_TESTNET_PASSDRA = "Test SDF Network ; September 2015";
+  const STELLAR_MAINNET_ISSUER = "GANZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPPPRE34K4KZVN";
+  const STELLAR_TESTNET_ISSUER = "GBBD47IF6LWK7P7MDEVMCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5";
+  const SOLANA_MAINNET_CLUSTER = "mainnet-beta";
+  const SOLANA_DEVNET_CLUSTER = "devnet";
+  const BASE_MAINNET_CHAIN_ID = 8453;
+  const BASE_SEPOLIA_CHAIN_ID = 84532;
+
+  it("accepts a fully consistent mainnet configuration", () => {
+    const env = validateChainConfig({
+      stellarPassphrase: STELLAR_MAINNET_PASSDRA,
+      stellarUsdcIssuer: STELLAR_MAINNET_ISSUER,
+      solanaCluster: SOLANA_MAINNET_CLUSTER,
+      baseChainId: BASE_MAINNET_CHAIN_ID,
+    });
+    expect(env).toBe("mainnet");
+  });
+
+  it("accepts a fully consistent testnet configuration", () => {
+    const env = validateChainConfig({
+      stellarPassphrase: STELLAR_TESTNET_PASSPHRASE,
+      stellarUsdcIssuer: STELLAR_TESTNET_ISSUER,
+      solanaCluster: SOLANA_DEVNET_CLUSTER,
+      baseChainId: BASE_SEPOLIA_CHAIN_ID,
+    });
+    expect(env).toBe("testnet");
+  });
+
+  it("rejects a Stellar mainnet passphrase with a testnet issuer, naming both", () => {
+    expect(() =>
+      validateChainConfig({
+        stellarPassphrase: STELLAR_MAINNET_PASSDRA,
+        stellarUsdcIssuer: STELLAR_TESTNET_ISSUER,
+        solanaCluster: SOLANA_MAINNET_CLUSTER,
+        baseChainId: BASE_MAINNET_CHAIN_ID,
+      }),
+    ).toThrow(/stellarPassphrase.*stellarUsdcIssuer|stellarUsdcIssuer.*stellarPassphrase/i);
+  });
+
+  it("rejects a Base mainnet chain id with a testnet Solana cluster, naming both", () => {
+    expect(() =>
+      validateChainConfig({
+        stellarPassphrase: STELLAR_TESTNET_PASSPHRASE,
+        stellarUsdcIssuer: STELLAR_TESTNET_ISSUER,
+        solanaCluster: SOLANA_DEVNET_CLUSTER,
+        baseChainId: BASE_MAINNET_CHAIN_ID,
+      }),
+    ).toThrow(/baseChainId.*solanaCluster|solanaCluster.*baseChainId/i);
+  });
+
+  it("rejects an issuer override that does not match the selected network", () => {
+    expect(() =>
+      validateChainConfig({
+        stellarPassphrase: STELLAR_MAINNET_PASSDRA,
+        stellarUsdcIssuer: STELLAR_MAINNET_ISSUER,
+        stellarUsdcIssuerOverride: STELLAR_TESTNET_ISSUER,
+        solanaCluster: SOLANA_MAINNET_CLUSTER,
+        baseChainId: BASE_MAINNET_CHAIN_ID,
+      }),
+    ).toThrow(/stellarUsdcIssuerOverride.*stellarPassphrase|stellarPassphrase.*stellarUsdcIssuerOverride/i);
+  });
+
+  it("rejects an unrecognised network value", () => {
+    expect(() =>
+      validateChainConfig({
+        stellarPassphrase: "Unknown Network ; 2024",
+        stellarUsdcIssuer: STELLAR_MAINNET_ISSUER,
+        solanaCluster: SOLANA_MAINNET_CLUSTER,
+        baseChainId: BASE_MAINNET_CHAIN_ID,
+      }),
+    ).toThrow();
   });
 });
