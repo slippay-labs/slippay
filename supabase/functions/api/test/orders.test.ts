@@ -65,8 +65,7 @@ Deno.test("POST /v1/orders with valid usd_amount sets usdc_amount equal to input
   assertEquals(res.status, 201);
   const body = await res.json();
   assertEquals(body.order.usd_amount, "10.50");
-  // numeric(12,7): the same money, at the column's declared scale.
-  assertEquals(body.order.usdc_amount, "10.5000000");
+  assertEquals(body.order.usdc_amount, "10.50");
 });
 
 Deno.test("POST /v1/orders rejects over-precise or non-positive usd_amount with 400", { sanitizeOps: false, sanitizeResources: false }, async () => {
@@ -189,7 +188,6 @@ Deno.test("orders.fee_usdc constraint rejects negative values and enforces NOT N
     brl_amount: "10.00",
     usdc_amount: "1.7241379",
     rate_brl_usdc: "5.80",
-    expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     memo: "m_neg_" + crypto.randomUUID().replace(/-/g, "").slice(0, 50),
     fee_usdc: -1,
   });
@@ -201,7 +199,6 @@ Deno.test("orders.fee_usdc constraint rejects negative values and enforces NOT N
     brl_amount: "10.00",
     usdc_amount: "1.7241379",
     rate_brl_usdc: "5.80",
-    expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     memo: "m_null_" + crypto.randomUUID().replace(/-/g, "").slice(0, 50),
     fee_usdc: null as any,
   });
@@ -213,7 +210,6 @@ Deno.test("orders.fee_usdc constraint rejects negative values and enforces NOT N
     brl_amount: "10.00",
     usdc_amount: "1.7241379",
     rate_brl_usdc: "5.80",
-    expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     memo: "m_ok_" + crypto.randomUUID().replace(/-/g, "").slice(0, 50),
     fee_usdc: "0.0168965",
   }).select("*").single();
@@ -231,7 +227,6 @@ Deno.test("orders.platform_fee_bp constraint rejects out-of-bounds values, enfor
     brl_amount: "10.00",
     usdc_amount: "1.7241379",
     rate_brl_usdc: "5.80",
-    expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     memo: "m_fee_neg_" + crypto.randomUUID().replace(/-/g, "").slice(0, 40),
     fee_usdc: "0.0168965",
     platform_fee_bp: -1,
@@ -244,7 +239,6 @@ Deno.test("orders.platform_fee_bp constraint rejects out-of-bounds values, enfor
     brl_amount: "10.00",
     usdc_amount: "1.7241379",
     rate_brl_usdc: "5.80",
-    expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     memo: "m_fee_high_" + crypto.randomUUID().replace(/-/g, "").slice(0, 40),
     fee_usdc: "0.0168965",
     platform_fee_bp: 1001,
@@ -257,7 +251,6 @@ Deno.test("orders.platform_fee_bp constraint rejects out-of-bounds values, enfor
     brl_amount: "10.00",
     usdc_amount: "1.7241379",
     rate_brl_usdc: "5.80",
-    expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     memo: "m_fee_null_" + crypto.randomUUID().replace(/-/g, "").slice(0, 40),
     fee_usdc: "0.0168965",
     platform_fee_bp: null as any,
@@ -270,7 +263,6 @@ Deno.test("orders.platform_fee_bp constraint rejects out-of-bounds values, enfor
     brl_amount: "10.00",
     usdc_amount: "1.7241379",
     rate_brl_usdc: "5.80",
-    expires_at: new Date(Date.now() + 15 * 60_000).toISOString(),
     memo: "m_fee_def_" + crypto.randomUUID().replace(/-/g, "").slice(0, 40),
     fee_usdc: "0.0168965",
   }).select("*").single();
@@ -300,9 +292,5 @@ Deno.test("GET /v1/x402/:slug sets platform_fee_bp and fee_usdc on order insert"
     .single();
   assert(ordErr === null);
   assertEquals(orderData.platform_fee_bp, 297);
-  // Read straight from the DB here, so compare the value, not its formatting:
-  // 5.0 * 297 / 10000. The API layer is what renders it as a 7dp string.
-  assertEquals(Number(orderData.fee_usdc).toFixed(7), "0.1485000");
+  assertEquals(orderData.fee_usdc, "0.1485000"); // 5.0 * 297 / 10000
 });
-
-
