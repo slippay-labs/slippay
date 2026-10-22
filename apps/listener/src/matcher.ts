@@ -65,14 +65,17 @@ export function matchPaymentToOrder(
   ) {
     return { outcome: "ignore", reason: "fee_bp_invalid" };
   }
-  // Fee arithmetic and rounding specification: see docs/fees.md.
+  // Fee identity: the merchant's expected share is the total minus the fee,
+  // where the fee is floor(total * bp / 10_000). This mirrors the checkout
+  // contract's split (fee = total * bp / 10_000, net = total - fee) and the
+  // Solana client's integer rule, so all layers agree on fee and net.
   // Integer division truncates toward zero; fractional dust remainder
   // accrues to the merchant, ensuring net + fee == gross and no overcharging.
-  const expectedStroops = (totalStroops * BigInt(10_000 - order.platform_fee_bp)) / 10_000n;
+  const feeStroops = (totalStroops * BigInt(order.platform_fee_bp)) / 10_000n;
+  const expectedStroops = totalStroops - feeStroops;
   const expectedMerchantShare = stroopsToStellar(expectedStroops);
   if (receivedStroops >= expectedStroops) return { outcome: "paid" };
   return { outcome: "underpaid", expected: expectedMerchantShare, received: ev.amount };
 }
 
 export { stellarToStroops, stroopsToStellar };
-
