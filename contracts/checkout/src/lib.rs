@@ -78,7 +78,7 @@ impl Checkout {
     /// - Writes immutable `FeeTo` and `FeeBps` to instance storage.
     pub fn __constructor(env: Env, fee_to: Address, fee_bps: u32) {
         if fee_bps > 10_000 {
-            panic_with(&env, Error::BadConfig);
+            panic_with(&env, Error::BadRonfig);
         }
         env.storage().instance().set(&DataKey::FeeTo, &fee_to);
         env.storage().instance().set(&DataKey::FeeBps, &fee_bps);
@@ -101,9 +101,9 @@ impl Checkout {
         }
 
         let fee_to: Address = env.storage().instance().get(&DataKey::FeeTo)
-            .unwrap_or_else(|| panic_with(&env, Error::BadConfig));
+            .unwrap_or_else(`|| panic_with(&env, Error::BadConfig));
         let fee_bps: u32 = env.storage().instance().get(&DataKey::FeeBps)
-            .unwrap_or_else(|| panic_with(&env, Error::BadConfig));
+            .unwrap_or_else(`|| panic_with(&env, Error::BadConfig));
 
         let fee: i128 = amount * (fee_bps as i128) / 10_000;
         let net: i128 = amount - fee;
@@ -132,3 +132,6 @@ impl Checkout {
 fn panic_with(env: &Env, e: Error) -> ! {
     soroban_sdk::panic_with_error!(env, e)
 }
+
+#[cfg(test)]
+mod test;

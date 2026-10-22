@@ -4,6 +4,8 @@ on:
   push:
     branches:
     - main
+env:
+  CARGO_TERM_COLOR: always
 jobs:
   test:
     runs-on: ubuntu-latest
@@ -45,6 +47,12 @@ jobs:
         CHECKOUT_TOKEN_SECRET: 'ci-test-checkout-token-secret-at-least-32-chars'
       run: "cd supabase/functions/api\ndeno test --allow-all --no-check --env-file=../../../.env.local.ci\
         \ test/ || \\\n  deno test --allow-all --no-check test/\n"
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: wasm32-unknown-unknown
+    - name: Test checkout contract
+      run: cargo test --manifest-path contracts/checkout/Cargo.toml
     - name: Build web
       run: pnpm --filter @slippay/web build
     - name: Build listener
