@@ -52,3 +52,16 @@ jobs:
     - name: Stop Supabase
       if: always()
       run: supabase stop || true
+
+  flutter-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+    - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+    - uses: subosito/flutter-action@v2
+      with:
+        channel: 'stable'
+        cache: true
+    - name: Run app tests
+      working-directory: app
+      run: flutter test
