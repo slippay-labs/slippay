@@ -33,6 +33,26 @@ const EXPLORER_BASE = IS_PUBLIC
 
 type State = "idle" | "building" | "signing" | "submitting" | "done" | "error";
 
+// Typed outcome of the shared chargeability guard. Both the classic charge
+// endpoint and the on-chain charge builder must agree on these terminal
+// conditions, or one will hand out a signed-charge tx for a dead mandate.
+type ChargeableOutcome = "not_active" | "expired" | "max_periods_reached" | "ok";
+
+// Mirrors the server-side assertChargeable(sub) helper. Kept here so the buyer
+// surface can short-circuit before requesting a build, and so the same 409
+// bodies surface to the merchant client regardless of which endpoint ran.
+function assertChargeable(sub: {
+  status: string;
+  expires_at: string | number | Date | null;
+  charges_done: number;
+  max_periods: number;
+}): ChargeableOutcome {
+  if (sub.status !== "active") return "not_active";
+  if (sub.expires_at != null && new Date(sub.expires_at).getTime() <= Date.now()) return "expired";
+  if (sub.charges_done >= sub.max_periods) return "max_periods_reached";
+  return "ok";
+}
+
 export default function Sub() {
   const { id } = useParams<{ id: string }>();
   const [wallet, setWallet] = useState<string | null>(null);
@@ -73,6 +93,20 @@ export default function Sub() {
       if (!wallet) throw new Error("connect a wallet first");
       setState("building");
       const oc = await requestOnchainCharge(apiBase, id, wallet, demoKey);
+      // The API now enforces the same guard and returns 409 with a typed body
+      // for terminal conditions. If a build ever slips through, refuse to sign
+      // rather than paying a fee for a tx the contract will revert.
+      const outcome = assertChargeable({
+        status: oc.status ?? "active",
+        expires_at: oc.expires_at ?? null,
+        charges_done: oc.charges_done ?? 0,
+        max_periods: oc.max_periods ?? Number.POSITIVE_INFINITY,
+      });
+      if (outcome !== "ok") {
+        setState("error");
+        setError(outcome === "expired" ? "expired" : outcome === "max_periods_reached" ? "max_periods_reached" : "not_active");
+        return;
+      }
       setState("signing");
       const res = await signAndSubmitContractCharge(oc.unsigned_xdr, oc.rpc_url);
       setHash(res.hash);

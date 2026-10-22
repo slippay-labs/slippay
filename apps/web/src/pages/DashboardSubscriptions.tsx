@@ -99,6 +99,11 @@ export default function DashboardSubscriptions() {
       const j = await r.json();
       if (j.checkout_url) {
         window.open(j.checkout_url, "_blank", "noopener");
+      } else if (r.status === 409) {
+        // Terminal conditions from the shared assertChargeable guard:
+        // "expired" or "max_periods_reached". Surface them distinctly so the
+        // merchant can tell "over" apart from "temporarily failing".
+        setError(`charge: ${j.error ?? "not_chargeable"}`);
       } else if (j.error) {
         setError(`charge: ${j.error}`);
       }
@@ -233,7 +238,7 @@ export default function DashboardSubscriptions() {
                     {new Date(s.next_charge_at).toLocaleString()}
                   </td>
                   <td className="text-right">
-                    {s.status === "active" && (
+                    {s.status === "active" && !(s.max_periods !== null && s.charges_done >= s.max_periods) && (
                       <button onClick={() => handleCharge(s.id)}
                         disabled={chargeBusy === s.id}
                         className="text-[10px] uppercase tracking-[0.18em] border-b border-[#0a0a0a] hover:opacity-60 mr-4 disabled:opacity-30">
