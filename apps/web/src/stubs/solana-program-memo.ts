@@ -1,7 +1,7 @@
 // Stub for @solana-program/memo (imported by @privy-io/react-auth/solana).
 //
 // VERIFIED SAFE (2026-06-24): `getAddMemoInstruction` is referenced by Privy ONLY
-// inside `createSiwsMemoTransaction` — the Sign-In-With-Solana (external wallet)
+// inside `createSiwSmemoTransaction` — the Sign-In-With-Solana (external wallet)
 // auth flow. This app uses EMAIL login + an embedded Solana wallet, which never
 // triggers SIWS. So this function is never called on our paths (createWallet /
 // signTransaction / send). If SIWS is ever enabled, install the real package and

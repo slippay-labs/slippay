@@ -1,0 +1,21 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "fix/issue-207-fix-api-handle-a-second-memo-collision-instead",
+    "fix/issue-216-fix-api-prevent-a-zero-refill-rate-from",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "fix/issue-207-fix-api-handle-a-second-memo-collision-instead": "main",
+    "fix/issue-216-fix-api-prevent-a-zero-refill-rate-from": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "fix/issue-207-fix-api-handle-a-second-memo-collision-instead",
+    "fix/issue-216-fix-api-prevent-a-zero-refill-rate-from",
+    "origin"
+  ]
+}
