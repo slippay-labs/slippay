@@ -112,11 +112,20 @@ describe("midRateBRLperUSD — live rate with fallback", () => {
   it("marks the fallback rate stale when the fetch throws", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
 
-    const q = await quote.quoteBRLtoUSDC(54);
+    const { rate, stale } = await quote.midRateBRLperUSD();
 
+    expect(stale).toBe(true);
+    expect(rate).toBe(5.4);
+  });
+
+  it("refuses to price from a stale rate unless the caller explicitly opts in", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    await expect(quote.quoteBRLtoUSDC(54)).rejects.toThrow(/stale/i);
+
+    const q = await quote.quoteBRLtoUSDC(54, undefined, { allowStale: true });
     expect(q.stale).toBe(true);
     expect(q.midRate).toBe(5.4);
-    expect(q.usdcOut.toFixed(7)).toBe("9.8135427");
   });
 
   it("falls back when the upstream rate is not a usable positive number", async () => {

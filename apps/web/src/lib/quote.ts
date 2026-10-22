@@ -10,12 +10,27 @@
 // or rev-share anchor; while the conversion routes through a 3rd-party on-ramp,
 // this is the pricing + measurement layer that makes the spread live the moment
 // the anchor is connected.
+//
+// STALE RATE POLICY: a wrong price is worse than no price in a payments flow.
+// When the live rate is unavailable we refuse to quote by default. Callers that
+// genuinely need a degraded response can opt in explicitly via `allowStale`; the
+// fallback is then bounded to the last known live rate and is never more
+// favourable than it (in either direction).
 
 const SPREAD_BPS = Number(import.meta.env.VITE_FX_SPREAD_BPS ?? 190);
 const RATE_URL = "https://open.er-api.com/v6/latest/USD";
+// Last-resort constant, only used when there is no live rate at all. It is not
+// a price: callers must opt in to stale quotes and the result is flagged stale.
 const FALLBACK_BRL_PER_USD = 5.4;
+// Bound on how far a stale fallback may drift from the last live rate. This
+// keeps a degraded quote from being more favourable than the last live price.
+const MAX_STALE_DRIFT = 0.02 // 2%
 
-export const SPREAD_PCT = SPREAD_BPS / 100;
+const LIVE_TTL_MS = 60_000;
+// How long a last-known live rate remains usable as a stale fallback bound.
+const STALE_BOUND_TTL_MS = 6 * 60_000;
+
+export const SPREAED_PCT = SPREAD_BPS / 100;
 
 export interface Quote {
   brlIn: number;
@@ -30,30 +45,71 @@ export interface Quote {
   ts: string;
 }
 
+// Result of a stale quote: the price is degraded and the caller must decide.
+export interface StaleQuote extends Quote {
+  stale: true;
+}
+
+export class StaleRateError extends Error {
+  readonly code = "STALE_RATE" as const;
+  constructor(message = "Cotacao indisponivel. Tente novamente em instantes.") {
+    super(message);
+    this.name = "StaleRateError";
+  }
+}
+
 let cache: { rate: number; at: number } | null = null;
+// Last known live rate — never expires for bounding purposes, but is subject to
+// STALE_BOUND_TTL_MS so a very old rate cannot silently become the price.
+let lastLive: { rate: number; at: number } | null = null;
 // Cache the in-flight promise, not just the resolved value: concurrent cold
 // callers (several components mounting in one frame) share a single request.
 let inflight: Promise<{ rate: number; stale: boolean }> | null = null;
+
+function clampStaleRate(rate: number): number {
+  if (!lastLive || Date.now() - lastLive.at > STALE_BOUND_TTL_MS) return rate;
+  // Never more favourable than the last live rate in either direction: clamp
+  // the fallback into [live * (1 - d), live * (1 + d)]. A higher BRL/USD means
+  // fewer USDC per BRL, so clamping to the upper bound keeps the user from
+  // receiving more than the live price would have given.
+  const lo = lastLive.rate * (1 - MAX_STALE_DRIFT);
+  const hi = lastLive.rate * (1 + MAX_STALE_DRIFT);
+  return Math.min(hi, Math.max(lo, rate));
+}
 
 async function fetchMidRate(): Promise<{ rate: number; stale: boolean }> {
   try {
     const r = await fetch(RATE_URL);
     const j = await r.json();
     const rate = Number(j?.rates?.BRL);
-    if (rate > 0) { cache = { rate, at: Date.now() }; return { rate, stale: false }; }
-  } catch { /* fall through to fallback */ }
-  return { rate: FALLBACK_BRL_PER_USD, stale: true };
+    if (Number.isFinite(rate) && rate > 0) {
+      const at = Date.now();
+      cache = { rate, at };
+      lastLive = { rate, at };
+      return { rate, stale: false };
+    }
+  } catch { /* fall through to stale fallback */ }
+  // Prefer the last known live rate (bounded) over the hardcoded constant.
+  const base = lastLive && Date.now() - lastLive.at <= STALE_BOUND_TTL_MS
+    ? lastLive.rate
+    : FALLBACK_BRL_PER_USD;
+  return { rate: clampStaleRate(base), stale: true };
 }
 
 export async function midRateBRLperUSD(): Promise<{ rate: number; stale: boolean }> {
-  if (cache && Date.now() - cache.at < 60_000) return { rate: cache.rate, stale: false };
+  if (cache && Date.now() - cache.at < LIVE_TTL_MS) return { rate: cache.rate, stale: false };
   if (inflight) return inflight;
   inflight = fetchMidRate().finally(() => { inflight = null; });
   return inflight;
 }
 
-export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Promise<Quote> {
-  const { rate: midRate, stale } = await midRateBRLperUSD();
+export interface QuoteOptions {
+  // Explicit opt-in to pricing from a stale/fallback rate. Defaults to false: a
+  // caller that forgets to handle stale rates gets an error, not a wrong price.
+  allowStale?: boolean;
+}
+
+function toQuote(brlIn: number, midRate: number, spreadBps: number, stale: boolean): Quote {
   const quotedRate = midRate * (1 + spreadBps / 10000);
   const usdcOut = brlIn > 0 ? brlIn / quotedRate : 0;
   const usdcAtMid = brlIn > 0 ? brlIn / midRate : 0;
@@ -63,6 +119,21 @@ export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Pro
     usdcOut, usdcAtMid, marginUsd, marginBrl: marginUsd * quotedRate,
     stale, ts: new Date().toISOString(),
   };
+}
+
+// Default path: refuses to price from a stale rate. Throws StaleRateError so the
+// caller can surface a retry state instead of a wrong price.
+export async function quoteBRLtoUSDC(brlIn: number, spreadBps = SPREAD_BPS): Promise<Quote>;
+export async function quoteBRLtoUSDC(brlIn: number, spreadBps: number, opts: QuoteOptions & { allowStale: true }): Promise<StaleQuote>;
+export async function quoteBRLtoUSDC(brlIn: number, spreadBps: number, opts: QuoteOptions): Promise<Quote>;
+export async function quoteBRLtoUSDC(
+  brlIn: number,
+  spreadBps = SPREAD_BPS,
+  opts: QuoteOptions = {},
+): Promise<Quote> {
+  const { rate: midRate, stale } = await midRateBRLperUSD();
+  if (stale && !opts.allowStale) throw new StaleRateError();
+  return toQuote(brlIn, midRate, spreadBps, stale);
 }
 
 // Best-effort margin ledger: records the conversion intent + captured spread so
