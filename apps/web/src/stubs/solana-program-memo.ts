@@ -11,6 +11,14 @@
 // @solana/kit version exposing "./program-client-core", which is incompatible with
 // the @solana/kit@5.5.1 that @solana-program/token pins (see pnpm.overrides). The
 // two cannot coexist, so the real package is a dependency dead-end here.
+//
+// Memo encoding (single source of truth: `lib/memo.ts`): the on-chain memo bytes
+// are base64-encoded in the event as `memo_b64`; the canonical form used for
+// comparison is the lowercase hex representation of those bytes, produced by
+// `lib/memo.ts`. See that module for the authoritative encoding definition.
+//
+// The listener validates that `memo_b64` decodes to the expected fixed length
+// before comparing, and compares in constant time (see apps/listener/src/matcher.ts).
 export function getAddMemoInstruction(): never {
   throw new Error(
     "@solana-program/memo is stubbed (SIWS not used — email + embedded wallet). " +

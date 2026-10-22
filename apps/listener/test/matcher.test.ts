@@ -14,7 +14,11 @@ const validEvent: StellarPaymentEvent = {
   memo_b64: Buffer.from("ab".repeat(32), "hex").toString("base64"),
   successful: true,
   asset_code: "USDC",
+<<<<<<< HEAD
   asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVF4NAT4AQH3ZLLFLA5",
+=======
+  asset_issuer: "GBBD47IF6LWK7P7MDEVCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
+>>>>>>> refs/remotes/pr/339
   to: "G" + "M".repeat(55),
   amount: "9.9000000",
   hash: "txhash",
@@ -34,7 +38,18 @@ describe("matchPaymentToOrder", () => {
 
   it("ignores when memo doesnt match", () => {
     const e = { ...validEvent, memo_b64: Buffer.from("cd".repeat(32), "hex").toString("base64") };
-    expect(matchPaymentToOrder(e, order, "TESTNET").outcome).toBe("ignore");
+    expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({ outcome: "ignore", reason: "memo_mismatch" });
+  });
+
+  it("ignores malformed memo with a distinct reason", () => {
+    // Truncated base64 -> decodes to fewer than 32 bytes.
+    const e = { ...validEvent, memo_b64: Buffer.from("ab".repeat(32), "hex").toString("base64").slice(0, 8) };
+    expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({ outcome: "ignore", reason: "memo_malformed" });
+  });
+
+  it("ignores memo with invalid base64 characters as malformed", () => {
+    const e = { ...validEvent, memo_b64: "!!!!" };
+    expect(matchPaymentToOrder(e, order, "TESTNET")).toEqual({ outcome: "ignore", reason: "memo_malformed" });
   });
 
   it("ignores when wrong asset", () => {
@@ -47,7 +62,7 @@ describe("matchPaymentToOrder", () => {
     expect(matchPaymentToOrder(e, order, "TESTNET").outcome).toBe("ignore");
   });
 
-  it("matches when STELLAR_USDC_ISSUER_OVERRIDE overrides expected issuer", () => {
+  it("matches when STELLAR_USDB_ISSUER_OVERRIDE overrides expected issuer", () => {
     const customIssuer = "GCUSTOM" + "X".repeat(49);
     process.env.STELLAR_USDC_ISSUER_OVERRIDE = customIssuer;
     const e = { ...validEvent, asset_issuer: customIssuer };
@@ -91,6 +106,21 @@ describe("matchPaymentToOrder", () => {
   it("rejects fractional fee_bp as fee_bp_invalid rather than throwing", () => {
     const o = { ...order, platform_fee_bp: 12.5 };
     expect(() => matchPaymentToOrder(validEvent, o, "TESTNET")).not.toThrow();
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+  });
+
+  it("rejects null fee_bp as ignore instead of treating as zero fee", () => {
+    const o = { ...order, platform_fee_bp: null };
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+  });
+
+  it("rejects undefined/missing fee_bp as ignore", () => {
+    const o = { ...order, platform_fee_bp: undefined };
+    expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
+  });
+
+  it("rejects negative fee_bp as ignore", () => {
+    const o = { ...order, platform_fee_bp: -1 };
     expect(matchPaymentToOrder(validEvent, o, "TESTNET")).toEqual({ outcome: "ignore", reason: "fee_bp_invalid" });
   });
 
