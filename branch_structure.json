@@ -1,0 +1,21 @@
+{
+  "default_branch": "main",
+  "branches": [
+    "fix/issue-218-fix-fees-compute-platform-fees-with-integer",
+    "fix/issue-224-fix-fees-align-the-listener-s-fee-bound-with",
+    "main",
+    "origin"
+  ],
+  "parent": {
+    "fix/issue-218-fix-fees-compute-platform-fees-with-integer": "main",
+    "fix/issue-224-fix-fees-align-the-listener-s-fee-bound-with": "main",
+    "main": null,
+    "origin": "main"
+  },
+  "order": [
+    "main",
+    "fix/issue-218-fix-fees-compute-platform-fees-with-integer",
+    "fix/issue-224-fix-fees-align-the-listener-s-fee-bound-with",
+    "origin"
+  ]
+}
