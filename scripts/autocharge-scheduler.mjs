@@ -36,6 +36,49 @@ const server = new rpc.Server(RPC_URL);
 const log = (...a) => console.log(...a);
 const die = (m) => { console.error("✗ " + m); process.exit(1); };
 
+export function computeNextChargeState(sub, now = Date.now()) {
+  const chargesDone = Number(sub.charges_done || 0) + 1;
+  const isMaxPeriodsReached = Boolean(sub.max_periods && chargesDone >= Number(sub.max_periods));
+  const periodSeconds = Number(sub.period_seconds) || 30 * 86400;
+  const nextChargeAt = new Date(now + periodSeconds * 1000).toISOString();
+  const lastChargeAt = new Date(now).toISOString();
+
+  return {
+    last_charge_at: lastChargeAt,
+    next_charge_at: nextChargeAt,
+    charges_done: chargesDone,
+    ...(isMaxPeriodsReached ? { status: "expired" } : {}),
+  };
+}
+
+export function isTerminalError(errStr) {
+  const lower = String(errStr || "").toLowerCase();
+  return (
+    lower.includes("max_periods") ||
+    lower.includes("mandate expired") ||
+    lower.includes("expired") ||
+    lower.includes("not found")
+  );
+}
+
+export async function updateSubscription(subId, patch) {
+  if (!SUPABASE_URL || !SERVICE_KEY) return;
+  const q = `${SUPABASE_URL}/rest/v1/subscriptions?id=eq.${subId}`;
+  const res = await fetch(q, {
+    method: "PATCH",
+    headers: {
+      apikey: SERVICE_KEY,
+      authorization: `Bearer ${SERVICE_KEY}`,
+      "Content-Type": "application/json",
+      Prefer: "return=minimal",
+    },
+    body: JSON.stringify(patch),
+  });
+  if (!res.ok) {
+    console.error(`✗ failed to update subscription ${subId}: ${res.status} ${await res.text()}`);
+  }
+}
+
 async function fetchDueSubscriptions() {
   if (!SUPABASE_URL || !SERVICE_KEY) die("SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY required to find due subs.");
   const now = new Date().toISOString();
@@ -43,7 +86,7 @@ async function fetchDueSubscriptions() {
   const q = `${SUPABASE_URL}/rest/v1/subscriptions` +
     `?status=eq.active&soroban_subscription_id=not.is.null` +
     `&next_charge_at=lte.${now}` +
-    `&select=id,soroban_contract_id,soroban_subscription_id,next_charge_at,charges_done,max_periods`;
+    `&select=id,soroban_contract_id,soroban_subscription_id,next_charge_at,charges_done,max_periods,period_seconds`;
   const r = await fetch(q, { headers: { apikey: SERVICE_KEY, authorization: `Bearer ${SERVICE_KEY}` } });
   if (!r.ok) die(`supabase query ${r.status}: ${await r.text()}`);
   return r.json();
@@ -91,13 +134,34 @@ async function main() {
     const contractId = s.soroban_contract_id || DEFAULT_CONTRACT;
     try {
       const r = await autocharge(relayer, contractId, s.soroban_subscription_id);
-      if (r.status === "SUCCESS") { ok++; log(`✓ sub ${s.id} → ${EXPLORER}${r.hash}`); }
-      else { fail++; log(`✗ sub ${s.id} → ${r.status} ${EXPLORER}${r.hash}`); }
+      if (r.status === "SUCCESS") {
+        ok++;
+        log(`✓ sub ${s.id} → ${EXPLORER}${r.hash}`);
+        const patch = computeNextChargeState(s);
+        await updateSubscription(s.id, patch);
+        log(`  [state] advanced sub ${s.id}: next_charge_at=${patch.next_charge_at}, charges_done=${patch.charges_done}${patch.status ? `, status=${patch.status}` : ""}`);
+      } else {
+        fail++;
+        log(`✗ sub ${s.id} → ${r.status} ${EXPLORER}${r.hash}`);
+        if (isTerminalError(r.status)) {
+          await updateSubscription(s.id, { status: "expired" });
+          log(`  [state] marked sub ${s.id} as expired due to terminal status: ${r.status}`);
+        }
+      }
     } catch (e) {
-      fail++; log(`✗ sub ${s.id} → ${e?.message ?? e}`);
+      fail++;
+      const errMsg = e?.message ?? String(e);
+      log(`✗ sub ${s.id} → ${errMsg}`);
+      if (isTerminalError(errMsg)) {
+        await updateSubscription(s.id, { status: "expired" });
+        log(`  [state] marked sub ${s.id} as expired due to terminal error: ${errMsg}`);
+      }
+      // Note: On transient error, next_charge_at is left unchanged so it can be retried
     }
   }
   log(`\ndone: ${ok} charged, ${fail} failed.`);
 }
 
-main().catch(e => { console.error("FAILED:", e?.message ?? e); process.exit(1); });
+if (process.env.NODE_ENV !== "test" && !process.env.VITEST) {
+  main().catch(e => { console.error("FAILED:", e?.message ?? e); process.exit(1); });
+}
