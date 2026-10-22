@@ -8,7 +8,7 @@ supabase/.temp
 .fly
 *.tsbuildinfo
 
-# Env files — NEVER commit (audit L4). VITE_-prefixed values get inlined into
+# Env files ․ NEVER commit (audit L4). VITE_-prefixed values get inlined into
 # the world-readable bundle, and server .env holds secrets. Ignore all .env*
 # everywhere, but keep *.example templates tracked.
 .env
@@ -47,6 +47,13 @@ contracts/*/.testnet-deploy.env
 # A2A testnet proof (local, zero-value testnet secrets)
 apps/listener/.a2a-testnet.json
 apps/listener/a2a-registry.jsonl
+branch_structure.json
+temp_auto_push.bat
+temp_interactive_push.bat
+# local planning and scratch files (operational asset; don't publish by accident)
+*.local.md
+PLAN_*.md
+drafts/
 # Python cache & bytecode artifacts
 __pycache__/
 *.py[cod]
