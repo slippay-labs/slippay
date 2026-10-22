@@ -117,6 +117,10 @@ export function verifyShopifyWebhookHmac(rawBody, header, secrets = [APP_SECRET,
   return false;
 }
 
+export function isShopDomain(shop) {
+  return SHOP_RE.test(String(shop ?? "").toLowerCase());
+}
+
 // Shopify OAuth/App-URL query HMAC: hex HMAC-SHA256 over the sorted query
 // string (minus hmac/signature), keyed with the app secret.
 export function verifyShopifyQueryHmac(params, secret = APP_SECRET) {
@@ -130,6 +134,15 @@ export function verifyShopifyQueryHmac(params, secret = APP_SECRET) {
     .join("&");
   const digest = createHmac("sha256", secret).update(msg).digest("hex");
   return safeEqual(digest, hmac);
+}
+
+// SlipPay order payload validation: amount must be a positive, finite number
+// and external_ref must be a non-empty string. Returns an error string or null.
+export function validateSlippayOrderInput({ amount, externalRef } = {}) {
+  const n = Number(amount);
+  if (!Number.isFinite(n) || n <= 0) return "invalid amount";
+  if (typeof externalRef !== "string" || externalRef.trim() === "") return "invalid external_ref";
+  return null;
 }
 
 // SlipPay webhook signature: "t=<sec>,v1=<hex hmac over `${t}.${body}`>".
@@ -147,6 +160,8 @@ export function verifySlippaySig(rawBody, header, secrets) {
 }
 
 async function createSlippayOrder({ apiKey, amount, externalRef }) {
+  const invalid = validateSlippayOrderInput({ amount, externalRef });
+  if (invalid) throw new Error(`slippay input: ${invalid}`);
   const r = await fetch(`${SLIPPAY_API_BASE}/api/v1/orders`, {
     method: "POST",
     headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
@@ -166,6 +181,9 @@ function shopCreds(shop) {
       slippayApiKey: rec.slippayApiKey || SLIPPAY_API_KEY,
       slippayWebhookSecret: rec.slippayWebhookSecret || SLIPPAY_WEBHOOK_SECRET,
     };
+  }
+  if (shop && !isShopDomain(shop)) {
+    return { token: "", slippayApiKey: SLIPPAY_API_KEY, slippayWebhookSecret: SLIPPAY_WEBHOOK_SECRET };
   }
   if (shop === LEGACY_SHOP || !shop) {
     return { token: LEGACY_TOKEN, slippayApiKey: SLIPPAY_API_KEY, slippayWebhookSecret: SLIPPAY_WEBHOOK_SECRET };
@@ -355,6 +373,9 @@ const server = http.createServer(async (req, res) => {
     }
     const shop = ((req.headers["x-shopify-shop-domain"] ?? LEGACY_SHOP) + "").toLowerCase();
     const o = parse(raw);
+    if (!isShopDomain(shop)) {
+      return json(res, 400, { error: "bad shop domain" });
+    }
     const gateways = (o.payment_gateway_names ?? []).map(g => String(g).toLowerCase());
     if (!gateways.some(g => g.includes(GATEWAY_MATCH))) {
       return json(res, 200, { ignored: "not a slippay order", gateways });
@@ -363,6 +384,9 @@ const server = http.createServer(async (req, res) => {
     if (state.orders[key]) return json(res, 200, { deduped: true });
     const creds = shopCreds(shop);
     if (!creds.slippayApiKey) return json(res, 200, { ok: false, error: "shop has no SlipPay api key configured" });
+    if (!creds.token) {
+      return json(res, 200, { ok: false, error: "shop has no Shopify access token configured" });
+    }
     try {
       const { order, checkout_url } = await createSlippayOrder({
         apiKey: creds.slippayApiKey,
@@ -421,6 +445,9 @@ const server = http.createServer(async (req, res) => {
     }
     const [key, s] = hit;
     const creds = shopCreds(s.shop);
+    if (!creds.token) {
+      return json(res, 200, { received: true, error: "shop has no Shopify access token configured" });
+    }
     if (!verifySlippaySig(raw, sigHeader, [creds.slippayWebhookSecret, SLIPPAY_WEBHOOK_SECRET])) {
       return json(res, 401, { error: "bad slippay signature" });
     }
@@ -445,6 +472,8 @@ const server = http.createServer(async (req, res) => {
     const amount = b.amount ?? b.payment?.amount;
     const apiKey = b.merchant_settings?.api_key || SLIPPAY_API_KEY;
     if (!apiKey) return json(res, 400, { error: "missing SlipPay api_key" });
+    const invalid = validateSlippayOrderInput({ amount, externalRef: `shopify-session:${sessionId}` });
+    if (invalid) return json(res, 400, { error: invalid });
     try {
       const { order, checkout_url } = await createSlippayOrder({ apiKey, amount, externalRef: `shopify-session:${sessionId}` });
       state.sessions[sessionId] = { slippayOrderId: order.id, status: "pending", checkoutUrl: checkout_url };
@@ -480,6 +509,7 @@ const server = http.createServer(async (req, res) => {
     if (err instanceof PayloadTooLargeError) {
       return json(res, 413, { error: "payload_too_large", message: err.message });
     }
+    console.error(`[error] ${err?.message ?? err}`);
     return json(res, 500, { error: "internal_error" });
   }
 });

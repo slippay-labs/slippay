@@ -51,7 +51,11 @@ async function createSlippayOrder({ apiKey, value, reference }) {
   return data; // { order: {...}, checkout_url }
 }
 
-const server = http.createServer(async (req, res) => {
+export function createServer() {
+  return http.createServer(handleRequest);
+}
+
+export async function handleRequest(req, res) {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   const path = url.pathname;
 
@@ -131,8 +135,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && path === "/health") return json(res, 200, { ok: true, slippay: SLIPPAY_API_BASE });
 
   json(res, 404, { error: "not_found", path });
-});
+}
 
-server.listen(PORT, () => {
-  console.log(`SlipPay×VTEX connector on :${PORT} → ${SLIPPAY_API_BASE}`);
-});
+// Only start listening when run directly (not when imported by tests).
+if (import.meta.url === `file://${process.argv[1]}`) {
+  createServer().listen(PORT, () => {
+    console.log(`SlipPay×VTEX connector on :${PORT} → ${SLIPPAY_API_BASE}`);
+  });
+}
