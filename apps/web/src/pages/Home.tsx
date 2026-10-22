@@ -33,7 +33,7 @@ function MagneticCTA({ to, children }: { to: string; children: React.ReactNode }
     el.style.transform = "translate(0,0)";
   }
   return (
-    <Link to={to} ref={ref as any}
+    <Link to={to} ref={ref}
       onMouseMove={onMove} onMouseLeave={onLeave}
       style={{ transition: "transform 200ms cubic-bezier(0.22,1,0.36,1)" }}
       className="inline-flex items-center gap-3 bg-[#0a0a0a] text-[#f1eee7] px-8 py-4 text-[11px] uppercase tracking-[0.22em] hover:bg-[#1a1a1a]">

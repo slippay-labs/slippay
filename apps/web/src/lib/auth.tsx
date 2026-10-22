@@ -1,13 +1,7 @@
-import { createClient, type Session } from "@supabase/supabase-js";
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL ?? "http://127.0.0.1:54321";
-const SUPABASE_ANON = import.meta.env.VITE_SUPABASE_ANON_KEY ?? "";
-
-export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON);
-
-interface AuthCtx { session: Session | null; loading: boolean; }
-const Ctx = createContext<AuthCtx>({ session: null, loading: true });
+import { useEffect, useState, type ReactNode } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { supabase } from "./supabase.ts";
+import { AuthContext } from "./authContext.ts";
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
@@ -17,7 +11,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
-  return <Ctx.Provider value={{ session, loading }}>{children}</Ctx.Provider>;
+  return <AuthContext.Provider value={{ session, loading }}>{children}</AuthContext.Provider>;
 }
 
-export const useAuth = () => useContext(Ctx);

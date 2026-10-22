@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from "react";
 import { isAddress } from "viem";
-import { useComexBaseWallet } from "../../../lib/comexBase.tsx";
+import { useComexBaseWallet } from "../../../lib/comexContexts.tsx";
 import { authorizeBasePayment } from "../../../lib/baseAuthorize.ts";
 import { publicClient, usdcAddress, fromBaseUnits } from "../../../lib/chain/base/usdc.ts";
 import ConfirmTxModal from "../../../components/ConfirmTxModal.tsx";

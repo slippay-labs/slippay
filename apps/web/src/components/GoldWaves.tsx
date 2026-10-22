@@ -45,7 +45,8 @@ export function GoldWaves({ className = "" }: { className?: string }) {
           const y = baseY
             + amp * Math.sin(x * 0.0016 + t * speed + phase)
             + amp * 0.45 * Math.sin(x * 0.0041 + t * speed * 1.8 + phase * 1.3);
-          x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+          if (x === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
         }
         ctx.stroke();
       }

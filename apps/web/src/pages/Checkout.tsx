@@ -52,7 +52,7 @@ function isEmbedded(): boolean {
 
 function postToParent(msg: Record<string, unknown>) {
   if (!isEmbedded() || typeof window === "undefined") return;
-  try { window.parent.postMessage(msg, PARENT_ORIGIN); } catch {}
+  try { window.parent.postMessage(msg, PARENT_ORIGIN); } catch { /* parent window may be cross-origin */ }
 }
 
 export default function Checkout() {
@@ -87,7 +87,7 @@ export default function Checkout() {
           clearInterval(id);
           postToParent({ type: "slippay:expired", orderId: order_id });
         }
-      } catch {}
+      } catch { /* transient poll errors are retried on the next tick */ }
     }, 2000);
     return () => clearInterval(id);
   }, [submitState, order_id]);

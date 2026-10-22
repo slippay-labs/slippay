@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
-import { useComexBaseWallet } from "../../../lib/comexBase.tsx";
+import { useComexBaseWallet } from "../../../lib/comexContexts.tsx";
 import { publicClient, usdcAddress, fromBaseUnits } from "../../../lib/chain/base/usdc.ts";
 
 // Minimal ERC-20 balanceOf ABI — only what we need.

@@ -9,7 +9,7 @@
 // On-chain send after sign shows basescan hash + "confirmando com a 4P". Never false success.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useComexBaseWallet } from "../../../lib/comexBase.tsx";
+import { useComexBaseWallet } from "../../../lib/comexContexts.tsx";
 import { authorizeBasePayment } from "../../../lib/baseAuthorize.ts";
 import type { DecodedTransfer } from "../../../lib/baseAuthorize.ts";
 import { publicClient, usdcAddress, fromBaseUnits } from "../../../lib/chain/base/usdc.ts";

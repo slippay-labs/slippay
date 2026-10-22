@@ -18,9 +18,7 @@
 // usePrivy(): { ready, authenticated, user, login, logout }  (index.d.ts line 1338)
 
 import {
-  createContext,
   useCallback,
-  useContext,
   type ReactNode,
 } from "react";
 import {
@@ -33,6 +31,7 @@ import {
 import { SmartWalletsProvider, useSmartWallets } from "@privy-io/react-auth/smart-wallets";
 import { base, baseSepolia } from "viem/chains";
 import { baseNet } from "./chain/base/usdc.ts";
+import { ComexBaseContext, type SendTxArgs } from "./comexContexts.tsx";
 
 // ---------------------------------------------------------------------------
 // Provider config — corporate: email + MFA only, NO solana, NO biometric.
@@ -73,42 +72,8 @@ export function ComexBaseProvider({ children }: { children: ReactNode }) {
 // Wallet context
 // ---------------------------------------------------------------------------
 
-interface SendTxArgs {
-  to: `0x${string}`;
-  data: `0x${string}`;
-  value: bigint;
-}
-
-interface ComexBaseCtx {
-  ready: boolean;
-  authenticated: boolean;
-  email: string | null;
-  /** 0x-prefixed EVM address of the Privy embedded wallet. Null before wallet is created. */
-  address: `0x${string}` | null;
-  login: () => void;
-  logout: () => Promise<void>;
-  /**
-   * Send an EVM transaction via the Privy embedded wallet.
-   * Uses useSendTransaction from @privy-io/react-auth/tempo (tempo.d.ts line 14).
-   * Returns { hash } — the on-chain tx hash.
-   *
-   * Gate contract: caller (baseAuthorize.ts) MUST invoke this only AFTER:
-   *   build → decode → assert → human-confirm have all passed.
-   */
-  sendTransaction: (args: SendTxArgs) => Promise<{ hash: `0x${string}` }>;
-}
-
-const ComexBaseContext = createContext<ComexBaseCtx>({
-  ready: false,
-  authenticated: false,
-  email: null,
-  address: null,
-  login: () => {},
-  logout: async () => {},
-  sendTransaction: async () => {
-    throw new Error("comexBase: wallet not ready");
-  },
-});
+// The wallet context shape lives in comexContexts.tsx so this module only
+// exports components (react-refresh/only-export-components).
 
 // ---------------------------------------------------------------------------
 // Inner provider — lives inside PrivyProvider tree
@@ -185,12 +150,4 @@ function ComexBaseProviderInner({ children }: { children: ReactNode }) {
       {children}
     </ComexBaseContext.Provider>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Public hook
-// ---------------------------------------------------------------------------
-
-export function useComexBaseWallet(): ComexBaseCtx {
-  return useContext(ComexBaseContext);
 }

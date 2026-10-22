@@ -1,4 +1,4 @@
-import { TransactionBuilder, Networks, StrKey } from "@stellar/stellar-sdk";
+import { FeeBumpTransaction, TransactionBuilder, Networks, StrKey } from "@stellar/stellar-sdk";
 import { stellarToStroops } from "@slippay/shared";
 
 const PASS: Record<string, string> = { TESTNET: Networks.TESTNET, PUBLIC: Networks.PUBLIC };
@@ -7,11 +7,14 @@ export interface OpSummary { type: string; destination?: string; amount?: string
 export interface TxSummary { source: string; fee: string; memo?: string; operations: OpSummary[] }
 
 export function decodeTx(xdr: string, network: "TESTNET" | "PUBLIC"): TxSummary {
-  const tx = TransactionBuilder.fromXDR(xdr, PASS[network]!) as any;
-  const ops: OpSummary[] = (tx.operations ?? []).map((op: any) => {
+  const tx = TransactionBuilder.fromXDR(xdr, PASS[network]!);
+  if (tx instanceof FeeBumpTransaction) {
+    throw new Error("decodeTx: fee-bump transactions are not supported");
+  }
+  const ops: OpSummary[] = tx.operations.map((op) => {
     if (op.type === "payment") {
       return { type: "payment", destination: op.destination, amount: op.amount,
-               assetCode: op.asset?.isNative?.() ? "XLM" : op.asset?.code };
+               assetCode: op.asset.isNative() ? "XLM" : op.asset.code };
     }
     return { type: op.type };
   });
@@ -64,4 +67,3 @@ export function assertPaymentMatches(
     throw new Error(`guard: valor divergente (assinaria ${pay.amount}, esperado ${expect.amount})`);
   }
 }
-

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useComexBaseWallet } from "../../../lib/comexBase.tsx";
+import { useComexBaseWallet } from "../../../lib/comexContexts.tsx";
 import { publicClient, usdcAddress, fromBaseUnits } from "../../../lib/chain/base/usdc.ts";
 import BaseBalance from "./Balance.tsx";
 import BaseSend from "./Send.tsx";

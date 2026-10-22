@@ -19,9 +19,7 @@
 //   comex uses 'all-users': every corporate login gets a Solana wallet automatically.
 
 import {
-  createContext,
   useCallback,
-  useContext,
   useEffect,
   useRef,
   type ReactNode,
@@ -38,6 +36,7 @@ import {
   type ConnectedStandardSolanaWallet,
 } from "@privy-io/react-auth/solana";
 import { Transaction } from "@solana/web3.js";
+import { ComexSolanaContext } from "./comexContexts.tsx";
 
 // ---------------------------------------------------------------------------
 // Provider config — corporate: email + MFA only, NO biometric.
@@ -73,37 +72,8 @@ export function ComexSolanaProvider({ children }: { children: ReactNode }) {
 // Wallet context
 // ---------------------------------------------------------------------------
 
-interface ComexSolanaCtx {
-  ready: boolean;
-  authenticated: boolean;
-  email: string | null;
-  /** Base58 Solana pubkey of the Privy embedded wallet. Null before wallet is created. */
-  address: string | null;
-  login: () => void;
-  logout: () => Promise<void>;
-  /**
-   * Sign a @solana/web3.js Transaction (legacy) using the Privy Solana embedded wallet.
-   * Does NOT submit to the network — the security gate (authorizeSolanaPayment) calls
-   * this ONLY after build→decode→assert→human-confirm have all passed.
-   *
-   * VERIFY-WITH-KEYS: signTransaction from @privy-io/react-auth/solana (solana.d.ts line 260-261).
-   * Accepts: { transaction: Uint8Array, wallet: ConnectedStandardSolanaWallet }
-   * Returns: { signedTransaction: Uint8Array } — caller deserializes with Transaction.from().
-   */
-  signTransaction: (tx: Transaction) => Promise<Transaction>;
-}
-
-const ComexSolanaContext = createContext<ComexSolanaCtx>({
-  ready: false,
-  authenticated: false,
-  email: null,
-  address: null,
-  login: () => {},
-  logout: async () => {},
-  signTransaction: async () => {
-    throw new Error("comexSolana: wallet not ready");
-  },
-});
+// The wallet context shape lives in comexContexts.tsx so this module only
+// exports the provider component (react-refresh/only-export-components).
 
 // ---------------------------------------------------------------------------
 // Inner provider — lives inside PrivyProvider tree
@@ -175,12 +145,4 @@ function ComexSolanaProviderInner({ children }: { children: ReactNode }) {
       {children}
     </ComexSolanaContext.Provider>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Public hook
-// ---------------------------------------------------------------------------
-
-export function useComexSolanaWallet(): ComexSolanaCtx {
-  return useContext(ComexSolanaContext);
 }

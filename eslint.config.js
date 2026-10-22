@@ -26,8 +26,23 @@ export default tseslint.config(
     rules: {
       ...reactHooks.configs.recommended.rules,
       "react-refresh/only-export-components": [
-        "warn",
+        "error",
         { allowConstantExport: true },
+      ],
+    },
+  },
+
+  // Shared TypeScript rules that apply everywhere, including the web app.
+  // Names prefixed with `_` are intentionally unused (mock signatures, etc).
+  {
+    rules: {
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        {
+          argsIgnorePattern: "^_",
+          varsIgnorePattern: "^_",
+          caughtErrorsIgnorePattern: "^_",
+        },
       ],
     },
   },
@@ -50,7 +65,7 @@ export default tseslint.config(
     rules: {
       "jsx-a11y/alt-text": "error",
       // Strict: also enforce that long alt text is not just the file name.
-      "jsx-a11y/no-redundant-roles": "warn",
+      "jsx-a11y/no-redundant-roles": "error",
     },
   },
 

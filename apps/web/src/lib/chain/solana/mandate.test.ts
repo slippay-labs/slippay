@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // Anchor is only needed to satisfy mandate.ts's top-level import; the pure
 // derivation helpers and the class's account wiring are what we exercise. The
 // Program is swapped for a controllable stub so `methods` can be inspected.
-const anchor = vi.hoisted(() => ({ methods: {} as Record<string, any> }));
+const anchor = vi.hoisted(() => ({ methods: {} as Record<string, unknown> }));
 
 vi.mock("@coral-xyz/anchor", () => ({
   BN: class BN {

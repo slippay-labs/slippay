@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Horizon } from "@stellar/stellar-sdk";
 import { USDC_ASSET_CODE } from "@slippay/shared";
-import { useComexWallet } from "../../lib/comexPrivy.tsx";
+import { useComexWallet } from "../../lib/comexContexts.tsx";
 import { usdcIssuer } from "../../lib/stellar.ts";
 
 const NETWORK = (import.meta.env.VITE_STELLAR_NETWORK ?? "PUBLIC").toUpperCase() as "TESTNET" | "PUBLIC";

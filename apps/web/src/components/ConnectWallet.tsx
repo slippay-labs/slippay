@@ -11,8 +11,7 @@ function short(a: string) {
   return a.length <= 11 ? a : `${a.slice(0, 6)}…${a.slice(-4)}`;
 }
 
-// deno-lint-ignore no-explicit-any
-type Eth = { request: (a: { method: string; params?: unknown[] }) => Promise<any> };
+type Eth = { request: (a: { method: string; params?: unknown[] }) => Promise<unknown> };
 function getEth(): Eth | null {
   const w = window as unknown as { ethereum?: Eth };
   return w.ethereum ?? null;
@@ -29,7 +28,7 @@ export function ConnectWallet({ className = "" }: { className?: string }) {
     try {
       const eth = getEth();
       if (!eth) { window.open("https://metamask.io/download/", "_blank"); return; }
-      const accs: string[] = await eth.request({ method: "eth_requestAccounts" });
+      const accs = (await eth.request({ method: "eth_requestAccounts" })) as string[];
       if (accs?.[0]) { setAddr(accs[0]); setKind("evm"); }
     } catch { /* user rejected */ } finally { setBusy(false); }
   }

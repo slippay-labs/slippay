@@ -21,8 +21,15 @@ export function attachSignature(
   return tx.toXDR();
 }
 
+/** Privy wallet API surface needed to raw-sign an already-derived hash. */
+interface PrivyRawSigner {
+  walletApi: {
+    rawSign(args: { walletId: string; hash: string }): Promise<{ signature: string }>;
+  };
+}
+
 /** Privy raw-sign over Ed25519. NOT unit-tested (network). Signs the hash already re-derived locally. */
-export async function rawSignHash(privy: any, walletId: string, hash: Buffer): Promise<Buffer> {
+export async function rawSignHash(privy: PrivyRawSigner, walletId: string, hash: Buffer): Promise<Buffer> {
   const { signature } = await privy.walletApi.rawSign({ walletId, hash: `0x${hash.toString("hex")}` });
   return Buffer.from(String(signature).replace(/^0x/, ""), "hex");
 }

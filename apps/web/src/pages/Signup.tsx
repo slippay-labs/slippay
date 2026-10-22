@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { supabase } from "../lib/auth.tsx";
+import { supabase } from "../lib/supabase.ts";
 import { Logo } from "../components/Logo.tsx";
 
 export default function Signup() {

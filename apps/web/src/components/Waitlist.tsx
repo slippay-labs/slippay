@@ -4,7 +4,7 @@
 // it stays optimistic + stores locally so a soft-launch gap never looks broken.
 
 import { useState } from "react";
-import { supabase } from "../lib/auth.tsx";
+import { supabase } from "../lib/supabase.ts";
 
 const ACCENT = "#FDDA24";
 

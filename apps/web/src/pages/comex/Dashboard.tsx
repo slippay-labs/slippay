@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useComexWallet } from "../../lib/comexPrivy.tsx";
+import { useComexWallet } from "../../lib/comexContexts.tsx";
 import Balance from "./Balance.tsx";
 import Send from "./Send.tsx";
 import Exchange from "./Exchange.tsx";

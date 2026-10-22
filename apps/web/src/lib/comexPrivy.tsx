@@ -14,7 +14,8 @@
 //   const { signature } = await signRawHash({ address, chainType: 'stellar', hash: `0x${hexHash}` });
 //   // signature: `0x${string}` — 64-byte Ed25519 signature (r+s)
 
-import { createContext, useCallback, useContext, useEffect, useRef, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, type ReactNode } from "react";
+import { ComexWalletContext } from "./comexContexts.tsx";
 import {
   PrivyProvider,
   usePrivy,
@@ -56,33 +57,8 @@ export function ComexPrivyProvider({ children }: { children: ReactNode }) {
 // Wallet context
 // ---------------------------------------------------------------------------
 
-interface ComexWalletCtx {
-  ready: boolean;
-  authenticated: boolean;
-  email: string | null;
-  /** Stellar account ID (G... address) of the user's Privy-managed Ed25519 wallet. */
-  address: string | null;
-  walletId: string | null;
-  login: () => void;
-  logout: () => Promise<void>;
-  /**
-   * Signs a raw 32-byte hash using the Stellar Ed25519 embedded wallet via
-   * useSignRawHash from @privy-io/react-auth/extended-chains.
-   * Returns a 64-byte Buffer (Ed25519 r+s signature, no EIP-191 prefix).
-   */
-  signHash: (hash: Buffer) => Promise<Buffer>;
-}
-
-const ComexWalletContext = createContext<ComexWalletCtx>({
-  ready: false,
-  authenticated: false,
-  email: null,
-  address: null,
-  walletId: null,
-  login: () => {},
-  logout: async () => {},
-  signHash: async () => Buffer.alloc(0),
-});
+// The wallet context shape lives in comexContexts.tsx so this module only
+// exports the provider component (react-refresh/only-export-components).
 
 // ---------------------------------------------------------------------------
 // Inner provider — lives inside PrivyProvider tree
@@ -147,12 +123,4 @@ function ComexWalletProviderInner({ children }: { children: ReactNode }) {
       {children}
     </ComexWalletContext.Provider>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Public hook
-// ---------------------------------------------------------------------------
-
-export function useComexWallet(): ComexWalletCtx {
-  return useContext(ComexWalletContext);
 }

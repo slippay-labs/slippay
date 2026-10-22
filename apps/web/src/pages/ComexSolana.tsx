@@ -1,4 +1,4 @@
-import { useComexSolanaWallet } from "../lib/comexSolana.tsx";
+import { useComexSolanaWallet } from "../lib/comexContexts.tsx";
 import ComexSolanaDashboard from "./comex/solana/Dashboard.tsx";
 
 // VERIFY-WITH-KEYS: add MFA gate here when Privy mfaMethods available for Solana embedded wallets

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { Keypair, Account, Asset, Operation, TransactionBuilder, Networks, BASE_FEE } from "@stellar/stellar-sdk";
+import { Keypair, Account, Asset, Operation, TransactionBuilder, Networks, BASE_FEE, type Transaction } from "@stellar/stellar-sdk";
 import { attachSignature } from "../src/lib/privyWallet.ts";
 
 const ISSUER = "GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN";
@@ -39,7 +39,7 @@ describe("attachSignature", () => {
     const feeSource = Keypair.random();
     const inner = TransactionBuilder.fromXDR(unsigned(kp.publicKey()), Networks.PUBLIC);
     inner.sign(kp);
-    const fb = TransactionBuilder.buildFeeBumpTransaction(feeSource, "200", inner as any, Networks.PUBLIC);
+    const fb = TransactionBuilder.buildFeeBumpTransaction(feeSource, "200", inner as Transaction, Networks.PUBLIC);
     expect(() => attachSignature(fb.toXDR(), "PUBLIC", kp.publicKey(), Buffer.alloc(64))).toThrow(/fee-bump/);
   });
 });

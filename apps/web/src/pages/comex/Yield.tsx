@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useComexWallet } from "../../lib/comexPrivy.tsx";
+import { useComexWallet } from "../../lib/comexContexts.tsx";
 import { getPosition, getApy, buildDepositTx, buildWithdrawTx } from "../../lib/defindex.ts";
 import { authorizeContractCall } from "../../lib/authorizeTx.ts";
 import ConfirmTxModal from "../../components/ConfirmTxModal.tsx";

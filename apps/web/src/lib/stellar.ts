@@ -84,7 +84,7 @@ export async function checkReceiveAddress(
     const acct = await server.loadAccount(a);
     const issuer = ISSUERS[network];
     const hasUsdcTrustline = acct.balances.some(
-      (b: any) => b.asset_code === USDC_ASSET_CODE && b.asset_issuer === issuer,
+      (b) => "asset_code" in b && b.asset_code === USDC_ASSET_CODE && b.asset_issuer === issuer,
     );
     return { validFormat: true, accountExists: true, hasUsdcTrustline };
   } catch (e: unknown) {

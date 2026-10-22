@@ -1,6 +1,7 @@
 import { Outlet, NavLink, Navigate, useNavigate } from "react-router-dom";
 import { useEffect, useState } from "react";
-import { useAuth, supabase } from "../lib/auth.tsx";
+import { useAuth } from "../lib/authContext.ts";
+import { supabase } from "../lib/supabase.ts";
 import { authFetch } from "../lib/apiAuth.ts";
 import { StellarAddressInput } from "../components/StellarAddressInput.tsx";
 import { LiveProof } from "../components/LiveProof.tsx";

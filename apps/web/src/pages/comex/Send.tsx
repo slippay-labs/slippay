@@ -1,5 +1,5 @@
 import { useState, useRef, useCallback } from "react";
-import { useComexWallet } from "../../lib/comexPrivy.tsx";
+import { useComexWallet } from "../../lib/comexContexts.tsx";
 import {
   isValidStellarAddress,
   fetchSequence,

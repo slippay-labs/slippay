@@ -9,7 +9,7 @@
     "start": "node dist/main.js",
     "test": "vitest run",
     "e2e": "vitest run --config vitest.e2e.config.ts",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit && eslint src --max-warnings 0"
   },
   "dependencies": {
     "@slippay/shared": "workspace:*",

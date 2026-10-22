@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { supabase } from "../lib/auth.tsx";
+import { supabase } from "../lib/supabase.ts";
 import { loadAccount } from "../lib/account";
 import {
   createOnramp4p,

@@ -16,7 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Connection, PublicKey } from "@solana/web3.js";
-import { useComexSolanaWallet } from "../../../lib/comexSolana.tsx";
+import { useComexSolanaWallet } from "../../../lib/comexContexts.tsx";
 import { authorizeSolanaPayment } from "../../../lib/solanaAuthorize.ts";
 import { rpcUrl } from "../../../lib/chain/solana/usdc.ts";
 import ConfirmTxModal from "../../../components/ConfirmTxModal.tsx";

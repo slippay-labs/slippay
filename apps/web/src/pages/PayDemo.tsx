@@ -124,7 +124,7 @@ export default function PayDemo() {
   function onScanned(text: string) {
     setScanning(false);
     try { setReq(decodeRequest(text)); setError(null); }
-    catch (e) { setError("That QR isn't a SlipPay request. Scan another."); }
+    catch { setError("That QR isn't a SlipPay request. Scan another."); }
   }
 
   async function onPayReq() {

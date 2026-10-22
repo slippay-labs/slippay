@@ -247,7 +247,7 @@ export default function WithdrawDemo() {
             issuer · {ANCHOR_ASSET_ISSUER.slice(0, 6)}…{ANCHOR_ASSET_ISSUER.slice(-6)}
           </span>
           <span className="px-2.5 py-1 bg-white/60 text-[#0a0a0a] border border-[#0a0a0a]/15">
-            build · {(globalThis as any).__BUILD_TAG__ ?? "dev"}
+            build · {(globalThis as { __BUILD_TAG__?: string }).__BUILD_TAG__ ?? "dev"}
           </span>
         </div>
         <h1 className="text-[10vw] md:text-[5vw] font-medium leading-[0.95] tracking-[-0.04em] max-w-[18ch]">

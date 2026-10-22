@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useComexSolanaWallet } from "../../../lib/comexSolana.tsx";
+import { useComexSolanaWallet } from "../../../lib/comexContexts.tsx";
 import SolanaBalance from "./Balance.tsx";
 import SolanaSend from "./Send.tsx";
 import Exchange from "./Exchange.tsx";

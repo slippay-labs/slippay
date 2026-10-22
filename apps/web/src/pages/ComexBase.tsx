@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useComexBaseWallet } from "../lib/comexBase.tsx";
+import { useComexBaseWallet } from "../lib/comexContexts.tsx";
 import ComexBaseDashboard from "./comex/base/Dashboard.tsx";
 
 // VERIFY-WITH-KEYS: MFA gate — Privy embeds MFA enforcement via PRIVY_CONFIG

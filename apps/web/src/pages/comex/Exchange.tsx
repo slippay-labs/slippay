@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import { useComexWallet } from "../../lib/comexPrivy.tsx";
+import { useComexWallet } from "../../lib/comexContexts.tsx";
 import { fetchSequence, buildUsdcPaymentTx } from "../../lib/stellar.ts";
 import { authorizePayment } from "../../lib/authorizeTx.ts";
 import { requiresApproval, approvalLimitUsd, logAction } from "../../lib/comexGuards.ts";

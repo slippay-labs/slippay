@@ -422,16 +422,17 @@ function dedupeCitations(citations: Citation[]): Citation[] {
 
 // "Thinking…" indicator shown while the Concierge spawn is initializing
 // and before the first token streams. Rotates through status phrases.
+const THINKING_PHRASES = [
+  "lendo a documentação",
+  "buscando a resposta certa",
+  "conferindo os detalhes",
+  "montando a resposta",
+];
+
 function ThinkingIndicator() {
-  const phrases = [
-    "lendo a documentação",
-    "buscando a resposta certa",
-    "conferindo os detalhes",
-    "montando a resposta",
-  ];
   const [idx, setIdx] = useState(0);
   useEffect(() => {
-    const id = setInterval(() => setIdx(i => (i + 1) % phrases.length), 1400);
+    const id = setInterval(() => setIdx(i => (i + 1) % THINKING_PHRASES.length), 1400);
     return () => clearInterval(id);
   }, []);
   return (
@@ -448,7 +449,7 @@ function ThinkingIndicator() {
         className="text-[11px] italic"
         style={{ color: `${INK}66`, fontFamily: "'Space Grotesk', 'Inter', sans-serif" }}
       >
-        {phrases[idx]}…
+        {THINKING_PHRASES[idx]}…
       </span>
     </div>
   );

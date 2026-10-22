@@ -1,4 +1,4 @@
-import { useComexWallet } from "../lib/comexPrivy.tsx";
+import { useComexWallet } from "../lib/comexContexts.tsx";
 import { useMfaEnrollment, usePrivy } from "@privy-io/react-auth";
 import ComexDashboard from "./comex/Dashboard.tsx";
 

@@ -53,15 +53,15 @@ export function Reveal({ children, delay = 0, className = "", id, as = "div", st
     transform: visible ? "translateY(0)" : "translateY(24px)",
   };
   if (as === "section") return (
-    <section ref={ref as any} id={id} style={style} className={className}>{children}</section>
+    <section ref={ref as React.RefObject<HTMLElement>} id={id} style={style} className={className}>{children}</section>
   );
   if (as === "article") return (
-    <article ref={ref as any} style={style} className={className}>{children}</article>
+    <article ref={ref as React.RefObject<HTMLElement>} style={style} className={className}>{children}</article>
   );
   if (as === "li") return (
-    <li ref={ref as any} style={style} className={className}>{children}</li>
+    <li ref={ref as React.RefObject<HTMLLIElement>} style={style} className={className}>{children}</li>
   );
-  return <div ref={ref as any} style={style} className={className}>{children}</div>;
+  return <div ref={ref as React.RefObject<HTMLDivElement>} style={style} className={className}>{children}</div>;
 }
 
 interface CountUpProps {

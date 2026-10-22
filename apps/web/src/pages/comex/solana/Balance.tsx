@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Connection, PublicKey } from "@solana/web3.js";
 import { getAssociatedTokenAddress } from "@solana/spl-token";
-import { useComexSolanaWallet } from "../../../lib/comexSolana.tsx";
+import { useComexSolanaWallet } from "../../../lib/comexContexts.tsx";
 import { rpcUrl, usdcMint } from "../../../lib/chain/solana/usdc.ts";
 
 export default function SolanaBalance() {

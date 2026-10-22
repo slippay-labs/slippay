@@ -14,6 +14,17 @@ const POLL_MS = Number(process.env.LISTENER_POLL_MS ?? "4000");
 const PAGE_LIMIT = 200;
 const ALIVE_LOG_MS = 60_000;
 
+// Record shapes returned by Horizon's /accounts/:id/payments endpoint. Keeping
+// the union explicit lets `raw.type === "payment"` narrow to the payment
+// record instead of falling back to `any`.
+type PaymentsPageRecord =
+  | Horizon.ServerApi.PaymentOperationRecord
+  | Horizon.ServerApi.CreateAccountOperationRecord
+  | Horizon.ServerApi.AccountMergeOperationRecord
+  | Horizon.ServerApi.PathPaymentOperationRecord
+  | Horizon.ServerApi.PathPaymentStrictSendOperationRecord
+  | Horizon.ServerApi.InvokeHostFunctionOperationRecord;
+
 export interface AccountWatcherDeps {
   db: SupabaseClient;
   network: "TESTNET" | "PUBLIC";
@@ -41,7 +52,7 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
 
   log("info", "poller_open", { account: accountId, cursor: cursor ?? "head", pollMs: POLL_MS });
 
-  async function processRecord(raw: any): Promise<void> {
+  async function processRecord(raw: PaymentsPageRecord): Promise<void> {
     if (raw.type !== "payment") return;
     const tx = await raw.transaction();
     const ev: StellarPaymentEvent = {
@@ -68,7 +79,7 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
     if (order) {
       // PostgREST embeds a many-to-one relation as an object, but some setups
       // return a single-element array — handle both so stellar_address resolves.
-      const mraw = (order as any).merchants;
+      const mraw = (order as { merchants?: unknown }).merchants;
       const merchant = (Array.isArray(mraw) ? mraw[0] : mraw) as { stellar_address: string; platform_fee_bp: number } | undefined;
       const orderForMatch = {
         id: order.id as string,
@@ -78,13 +89,13 @@ export async function watchAccount({ db, network, accountId }: AccountWatcherDep
         // needs a string (it .split()s) — coerce or it throws -> "amount_parse".
         usdc_amount: String(order.usdc_amount),
         merchant_stellar_address: merchant?.stellar_address as string,
-        platform_fee_bp: ((order as any).platform_fee_bp ?? merchant?.platform_fee_bp ?? 0) as number,
+        platform_fee_bp: (order as { platform_fee_bp?: number }).platform_fee_bp ?? merchant?.platform_fee_bp ?? 0,
       };
       const outcome = matchPaymentToOrder(ev, orderForMatch, network);
       await reconcileMatch(db, orderForMatch, outcome, ev.hash);
       log("info", "match_outcome", {
         account: accountId, hash: ev.hash, order_id: orderForMatch.id,
-        outcome: outcome.outcome, reason: (outcome as any).reason ?? null,
+        outcome: outcome.outcome, reason: outcome.outcome === "ignore" ? outcome.reason ?? null : null,
         to: ev.to, pinned: orderForMatch.merchant_stellar_address, fee_bp: orderForMatch.platform_fee_bp,
       });
     }

@@ -1,6 +1,7 @@
 import { signWebhook } from "./crypto.js";
 import { log } from "./log.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Dispatcher } from "undici";
 import { isSafeWebhookUrl, validateWebhookUrl, pinnedDispatcher } from "./ssrf.js";
 
 const SCHEDULE = [60, 300, 1800, 7200, 43200, 86400];
@@ -50,7 +51,7 @@ export async function deliverOnce(args: DeliverArgs): Promise<DeliverResult> {
   try {
     // dispatcher carries the undici Agent we use to pin DNS on mainnet; cast
     // through `any` to bridge the undici v8 / @types/node undici-types skew.
-    const fetchOpts: RequestInit & { dispatcher?: any } = {
+    const fetchOpts: RequestInit & { dispatcher?: Dispatcher } = {
       method: "POST",
       headers: {
         "content-type": "application/json",
@@ -131,7 +132,10 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
       }
 
       for (const row of rows) {
-        const merchant = (row as any).orders?.merchants as { webhook_url?: string; webhook_secret?: string; network?: string };
+        const order = (row as {
+          orders?: { merchants?: { webhook_url?: string; webhook_secret?: string; network?: string } } | null;
+        }).orders;
+        const merchant = order?.merchants;
         if (!merchant?.webhook_url) {
           await db.from("webhook_deliveries").update({ status: "dead", response_body: "no_webhook_url" }).eq("id", row.id);
           continue;

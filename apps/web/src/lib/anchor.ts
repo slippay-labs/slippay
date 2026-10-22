@@ -176,8 +176,8 @@ export async function fundIfNeeded(publicKey: string): Promise<"funded" | "alrea
 export async function ensureUsdcTrustline(buyer: BuyerWallet): Promise<"added" | "exists"> {
   const horizon = new Horizon.Server(HORIZON_URL);
   const account = await horizon.loadAccount(buyer.publicKey);
-  const has = account.balances.some((b: any) =>
-    b.asset_code === ANCHOR_ASSET_CODE && b.asset_issuer === ANCHOR_ASSET_ISSUER,
+  const has = account.balances.some((b) =>
+    "asset_code" in b && b.asset_code === ANCHOR_ASSET_CODE && b.asset_issuer === ANCHOR_ASSET_ISSUER,
   );
   if (has) return "exists";
 
@@ -368,9 +368,9 @@ export async function getBuyerBalances(publicKey: string): Promise<BuyerBalance[
   const horizon = new Horizon.Server(HORIZON_URL);
   try {
     const account = await horizon.loadAccount(publicKey);
-    return account.balances.map((b: any) => ({
-      asset_code: b.asset_code ?? "XLM",
-      asset_issuer: b.asset_issuer,
+    return account.balances.map((b) => ({
+      asset_code: "asset_code" in b ? b.asset_code : "XLM",
+      asset_issuer: "asset_code" in b ? b.asset_issuer : undefined,
       balance: b.balance,
     }));
   } catch {

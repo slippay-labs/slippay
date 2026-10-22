@@ -3,7 +3,7 @@
 // filtered to the canonical USDC contract so address-poisoning scam tokens
 // (fake "USDC" lookalikes) never appear. Bone skin, pure-SVG chart.
 import { useEffect, useState } from "react";
-import { useComexBaseWallet } from "../../../lib/comexBase.tsx";
+import { useComexBaseWallet } from "../../../lib/comexContexts.tsx";
 import { publicClient, usdcAddress, fromBaseUnits } from "../../../lib/chain/base/usdc.ts";
 
 const USDC = "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913"; // canonical USDC on Base

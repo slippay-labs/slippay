@@ -1,13 +1,6 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { quoteBRLtoUSDC, type Quote } from "./quote.ts";
-
-interface QuoteCtx {
-  quote: Quote | null;
-  loading: boolean;
-  error: string | null;
-}
-
-const Ctx = createContext<QuoteCtx>({ quote: null, loading: true, error: null });
+import { QuoteContext } from "./quoteContextState.ts";
 
 // Page-level FX quote: fetch once, share across every consumer. On top of the
 // promise dedup in quote.ts, this guarantees a page with several quote
@@ -29,7 +22,5 @@ export function QuoteProvider({ brlIn, spreadBps, children }: {
       .finally(() => { if (on) setLoading(false); });
     return () => { on = false; };
   }, [brlIn, spreadBps]);
-  return <Ctx.Provider value={{ quote, loading, error }}>{children}</Ctx.Provider>;
+  return <QuoteContext.Provider value={{ quote, loading, error }}>{children}</QuoteContext.Provider>;
 }
-
-export const useQuote = () => useContext(Ctx);
