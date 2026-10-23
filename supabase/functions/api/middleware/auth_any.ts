@@ -1,9 +1,10 @@
 import type { Context, Next } from "hono";
 import { serviceClient, userClient } from "../lib/supabase.ts";
 import { requireApiKey } from "./auth_apikey.ts";
+import { extractBearerApiKey } from "@slippay/shared";
 
 // Dual auth for read endpoints consumed by BOTH the public API (merchant
-// integrations, e.g. the WooCommerce plugin, with `Bearer sk_live_...`) AND
+// integrations, e.g. the WooCommerce plugin, with `Bearer sk_live_...` or `Bearer sk_test_...`) AND
 // the merchant dashboard (logged-in session, `Bearer <supabase_jwt>`).
 //
 // Bug it fixes: the dashboard `/v1/orders` list authenticated with the user's
@@ -18,8 +19,8 @@ import { requireApiKey } from "./auth_apikey.ts";
 export async function requireApiKeyOrJwt(c: Context, next: Next) {
   const auth = c.req.header("authorization");
 
-  // API-key path (sk_live_...) — delegate to the canonical middleware.
-  if (auth?.startsWith("Bearer sk_live_")) {
+  // API-key path (sk_live_... or sk_test_...) — delegate to the canonical middleware.
+  if (extractBearerApiKey(auth)) {
     return requireApiKey(c, next);
   }
 

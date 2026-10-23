@@ -1,6 +1,7 @@
 import type { Context, Next } from "hono";
 import { serviceClient } from "../lib/supabase.ts";
 import { hashApiKey } from "../lib/apikey.ts";
+import { extractBearerApiKey } from "@slippay/shared";
 
 // Legacy SHA-256 fallback for keys hashed before audit-004 C4 (peppered HMAC).
 // Removed once all merchants rotate via /me/rotate-key.
@@ -10,11 +11,10 @@ async function legacyHashApiKey(plain: string): Promise<string> {
 }
 
 export async function requireApiKey(c: Context, next: Next) {
-  const auth = c.req.header("authorization");
-  if (!auth?.startsWith("Bearer sk_live_")) {
+  const plain = extractBearerApiKey(c.req.header("authorization"));
+  if (!plain) {
     return c.json({ error: "unauthenticated" }, 401);
   }
-  const plain = auth.slice("Bearer ".length);
   const sb = serviceClient();
 
   // Look up by peppered hash first (canonical). If miss, try legacy hash for

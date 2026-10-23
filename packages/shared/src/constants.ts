@@ -35,4 +35,20 @@ export const MEMO_HASH_HEX_LENGTH = 64; // 32 bytes
 export const DEFAULT_PLATFORM_FEE_BP = 297; // 2.97%
 export const ORDER_DEFAULT_EXPIRY_MINUTES = 30;
 export const API_KEY_PREFIX = "sk_live_";
+export const API_KEY_PREFIX_TEST = "sk_test_";
+export const API_KEY_PREFIXES = [API_KEY_PREFIX, API_KEY_PREFIX_TEST] as const;
+export type ApiKeyPrefix = (typeof API_KEY_PREFIXES)[number];
+
+/** Returns true if string starts with an allowed API key prefix */
+export function isApiKey(token: string): boolean {
+  return API_KEY_PREFIXES.some((p) => token.startsWith(p));
+}
+
+/** Extracts API key from Bearer authorization header if matching prefix */
+export function extractBearerApiKey(authHeader?: string | null): string | null {
+  if (!authHeader?.startsWith("Bearer ")) return null;
+  const token = authHeader.slice("Bearer ".length).trim();
+  return isApiKey(token) ? token : null;
+}
+
 export const API_KEY_BYTES = 32;
