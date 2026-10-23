@@ -28,21 +28,20 @@ function loadEnv(file) {
 const ROOT = __dirname;
 const env = loadEnv(path.join(ROOT, ".env"));
 
+// Pass all env vars from .env through wholesale while preserving defaults for essentials.
+// This ensures relayer, ramp, metrics, and subscription contracts receive their
+// configuration without requiring manual allowlist edits in this file (#492).
 const apiEnv = {
-  PORT: env.API_PORT || "8080",
+  ...env,
+  PORT: env.API_PORT || env.PORT || "8080",
   CHECKOUT_TOKEN_SECRET: env.CHECKOUT_TOKEN_SECRET,
   API_KEY_PEPPER: env.API_KEY_PEPPER,
   ZOD_VERBOSE: env.ZOD_VERBOSE || "",
   SUPABASE_URL: env.SUPABASE_URL,
   SUPABASE_ANON_KEY: env.SUPABASE_ANON_KEY,
   SUPABASE_SERVICE_ROLE_KEY: env.SUPABASE_SERVICE_ROLE_KEY,
-<<<<<<< HEAD
   SLIPPAY_DB_SCHEMA: env.SLIPPAY_DB_SCHEMA || "public",
   STELLAR_NETWORK: env.STELLAR_NETWORK || "TESTNET",
-=======
-  SLIPPAY_DB_SCHEMA,
-      STELLAR_NETWORK: env.STELLAR_NETWORK: env.SLIPPAY_DB_SCHEMA || "public",
->>>>>>> refs/remotes/pr/339
   CHECKOUT_BASE_URL: env.CHECKOUT_BASE_URL || "https://api.slippay.cc",
   RATE_BRL_USDC: env.RATE_BRL_USDC || "",
 };

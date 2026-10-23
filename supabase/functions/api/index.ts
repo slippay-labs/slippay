@@ -153,8 +153,11 @@ app.get("*", async (c) => {
   }
 });
 
+import { logFeatureStatus } from "./lib/features.ts";
+
 if (import.meta.main) {
   const port = Number(Deno.env.get("PORT") ?? 8000);
+  logFeatureStatus();
   try {
     if (Deno.env.get("SUPABASE_URL") && Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")) {
       const { assertSchemaExposed } = await import("./lib/supabase.ts");
