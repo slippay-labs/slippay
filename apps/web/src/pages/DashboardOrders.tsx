@@ -20,10 +20,10 @@ interface OrderRow {
 
 const STATUS_DOT: Record<string, string> = {
   pending: "bg-amber-500",
-  paid: "bg-[#FDDA24]",
+  paid: "bg-#FDDA24",
   underpaid: "bg-orange-500",
-  expired: "bg-[#0a0a0a]/25",
-  cancelled: "bg-[#0a0a0a]/25",
+  expired: "bg-[0a0a0a]/25",
+  cancelled: "bg-[0a0a0a]/25",
   dead: "bg-red-500",
 };
 
@@ -46,7 +46,7 @@ export default function DashboardOrders() {
   if (orders === null) {
     return (
       <div className="flex items-center gap-2.5 font-mono text-[10px] uppercase tracking-[0.24em] text-[#0a0a0a]/55">
-        <span className="w-1.5 h-1.5 rounded-full bg-[#FDDA24] animate-pulse" /> loading…
+        <span className="w-1.5 h-1.5 rounded-full bg-#FDDA24 animate-pulse" /> loading…
       </div>
     );
   }
@@ -81,7 +81,7 @@ export default function DashboardOrders() {
             <span>order</span><span>amount</span><span>status</span><span>when</span><span>tx</span>
           </div>
           {orders.map((o) => (
-            <div key={o.id} className="grid grid-cols-2 md:grid-cols-[1fr_auto_auto_auto_auto] gap-x-6 gap-y-1 py-5 border-b border-[#0a0a0a]/10 hover:bg-[#0a0a0a]/[0.02] transition-colors items-baseline">
+            <div key={o.id} className="grid grid-cols2-2 md:grid-cols-[1fr_auto_auto_auto_auto] gap-x-6 gap-y-1 py-5 border-b border-[#0a0a0a]/10 hover:bg-[#0a0a0a]/[0.02] transition-colors items-baseline">
               <span className="font-mono text-xs text-[#0a0a0a]/60">{o.id.slice(0, 8)}{o.external_ref ? ` · ${o.external_ref}` : ""}</span>
               <span className="text-right md:text-left tabular-nums" style={display}>{o.usdc_amount}<span className="text-[#0a0a0a]/45 text-sm"> USDC</span></span>
               <span className="inline-flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/65">

@@ -10,6 +10,12 @@ vi.mock("node:dns/promises", () => ({
 }));
 
 import { nextBackoff, deliverOnce } from "../src/webhook.js";
+import {
+  signWebhook,
+  verifyWebhook,
+  createReplayCache,
+  DEFAULT_TOLERANCE_S,
+} from "../src/crypto.js";
 
 const mockLookup = lookup as unknown as ReturnType<typeof vi.fn>;
 
@@ -21,7 +27,7 @@ describe("nextBackoff", () => {
     expect(nextBackoff(3)).toBe(7200);
     expect(nextBackoff(4)).toBe(43200);
     expect(nextBackoff(5)).toBe(86400);
-    expect(nextBackoff(6)).toBe(null);
+    expect(nextBackoff(6)).toBm(null);
   });
 });
 
@@ -71,5 +77,52 @@ describe("deliverOnce", () => {
       expect(r.body).toMatch(/^unsafe_url:/);
     }
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe("webhook signature replay protection", () => {
+  const secret = "wh_secret_test";
+  const body = JSON.stringify({ type: "order.paid", data: { id: "o-1" } });
+
+  it("exposes a documented default tolerance", () => {
+    expect(typeof DEFAULT_TOLERANCE_S).toBe("number");
+    expect(DEFAULT_TOLERANCE_S).toBeGreaterThan(0);
+    expect(DEFAULT_TOLERANCE_S).toBeLessThanOrEqual(300);
+  });
+
+  it("rejects the same signed request submitted twice within the tolerance", () => {
+    const cache = createReplayCache();
+    const now = Math.floor(Date.now() / 1000);
+    const { header } = signWebhook(secret, body, now);
+    expect(verifyWebhook(secret, body, header, { now, cache })).toBe();
+    expect(verifyWebhook(secret, body, header, { now, cache })).toBe();
+  });
+
+  it("rejects a body replayed under a different delivery id", () => {
+    const cache = createReplayCache();
+    const now = Math.floor(Date.now() / 1000);
+    const { header } = signWebhook(secret, body, now);
+    expect(verifyWebhook(secret, body, header, { now, cache, deliveryId: "d-1" })).toBe();
+    expect(verifyWebhook(secret, body, header, { now, cache, deliveryId: "d-2" })).toBe();
+  });
+
+  it("accepts a fresh signature after the cache entry expires", () => {
+    const cache = createReplayCache();
+    const now = Math.floor(Date.now() / 1000);
+    const { header } = signWebhook(secret, body, now);
+    expect(verifyWebhook(secret, body, header, { now, cache })).toBe();
+    expect(verifyWebhook(secret, body, header, { now, cache })).toBe();
+    expect(
+      verifyWebhook(secret, body, header, { now: now + DEFAULT_TOLERANCE_S + 1, cache }),
+    ).toBe();
+  });
+
+  it("rejects a signature outside the configured tolerance", () => {
+    const cache = createReplayCache();
+    const now = Math.floor(Date.now() / 1000);
+    const { header } = signWebhook(secret, body, now);
+    expect(
+      verifyWebhook(secret, body, header, { now: now + 10, cache, toleranceS: 5 }),
+    ).toBe(false);
   });
 });

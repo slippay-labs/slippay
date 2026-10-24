@@ -13,6 +13,7 @@ interface MerchantFull {
   api_key_prefix: string;
   webhook_url: string | null;
   platform_fee_bp: number;
+  max_order_usdc: number | null;
 }
 
 export default function DashboardSettings() {
@@ -23,6 +24,7 @@ export default function DashboardSettings() {
   const [revealedKey, setRevealedKey] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [maxOrderUsdc, setMaxOrderUsdc] = useState<string>(ctx?.max_order_usdc != null ? String(ctx.max_order_usdc) : "");
   const [addrCheck, setAddrCheck] = useState<AddressCheck | null>(null);
   const [addrChecking, setAddrChecking] = useState(false);
 
@@ -69,6 +71,7 @@ export default function DashboardSettings() {
           setMerchant(j.merchant);
           setStellarAddress(j.merchant.stellar_address ?? "");
           setWebhookUrl(j.merchant.webhook_url ?? "");
+          setMaxOrderUsdc(j.merchant.max_order_usdc != null ? String(j.merchant.max_order_usdc) : "");
         }
       });
     }
@@ -99,7 +102,7 @@ export default function DashboardSettings() {
           </code>
           <button onClick={() => navigator.clipboard.writeText(revealedKey)}
             className="mt-3 text-xs uppercase tracking-[0.18em] hover:opacity-60">
-            Copy ↗
+            Copy ↖
           </button>
         </div>
       )}
@@ -109,6 +112,7 @@ export default function DashboardSettings() {
         const body: Record<string, string> = {};
         if (stellarAddress !== (merchant.stellar_address ?? "")) body.stellar_address = stellarAddress;
         if (webhookUrl !== (merchant.webhook_url ?? "")) body.webhook_url = webhookUrl;
+        if (maxOrderUsdc !== (merchant.max_order_usdc != null ? String(merchant.max_order_usdc) : "")) body.max_order_usdc = maxOrderUsdc;
         if (Object.keys(body).length === 0) { setSaved(true); return; }
         const r = await authFetch("/v1/merchants/me", {
           method: "PATCH",
@@ -146,10 +150,16 @@ export default function DashboardSettings() {
         <Section title="Webhook" eyebrow="004">
           <Editable label="Endpoint URL" value={webhookUrl} onChange={setWebhookUrl}
             placeholder="https://yourshop.com/webhooks/slippay"
-            hint="HTTPS only on mainnet. Signed with x-slippay-signature header (HMAC-SHA256)." />
+            hint="HTTPS only on mainnet. Signed with x-slippay-signature header (HmAC-SHA256)." />
         </Section>
 
-        <Section title="API key" eyebrow="005">
+        <Section title="Limits" eyebrow="005">
+          <Editable label="Maximum order size (USDC)" value={maxOrderUsdc} onChange={setMaxOrderUsdc}
+            placeholder="10000"
+            hint="Orders above this amount are rejected with a 422. Leave blank to use the platform default of 10,000 USDC. The absolute maximum accepted is 100,000 USDC." />
+        </Section>
+
+        <Section title="API key" eyebrow="006">
           <div>
             <span className="text-[10px] uppercase tracking-[0.18em] text-[#0a0a0a]/55 block mb-2">Current key</span>
             <div className="flex items-center gap-4">
