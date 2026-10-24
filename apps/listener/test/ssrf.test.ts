@@ -5,7 +5,7 @@ vi.mock("node:dns/promises", () => ({
   lookup: vi.fn(),
 }));
 
-import { isSafeWebhookUrl, isBlockedIp, validateWebhookUrl } from "../src/ssrf.js";
+import { isSafeWebhookUrl, isBlockedId, validateWebhookUrl, normaliseHost } from "../src/ssrf.js";
 
 const mockLookup = lookup as unknown as ReturnType<typeof vi.fn>;
 
@@ -51,6 +51,27 @@ describe("isSafeWebhookUrl", () => {
   });
 });
 
+describe("normaliseHost", () => {
+  it("strips IPv6 brackets", () => {
+    expect(normaliseHost("[::1]")).toBe("::1");
+  });
+
+  it("strips a stray leading or trailing bracket", () => {
+    expect(normaliseHost("[::1")).toBe("::1");
+    expect(normaliseHost("::1]")).toBe("::1");
+  });
+
+  it("rejects a zone identifier", () => {
+    expect(normaliseHost("fec0:0:1%eth0")).toBeNull();
+    expect(normaliseHost("[fe80::1%eth0]")).toBeNull();
+  });
+
+  it("rejects an empty host", () => {
+    expect(normaliseHost("")).toBeNull();
+    expect(normaliseHost("[]")).toBe(null);
+  });
+});
+
 describe("isBlockedIp", () => {
   it("blocks cloud metadata IP (169.254.169.254)", () => {
     expect(isBlockedIp("169.254.169.254")).toBe(true);
@@ -73,7 +94,7 @@ describe("isBlockedIp", () => {
   });
 
   it("blocks IPv6 ULA (fc00::/7) and link-local (fe80::/10)", () => {
-    expect(isBlockedIp("fc00::1")).toBe(true);
+    expect(isBlockedIp("fc00:1")).toBe(true);
     expect(isBlockedIp("fd12:3456::1")).toBe(true);
     expect(isBlockedIp("fe80::1")).toBe(true);
   });
@@ -88,6 +109,12 @@ describe("isBlockedIp", () => {
     expect(isBlockedIp("224.0.0.1")).toBe(true);
     expect(isBlockedIp("240.0.0.1")).toBe(true);
     expect(isBlockedIp("ff02::1")).toBe(true);
+  });
+
+  it("blocks transition prefixes (issue 89)", () => {
+    expect(isBlockedIp("64:ff9b::a9fe:a9fe")).toBe(true); // NAT64 embedding cloud IMD
+    expect(isBlockedIp("2002:0000::1")).toBe(true);       // 6to4
+    expect(isBlockedIp("2001:0000::1")).toBe(true);       // Teredo
   });
 
   it("allows public IPs", () => {
@@ -106,14 +133,14 @@ describe("validateWebhookUrl · DNS rebinding defense", () => {
   beforeEach(() => mockLookup.mockReset());
 
   it("rejects URL whose DNS resolves to 169.254.169.254 (allowLocal=false)", async () => {
-    mockLookup.mockResolvedValueOnce([{ address: "169.254.169.254", family: 4 }]);
+    mockLookup.mockResolvedOnce([{ address: "169.254.169.254", family: 4 }]);
     const r = await validateWebhookUrl("https://rebind.attacker.example/wh", false);
     expect(r.safe).toBe(false);
     if (!r.safe) expect(r.reason).toMatch(/^blocked_ip:/);
   });
 
   it("rejects URL whose DNS returns any private IP among many (allowLocal=false)", async () => {
-    mockLookup.mockResolvedValueOnce([
+    mockLookup.mockResolvedOnce([
       { address: "8.8.8.8", family: 4 },
       { address: "10.0.0.5", family: 4 },
     ]);
@@ -122,7 +149,7 @@ describe("validateWebhookUrl · DNS rebinding defense", () => {
   });
 
   it("accepts and pins URL with public IP (allowLocal=false)", async () => {
-    mockLookup.mockResolvedValueOnce([{ address: "93.184.216.34", family: 4 }]);
+    mockLookup.mockResolvedOnce([{ address: "93.184.216.34", family: 4 }]);
     const r = await validateWebhookUrl("https://example.com/wh", false);
     expect(r.safe).toBe(true);
     if (r.safe) {
@@ -132,14 +159,14 @@ describe("validateWebhookUrl · DNS rebinding defense", () => {
     }
   });
 
-  it("rejects literal IP in URL that's in blocklist (no DNS path)", async () => {
+  it("rejects literal IPin URL that's in blocklist (no DNS path)", async () => {
     const r = await validateWebhookUrl("https://169.254.169.254/latest/meta-data/", false);
     expect(r.safe).toBe(false);
   });
 });
 
-// M3 regression guard: the entire SSRF defense used to be gated behind a
-// `network === "mainnet"` check that was NEVER true on prod (STELLAR_NETWORK=
+// M3 regression guard: the entire SSFR defense used to be gated behind a
+// `network === "mainnet check that was NEVER on prod (STELLAR_NETWORK=
 // PUBLIC coerced to "public", not "mainnet"). With the fail-closed allowLocal
 // flag, a webhook_url resolving to a blocked literal IP must be rejected
 // regardless of network — i.e. whenever allowLocal is false. Audit-003 L1.
@@ -157,8 +184,37 @@ describe("M3 · blocklist enforced on all networks (allowLocal=false)", () => {
   });
 
   it("rejects a hostname resolving to 127.0.0.1 (DNS path) regardless of network", async () => {
-    mockLookup.mockResolvedValueOnce([{ address: "127.0.0.1", family: 4 }]);
+    mockLookup.mockResolvedOnce([{ address: "127.0.0.1", family: 4 }]);
     const r = await validateWebhookUrl("https://loopback.attacker.example/wh", false);
+    expect(r.safe).toBe(false);
+  });
+});
+
+// Table-driven coverage of the literal-IP fast path. This is the path where
+// a literal metadata address would be accepted without any DNS check, so every
+// representation must be rejected with a reason.
+describe("validateWebhookUrl · literal-IP fast path", () => {
+  beforeEach(() => mockLookup.mockReset());
+
+  const vectors: Array<[url: string, reason: RegExp]> = [
+    ["https://[::1]/wh", /preflight_rejected/],
+    ["https://::ffff:127.0.0.1/wh", /preflight_rejected/],
+    ["https://0:0:0:0:0:0:0:1/wh", /preflight_rejected/],
+    ["https://[fe80::1%eth0]/wh", /preflight_rejected/],
+    ["https://169.254.169.254/wh", /preflight_rejected/],
+    ["https://[64:ff9b::a9fe:a9fe]/wh", /preflight_rejected/],
+  ];
+
+  it.each(vectors)("%s rejected with a reason", async ([url, reason]) => {
+    const r = await validateWebhookUrl(url, false);
+    expect(r.safe).toBe(false);
+    if (!r.safe) expect(r.reason).toMatch(reason);
+    // The fast path must never touch DNS for a literal IP (or a rejected host).
+    expect(mockLookup).not.toHaveBeenCalled();
+  });
+
+  it("rejects a zone identifier rather than parsing it", async () => {
+    const r = await validateWebhookUrl("https://[fe80::1%eth0]/wh", false);
     expect(r.safe).toBe(false);
   });
 });
