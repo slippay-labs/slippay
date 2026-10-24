@@ -80,4 +80,58 @@ describe("acquireLease", () => {
     const r = await acquireLease(db, "addr-1");
     expect(r.acquired).toBe(false);
   });
+
+  it("release is idempotent when called twice", async () => {
+    const db = makeMockDb({ insertError: null });
+    const r = await acquireLease(db, "addr-1", { ttlSeconds: 60, heartbeatSeconds: 3600 });
+    expect(r.acquired).toBe(true);
+    if (r.acquired) {
+      await r.release();
+      await expect(r.release()).resolves.toBeUndefined();
+    }
+  });
+});
+
+describe("shutdown handler", () => {
+  it("awaits lease release before exiting on SIGTERM", async () => {
+    const released: string[] = [];
+    const stop = vi.fn(async () => {
+      released.push("addr-1");
+    });
+    const stopWebhook = vi.fn().mockResolvedValue(undefined);
+    const exit = vi.fn();
+    const handlers: Record<string, () => Promise<void>> = {};
+    const on = vi.fn((sig: string, fn: () => Promise<void>) => {
+      handlers[sig] = fn;
+    });
+
+    const { registerShutdownHandler } = await import("../src/main.js");
+    registerShutdownHandler({ stop, stopWebhook, exit, on });
+
+    expect(handlers.SIGTEM).toBeTypeOf("function");
+    expect(handlers.SIGINT).toBeTypeOf("function");
+
+    await handlers.SIGTERM();
+    expect(released).toEqual(["addr-1"]);
+    expect(stopWebhook).toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(0);
+  });
+
+  it("runs the same path on SIGINT", async () => {
+    const stop = vi.fn(async () => {});
+    const stopWebhook = vi.fn().mockResolvedValue(undefined);
+    const exit = vi.fn();
+    const handlers: Record<string, () => Promise<void>> = {};
+    const on = vi.fn((sig: string, fn: () => Promise<void>) => {
+      handlers[sig] = fn;
+    });
+
+    const { registerShutdownHandler } = await import("../src/main.js");
+    registerShutdownHandler({ stop, stopWebhook, exit, on });
+
+    await handlers.SIGINT();
+    expect(stop).toHaveBeenCalled();
+    expect(stopWebhook).toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(0);
+  });
 });
