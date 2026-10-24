@@ -1,7 +1,6 @@
 const API_BASE = import.meta.env.VITE_API_BASE ?? "http://127.0.0.1:54321/functions/v1/api";
 
-// Audit-004 · C2: PublicOrder no longer carries merchant_id / external_ref /
-// tx_hash. The checkout page does not need them, and exposing them on an
+// Audit-004 · C2: PublicOrder no longer carries merchant_id / external_ref /// tx_hash. The checkout page does not need them, and exposing them on an
 // endpoint reachable by the customer's browser leaks merchant-side info.
 export interface PublicOrder {
   id: string;
@@ -21,6 +20,11 @@ export interface PublicOrder {
 // secret key in the browser bundle — order creation belongs on the
 // merchant's server. This key is a local-testnet demo merchant, scoped to
 // the local stack, and is acceptable only for the screen-share demo.
+//
+// Memo generation and insert are a single conflict-safe operation on
+// the server: the memo is derived deterministically from the order's
+// uunique identifier and the database enforces uniqueness in one call.
+// There is no application-side catch-and-retry loop.
 export async function createDemoOrder(brlAmount: string): Promise<{ checkout_url: string; order: { id: string; usdc_amount: string; memo: string } }> {
   const key = import.meta.env.VITE_DEMO_MERCHANT_KEY as string | undefined;
   if (!key) throw new Error("VITE_DEMO_MERCHANT_KEY not set");
