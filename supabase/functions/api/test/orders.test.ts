@@ -65,7 +65,8 @@ Deno.test("POST /v1/orders with valid usd_amount sets usdc_amount equal to input
   assertEquals(res.status, 201);
   const body = await res.json();
   assertEquals(body.order.usd_amount, "10.50");
-  assertEquals(body.order.usdc_amount, "10.50");
+  // numeric(12,7): the same money, at the column's declared scale.
+  assertEquals(body.order.usdc_amount, "10.5000000");
 });
 
 Deno.test("POST /v1/orders rejects over-precise or non-positive usd_amount with 400", { sanitizeOps: false, sanitizeResources: false }, async () => {
@@ -299,5 +300,7 @@ Deno.test("GET /v1/x402/:slug sets platform_fee_bp and fee_usdc on order insert"
     .single();
   assert(ordErr === null);
   assertEquals(orderData.platform_fee_bp, 297);
-  assertEquals(orderData.fee_usdc, "0.1485000"); // 5.0 * 297 / 10000
+  // Read straight from the DB here, so compare the value, not its formatting:
+  // 5.0 * 297 / 10000. The API layer is what renders it as a 7dp string.
+  assertEquals(Number(orderData.fee_usdc).toFixed(7), "0.1485000");
 });
