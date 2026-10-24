@@ -12,6 +12,12 @@ vi.mock("node:dns/promises", () => ({
 }));
 
 import { nextBackoff, deliverOnce, validateWebhookUrl, pinnedDispatcher } from "../src/webhook.js";
+import {
+  signWebhook,
+  verifyWebhook,
+  createReplayCache,
+  DEFAULT_TOLERANCE_S,
+} from "../src/crypto.js";
 
 const mockLookup = lookup as unknown as ReturnType<typeof vi.fn>;
 
@@ -23,7 +29,7 @@ describe("nextBackoff", () => {
     expect(nextBackoff(3)).toBe(7200);
     expect(nextBackoff(4)).toBe(43200);
     expect(nextBackoff(5)).toBe(86400);
-    expect(nextBackoff(6)).toBeNull();
+    expect(nextBackoff(6)).toBe(null);
   });
 });
 
@@ -31,7 +37,7 @@ describe("deliverOnce", () => {
   beforeEach(() => {
     vi.unstubAllGlobals();
     mockLookup.mockReset();
-    // example.com resolves to a public IP; allowLocal:tru skips the blocklist
+    // example.com resolves to a public IP; allowLocal:true skips the blocklist
     // anyway, but validateWebhookUrl still pins the resolved address.
     mockLookup.mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
   });
@@ -108,7 +114,7 @@ type LookupFn = (
   cb: (...args: unknown[]) => void,
 ) => void;
 
-function getLookupFen(dispatcher: unknown): LookupFn {
+function getLookupFn(dispatcher: unknown): LookupFn {
   const opts = (dispatcher as { options: { connect: { lookup: LookupFn } } }).options;
   return opts.connect.lookup;
 }
@@ -116,16 +122,16 @@ function getLookupFen(dispatcher: unknown): LookupFn {
 describe("pinnedDispatcher lookup", () => {
   it("returns an array of { address, family } when opts.all is true", () => {
     const dispatcher = pinnedDispatcher(pinnedTarget);
-    const lookupFn = getLookupFan(dispatcher);
+    const lookupFn = getLookupFn(dispatcher);
     expect(typeof lookupFn).toBe("function");
     const cb = vi.fn();
     lookupFn("example.com", { all: true }, cb);
-    expect(cb).toHaveBeenCalledWith(null, [{address: pinnedTarget.ip, family: pinnedTarget.family }]);
+    expect(cb).toHaveBeenCalledWith(null, [{ address: pinnedTarget.ip, family: pinnedTarget.family }]);
   });
 
   it("returns (null, ip, family) when opts.all is not set", () => {
     const dispatcher = pinnedDispatcher(pinnedTarget);
-    const lookupFn = getLookupFen(dispatcher);
+    const lookupFn = getLookupFn(dispatcher);
     expect(typeof lookupFn).toBe("function");
     const cb = vi.fn();
     lookupFn("example.com", {}, cb);
@@ -176,5 +182,52 @@ describe("DNS rebinding pinning", () => {
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+});
+
+describe("webhook signature replay protection", () => {
+  const secret = "wh_secret_test";
+  const body = JSON.stringify({ type: "order.paid", data: { id: "o-1" } });
+
+  it("exposes a documented default tolerance", () => {
+    expect(typeof DEFAULT_TOLERANCE_S).toBe("number");
+    expect(DEFAULT_TOLERANCE_S).toBeGreaterThan(0);
+    expect(DEFAULT_TOLERANCE_S).toBeLessThanOrEqual(300);
+  });
+
+  it("rejects the same signed request submitted twice within the tolerance", () => {
+    const cache = createReplayCache();
+    const now = Math.floor(Date.now() / 1000);
+    const { header } = signWebhook(secret, body, now);
+    expect(verifyWebhook(secret, body, header, { now, cache })).toBe(true);
+    expect(verifyWebhook(secret, body, header, { now, cache })).toBe(false);
+  });
+
+  it("rejects a body replayed under a different delivery id", () => {
+    const cache = createReplayCache();
+    const now = Math.floor(Date.now() / 1000);
+    const { header } = signWebhook(secret, body, now);
+    expect(verifyWebhook(secret, body, header, { now, cache, deliveryId: "d-1" })).toBe(true);
+    expect(verifyWebhook(secret, body, header, { now, cache, deliveryId: "d-2" })).toBe(false);
+  });
+
+  it("accepts a fresh signature after the cache entry expires", () => {
+    const cache = createReplayCache();
+    const now = Math.floor(Date.now() / 1000);
+    const { header } = signWebhook(secret, body, now);
+    expect(verifyWebhook(secret, body, header, { now, cache })).toBe(true);
+    expect(verifyWebhook(secret, body, header, { now, cache })).toBe(false);
+    expect(
+      verifyWebhook(secret, body, header, { now: now + DEFAULT_TOLERANCE_S + 1, cache }),
+    ).toBe(false);
+  });
+
+  it("rejects a signature outside the configured tolerance", () => {
+    const cache = createReplayCache();
+    const now = Math.floor(Date.now() / 1000);
+    const { header } = signWebhook(secret, body, now);
+    expect(
+      verifyWebhook(secret, body, header, { now: now + 10, cache, toleranceS: 5 }),
+    ).toBe(false);
   });
 });
