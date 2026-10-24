@@ -79,10 +79,19 @@ only** and are not a roadmap.
 
 | resource | description |
 |---|---|
+| [Overview](./api-reference/README.md) | Every mounted route group, and what is deliberately internal. |
 | [Authentication](./api-reference/authentication.md) | API keys, JWT sessions, webhook HMAC. |
 | [Merchants](./api-reference/merchants.md) | Sign up, manage settings, rotate API key. |
 | [Orders](./api-reference/orders.md) | One-shot payments. |
 | [Subscriptions](./api-reference/subscriptions.md) | Recurring billing (v0.2 autocharge is live on mainnet). |
+| [Billing](./api-reference/billing.md) | Platform-fee totals for a period. |
+| [On/off-ramp](./api-reference/offramp.md) | Provider-agnostic quotes, KYC, on-ramp and off-ramp. |
+| [4P Finance](./api-reference/fourp.md) | Pix BRL ↔ crypto ramp on Base, with receiver pinning. |
+| [Ramp webhooks](./api-reference/ramp.md) | Provider status intake and the async status model. |
+| [x402](./api-reference/x402.md) | Pay-per-call resources gated by Stellar USDC. |
+| [Relayer](./api-reference/relayer.md) | Gas sponsorship for passkey payments. |
+| [Ask Slippay](./api-reference/ask.md) | The landing-page concierge SSE endpoint. |
+| [Metrics](./api-reference/metrics.md) | Public subscription-intelligence snapshot. |
 | [Webhooks](./api-reference/webhooks.md) | Event types, retries, HMAC verification. |
 | [Errors](./api-reference/errors.md) | Status codes and error shapes. |
 

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   sanitizeReportText,
   reportRenderError,
@@ -7,7 +7,7 @@ import {
 } from "./errorReport.ts";
 
 const JWT =
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmF6ZSIsInJvbGUiOiJhdXRoZW50aWNhdGVkIn0.abcdefghijklmnopqrstuvwxyz012345";
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJvbGUiOiJhdXRoZW50aWNhdGVkIn0.abcdefghijklmnopqrstuvwxyz012345";
 const STELLAR_ADDRESS = "GCEYFLGNHCW4EIEX5LAVYGIGPT2KLHHVB6EOUWKKALA2FT7RMCHI242P";
 const EVM_ADDRESS = "0xE669C6Fe0493044D085C3cD08fb0289b53fA4449";
 
