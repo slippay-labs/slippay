@@ -1,13 +1,9 @@
 // BillingAgent — enforcement core ("the teeth").
 //
-// Proposes a charge intent for a subscription. It NEVER moves money and never
-// self-authorizes: the intent it emits flows to AuthorityAgent (authorize) then
-// SettlementAgent (settle). Its teeth are the eligibility checks — it cannot
-// bill early, past max_periods, when expired, or when inactive. A compromised
-// BillingAgent can at worst propose; Authority + the on-chain cap bound the rest.
+// Proposes a charge intent for a subscription. It NEVER moves money and never self-authorizes: the intent it emits flows to AuthorityAgent (authorize) then
+// SettlementAgent (settle). Its teeth are the eligibility checks — it cannot bill early, past max_periods, when expired, or when inactive. A compromised BillingAgent can at worst propose; Authority + the on-chain cap bound the rest.
 //
-// The emitted intent shape matches AuthorityAgent.authorizeIntent's input, so the
-// agent chain composes: Billing.proposeCharge -> Authority.authorizeIntent ->
+// The emitted intent shape matches AuthorityAgent.authorizeIntent's input, so the agent chain composes: Billing.proposeCharge -> Authority.authorizeIntent ->
 // Settlement.verifySettlement.
 
 export function proposeCharge(sub, now, nonce) {

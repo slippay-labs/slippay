@@ -115,6 +115,7 @@ function concat(chunks: Uint8Array[]): Uint8Array {
 
 export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
   let stopped = false;
+  let stopPromise: Promise<void> | null = null;
 
   async function tick() {
     while (!stopped) {
@@ -179,5 +180,12 @@ export function startWebhookWorker(db: SupabaseClient, allowLocal: boolean) {
   }
 
   tick();
-  return () => { stopped = true; };
+  return (reason = "shutdown") => {
+    if (stopPromise) return stopPromise;
+    stopped = true;
+    stopPromise = (async () => {
+      log("info", "webhook_worker_stopped", { reason });
+    })();
+    return stopPromise;
+  };
 }

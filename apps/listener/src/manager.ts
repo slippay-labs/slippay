@@ -42,6 +42,7 @@ export function startManager(db: SupabaseClient) {
         a?.stop();
         await a?.releaseLease();
         active.delete(addr);
+        log("info", "manager_lease_released", { addr, reason: "account_removed" });
         log("info", "manager_stopped", { addr });
       }
     }
@@ -52,9 +53,10 @@ export function startManager(db: SupabaseClient) {
 
   return async () => {
     clearInterval(id);
-    for (const a of active.values()) {
+    for (const [addr, a] of active) {
       a.stop();
       await a.releaseLease();
+      log("info", "manager_lease_released", { addr, reason: "shutdown" });
     }
     active.clear();
   };
