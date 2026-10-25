@@ -178,11 +178,25 @@ r.post("/deploy", async (c) => {
   return c.json({ wallet_id: walletId, funded: FUND_AMOUNT });
 });
 
-interface Verdict { ok: boolean; reason?: string }
+export interface Verdict { ok: boolean; reason?: string }
+
+/**
+ * Returns the closed set of allowed SAC contract addresses for sponsored transfers (Issue #486).
+ * Always includes the native SAC for the active network, and optionally the USDC SAC if configured.
+ */
+export function getAllowedSacContracts(passphrase: string = PASSPHRASE): string[] {
+  const nativeSac = Asset.native().contractId(passphrase);
+  const allowed = [nativeSac];
+  const usdcOverride = Deno.env.get("RELAYER_USDC_CONTRACT") ?? Deno.env.get("USDC_CONTRACT_ID");
+  if (usdcOverride && !allowed.includes(usdcOverride)) {
+    allowed.push(usdcOverride);
+  }
+  return allowed;
+}
 
 // THE trust boundary: decide whether a tx is a legitimate slippay op the
 // sponsor will pay gas for. Fail-closed on anything unexpected.
-function validateSponsorable(txXdr: string, sponsorPubkey: string): Verdict {
+export function validateSponsorable(txXdr: string, sponsorPubkey: string): Verdict {
   let tx: ReturnType<typeof TransactionBuilder.fromXDR>;
   try {
     tx = TransactionBuilder.fromXDR(txXdr, PASSPHRASE);
@@ -226,11 +240,25 @@ function validateSponsorable(txXdr: string, sponsorPubkey: string): Verdict {
   if (kind === "hostFunctionTypeInvokeContract") {
     try {
       const ic = hf.invokeContract();
+
+      // Verify target contract is in the closed allowed set (Audit-004 / Issue #486)
+      let targetContractId: string;
+      try {
+        targetContractId = Address.fromScAddress(ic.contractAddress()).toString();
+      } catch (e) {
+        return { ok: false, reason: `bad_target_contract_address: ${String((e as Error).message ?? e)}` };
+      }
+      const allowedContracts = getAllowedSacContracts(PASSPHRASE);
+      if (!allowedContracts.includes(targetContractId)) {
+        return { ok: false, reason: `target_contract_not_allowed: ${targetContractId}` };
+      }
+
       if (ic.functionName().toString() !== "transfer") {
         return { ok: false, reason: "not_transfer" };
       }
       const args = ic.args();
       if (args.length !== 3) return { ok: false, reason: "bad_transfer_args" };
+
       // from (args[0]) must be a CONTRACT address — i.e. a passkey wallet,
       // never a classic account the relayer could be tricked into draining.
       const from = args[0];
@@ -238,6 +266,13 @@ function validateSponsorable(txXdr: string, sponsorPubkey: string): Verdict {
         || from.address().switch().name !== "scAddressTypeContract") {
         return { ok: false, reason: "from_not_contract" };
       }
+
+      // to (args[1]) must be an address ScVal (classic account or contract)
+      const to = args[1];
+      if (to.switch().name !== "scvAddress") {
+        return { ok: false, reason: "to_not_address" };
+      }
+
       // amount (args[2]) i128 <= cap.
       const amt = args[2];
       if (amt.switch().name !== "scvI128") return { ok: false, reason: "amount_not_i128" };
