@@ -113,6 +113,7 @@ async function ensureDocsBundle(): Promise<string> {
 export interface AskRequest {
   question: string;
   history?: Array<{ role: "user" | "assistant"; content: string }>;
+  onSpawnFailure?: () => void;
 }
 
 // Audit-005 · M2 — hard caps on what we forward to the subprocess. The route
@@ -176,6 +177,7 @@ export async function askSlippayStream(req: AskRequest): Promise<ReadableStream<
         const docsBundle = await Deno.readTextFile(docsPath);
         await Deno.writeTextFile(mergedPromptPath, `${systemPrompt}\n\n${docsBundle}`);
       } catch (e) {
+        req.onSpawnFailure?.();
         await unlinkMerged();
         send({ type: "error", error: `prompt merge failed: ${(e as Error).message ?? e}` });
         controller.close();
@@ -211,6 +213,7 @@ export async function askSlippayStream(req: AskRequest): Promise<ReadableStream<
       try {
         child = cmd.spawn();
       } catch (e: unknown) {
+        req.onSpawnFailure?.();
         await unlinkMerged();
         send({ type: "error", error: `spawn failed: ${(e as Error).message ?? e}` });
         controller.close();
@@ -268,6 +271,9 @@ export async function askSlippayStream(req: AskRequest): Promise<ReadableStream<
         }
         const status = await child.status;
         const success = status.code === 0;
+        if (!success && responseText.length === 0) {
+          req.onSpawnFailure?.();
+        }
         if (success) send({ type: "done" });
         else send({ type: "error", error: `claude exited code ${status.code}` });
 
@@ -290,6 +296,9 @@ export async function askSlippayStream(req: AskRequest): Promise<ReadableStream<
           history_turns: req.history?.length ?? 0,
         });
       } catch (e: unknown) {
+        if (responseText.length === 0) {
+          req.onSpawnFailure?.();
+        }
         send({ type: "error", error: String((e as Error).message ?? e) });
         await auditFleetRun({
           agent: "concierge",

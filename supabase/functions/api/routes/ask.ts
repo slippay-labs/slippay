@@ -21,7 +21,7 @@ let inFlight = 0;
 // on the shared payment container). This counter caps total subprocess spawns
 // per UTC day across the whole process, independent of source IP. Tune via
 // ASK_MAX_SPAWNS_PER_DAY. Resets when the UTC day string rolls over.
-const MAX_SPAWNS_PER_DAY = (() => {
+export const MAX_SPAWNS_PER_DAY = (() => {
   const raw = Deno.env.get("ASK_MAX_SPAWNS_PER_DAY");
   const n = raw ? Number.parseInt(raw, 10) : 500;
   return Number.isFinite(n) && n > 0 ? n : 500;
@@ -29,15 +29,34 @@ const MAX_SPAWNS_PER_DAY = (() => {
 let spawnDay = "";          // UTC day string, e.g. "2026-06-01"
 let spawnsToday = 0;
 
+export function getSpawnsToday(): number {
+  return spawnsToday;
+}
+
+export function resetDailyBudget(count = 0, day = new Date().toISOString().slice(0, 10)): void {
+  spawnsToday = count;
+  spawnDay = day;
+}
+
+export function refundSpawnReservation(): void {
+  if (spawnsToday > 0) {
+    spawnsToday -= 1;
+    console.log(`[ask] refunded spawn reservation; spawnsToday=${spawnsToday}`);
+  }
+}
+
 /** Returns true (and increments) if a spawn is allowed for the current UTC
  *  day; false once the daily cap is reached. Self-resets on day rollover. */
-function tryReserveSpawn(): boolean {
+export function tryReserveSpawn(): boolean {
   const today = new Date().toISOString().slice(0, 10);
   if (today !== spawnDay) {
     spawnDay = today;
     spawnsToday = 0;
   }
-  if (spawnsToday >= MAX_SPAWNS_PER_DAY) return false;
+  if (spawnsToday >= MAX_SPAWNS_PER_DAY) {
+    console.warn(`[ask] daily spawn quota exhausted: ${spawnsToday}/${MAX_SPAWNS_PER_DAY}`);
+    return false;
+  }
   spawnsToday += 1;
   return true;
 }
@@ -88,8 +107,14 @@ r.post("/", async (c) => {
   // up front; release it if we bail before spawning so we don't burn budget
   // on rejected requests.
   if (!tryReserveSpawn()) {
+    console.warn(`[ask] rejecting request: daily capacity reached (${spawnsToday}/${MAX_SPAWNS_PER_DAY})`);
     return c.json(
-      { error: "daily_limit_reached", detail: "Ask Slippay daily capacity reached; try again tomorrow." },
+      {
+        error: "daily_limit_reached",
+        detail: "Ask Slippay daily capacity reached; try again tomorrow.",
+        limit: MAX_SPAWNS_PER_DAY,
+        ceiling: MAX_SPAWNS_PER_DAY,
+      },
       429,
       { "retry-after": "3600" },
     );
@@ -98,7 +123,7 @@ r.post("/", async (c) => {
   const releaseSpawn = () => {
     if (spawnReserved) {
       spawnReserved = false;
-      if (spawnsToday > 0) spawnsToday -= 1;
+      refundSpawnReservation();
     }
   };
 
@@ -135,7 +160,13 @@ async function handleAsk(c: Context, releaseSpawn: () => void) {
 
   let stream: ReadableStream<Uint8Array>;
   try {
-    stream = await askSlippayStream({ question, history });
+    stream = await askSlippayStream({
+      question,
+      history,
+      onSpawnFailure: () => {
+        releaseSpawn();
+      },
+    });
   } catch (e: unknown) {
     releaseSpawn();
     const msg = String((e as Error).message ?? e);
