@@ -69,7 +69,7 @@ const TTL_TARGET_LEDGERS: u32 = 535_000; // ~31 days at 5s/ledger (clamped)
 /// first `record`); `count` is the number of receipts recorded so far and is
 /// also the next expected `period_index`.
 #[contracttype]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Mandate {
     /// The only address authorized to append receipts to this mandate.
     pub recorder: Address,
@@ -77,6 +77,8 @@ pub struct Mandate {
     pub head: BytesN<32>,
     /// Number of receipts recorded; also the next expected `period_index`.
     pub count: u32,
+    /// Whether the mandate has been explicitly closed.
+    pub closed: bool,
 }
 
 #[contracttype]
@@ -96,6 +98,10 @@ pub enum Error {
     /// `record` called with `period_index != mandate.count` — a gap, a replay,
     /// or an out-of-order append. Enforces strict monotonic, gap-free indexing.
     BadPeriod = 3,
+    /// `record` or mutation attempted on an already closed mandate.
+    MandateClosed = 4,
+    /// Period index counter overflowed u32::MAX.
+    CountOverflow = 5,
 }
 
 #[contract]
@@ -119,6 +125,7 @@ impl Receipt {
             recorder: recorder.clone(),
             head: BytesN::from_array(&env, &[0u8; 32]),
             count: 0,
+            closed: false,
         };
         env.storage().persistent().set(&key, &mandate);
         env.storage()
@@ -155,11 +162,19 @@ impl Receipt {
             .get(&key)
             .unwrap_or_else(|| panic_with_error!(&env, Error::NotFound));
 
+        if mandate.closed {
+            panic_with_error!(&env, Error::MandateClosed);
+        }
+
         mandate.recorder.require_auth();
 
         if period_index != mandate.count {
             panic_with_error!(&env, Error::BadPeriod);
         }
+
+        let next_count = period_index
+            .checked_add(1)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::CountOverflow));
 
         // new_head = sha256( commitment(32) || prev_head(32) || period_index_be(4) )
         let mut buf = Bytes::new(&env);
@@ -169,7 +184,7 @@ impl Receipt {
         let new_head: BytesN<32> = env.crypto().sha256(&buf).into();
 
         mandate.head = new_head.clone();
-        mandate.count = period_index + 1;
+        mandate.count = next_count;
         env.storage().persistent().set(&key, &mandate);
         env.storage()
             .persistent()
@@ -181,6 +196,70 @@ impl Receipt {
         );
 
         new_head
+    }
+
+    /// Explicitly close a mandate, preventing any further receipts from being recorded.
+    /// Requires current recorder's authorization. Rejects with `NotFound` if absent,
+    /// or `MandateClosed` if already closed.
+    /// Emits `mandate_closed` and extends TTL.
+    pub fn close_mandate(env: Env, mandate_id: BytesN<32>) {
+        let key = DataKey::Mandate(mandate_id.clone());
+        let mut mandate: Mandate = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotFound));
+
+        if mandate.closed {
+            panic_with_error!(&env, Error::MandateClosed);
+        }
+
+        mandate.recorder.require_auth();
+        mandate.closed = true;
+
+        env.storage().persistent().set(&key, &mandate);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD_LEDGERS, TTL_TARGET_LEDGERS);
+
+        env.events()
+            .publish((Symbol::new(&env, "mandate_closed"), mandate_id), mandate.recorder);
+    }
+
+    /// Transfer recorder authorization to a new address. Requires authorization
+    /// of the current recorder. Rejects with `NotFound` if the mandate does not exist,
+    /// or `MandateClosed` if the mandate is closed.
+    /// Emits `recorder_transferred` and extends TTL.
+    pub fn transfer_recorder(env: Env, mandate_id: BytesN<32>, new_recorder: Address) {
+        let key = DataKey::Mandate(mandate_id.clone());
+        let mut mandate: Mandate = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| panic_with_error!(&env, Error::NotFound));
+
+        if mandate.closed {
+            panic_with_error!(&env, Error::MandateClosed);
+        }
+
+        mandate.recorder.require_auth();
+        let old_recorder = mandate.recorder.clone();
+        mandate.recorder = new_recorder.clone();
+
+        env.storage().persistent().set(&key, &mandate);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, TTL_THRESHOLD_LEDGERS, TTL_TARGET_LEDGERS);
+
+        env.events().publish(
+            (Symbol::new(&env, "recorder_transferred"), mandate_id),
+            (old_recorder, new_recorder),
+        );
+    }
+
+    /// Check whether a mandate is closed. Panics `NotFound` if absent.
+    pub fn is_closed(env: Env, mandate_id: BytesN<32>) -> bool {
+        Self::load(&env, &mandate_id).closed
     }
 
     /// Current chain tip for a mandate. Panics `NotFound` if absent.
