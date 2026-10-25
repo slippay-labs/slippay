@@ -5,6 +5,8 @@
 // before honoring a 402.
 //
 // Run isolated:  SLIPPAY_ATTESTER_DATA=/tmp/x402-surfaces.json node src/x402.test.mjs
+process.env.SLIPPAY_ATTESTER_DATA = process.env.SLIPPAY_ATTESTER_DATA || "/tmp/slippay-x402-test.json";
+
 import { sha256 } from "@noble/hashes/sha256";
 import { commitSurface, publicKeyHex } from "./oracle.mjs";
 import { attestX402, verifyX402, x402ActionHash } from "./x402.mjs";
