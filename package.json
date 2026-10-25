@@ -15,6 +15,7 @@
     "supabase:reset": "supabase db reset",
     "api:test": "deno test --allow-all supabase/functions/api/test/",
     "check:schema": "node scripts/check-schema-alignment.mjs",
+    "check:hygiene": "node scripts/check-root-hygiene.mjs",
     "policy-checkout:spike": "NODE_PATH=apps/web/node_modules node scripts/policy-checkout-spike-server.mjs"
   },
   "devDependencies": {
