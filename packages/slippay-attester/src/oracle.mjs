@@ -66,11 +66,25 @@ function persist() {
   catch (e) { console.error("attester: could not persist surfaces:", e?.message ?? e); }
 }
 
+/** Clear in-memory and persisted surfaces (useful for testing). */
+export function clearSurfaces() {
+  surfaces.clear();
+  recent.clear();
+  persist();
+}
+
 /** Commit an agent's allowed surface. Returns a SHA-256 commitment of it. */
-export function commitSurface(s) {
+export function commitSurface(s, principal = null) {
   if (!s.agent_id) throw new Error("agent_id required");
+  const existing = surfaces.get(s.agent_id);
+  if (existing && existing.owner_principal && principal && existing.owner_principal !== principal) {
+    const err = new Error(`agent ${s.agent_id} is owned by another principal (${existing.owner_principal})`);
+    err.code = "AGENT_OWNERSHIP_MISMATCH";
+    throw err;
+  }
   const surface = {
     agent_id: s.agent_id,
+    owner_principal: principal ?? existing?.owner_principal ?? null,
     allowed_recipients: s.allowed_recipients ?? [],
     allowed_tools: s.allowed_tools ?? null,        // null = tools not constrained
     max_amount: BigInt(s.max_amount ?? "0").toString(),
@@ -137,6 +151,12 @@ export function runIntegrityCheck(action, now) {
  */
 export async function attest(action, attesterPrivKey, opts = {}) {
   const now = opts.now ?? Math.floor(Date.now() / 1000);
+  const principal = opts.principal ?? null;
+  const surface = getSurface(action.agent_id);
+  if (!surface) return { ok: false, reason: "agent has no committed surface — register it first" };
+  if (surface.owner_principal && principal && surface.owner_principal !== principal) {
+    return { ok: false, reason: `agent owned by another principal (${surface.owner_principal})` };
+  }
   const chk = runIntegrityCheck(action, now);
   if (!chk.ok) return chk;
   const not_after = now + (opts.ttlSeconds ?? 300);
