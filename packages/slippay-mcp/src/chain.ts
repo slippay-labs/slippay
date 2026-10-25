@@ -49,7 +49,9 @@ export function randomNonceHex(): string {
 
 export interface TxResult { hash: string; status: string; explorer: string; ret?: unknown }
 
-async function submit(contractId: string, fn: string, args: xdr.ScVal[]): Promise<TxResult> {
+export type Submitter = (contractId: string, fn: string, args: xdr.ScVal[]) => Promise<TxResult>;
+
+export async function defaultSubmit(contractId: string, fn: string, args: xdr.ScVal[]): Promise<TxResult> {
   const kp = signer();
   const srv = new SorobanRpc.Server(RPC_URL);
   const c = new Contract(contractId);
@@ -65,6 +67,14 @@ async function submit(contractId: string, fn: string, args: xdr.ScVal[]): Promis
   let res = await srv.getTransaction(sent.hash);
   for (let i = 0; i < 45 && res.status === "NOT_FOUND"; i++) { await new Promise((r) => setTimeout(r, 1000)); res = await srv.getTransaction(sent.hash); }
   return { hash: sent.hash, status: res.status, explorer: explorerTx(sent.hash) };
+}
+
+let activeSubmitter: Submitter = defaultSubmit;
+export function setSubmitter(fn: Submitter) { activeSubmitter = fn; }
+export function resetSubmitter() { activeSubmitter = defaultSubmit; }
+
+async function submit(contractId: string, fn: string, args: xdr.ScVal[]): Promise<TxResult> {
+  return activeSubmitter(contractId, fn, args);
 }
 
 // ── public ops (each = one signed on-chain action) ──
