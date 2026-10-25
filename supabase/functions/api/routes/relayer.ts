@@ -28,7 +28,7 @@ import {
 
 const NET = (Deno.env.get("RELAYER_NETWORK") ?? Deno.env.get("STELLAR_NETWORK") ?? "testnet").toLowerCase();
 const IS_MAINNET = NET === "mainnet" || NET === "public";
-const PASSPHRASE = IS_MAINNET ? Networks.PUBLIC : Networks.TESTNET;
+export const PASSPHRASE = IS_MAINNET ? Networks.PUBLIC : Networks.TESTNET;
 const RPC_URL = Deno.env.get("RELAYER_RPC")
   ?? (IS_MAINNET
     ? "https://soroban-rpc.mainnet.stellar.gateway.fm"
@@ -38,11 +38,14 @@ const RPC_URL = Deno.env.get("RELAYER_RPC")
 // relayer disabled (503), so deploying the route is safe before funding it.
 const SPONSOR_SECRET = Deno.env.get("RELAYER_SECRET") ?? "";
 // The slippay smart-wallet wasm hash the relayer is willing to deploy.
-const WASM_HASH_HEX = (Deno.env.get("RELAYER_WASM_HASH") ?? "").toLowerCase();
+export const getWasmHashHex = () => (Deno.env.get("RELAYER_WASM_HASH") ?? "").toLowerCase();
+export const WASM_HASH_HEX = getWasmHashHex();
 // Per-payment amount ceiling (stroops). Default 0.5 XLM — a demo bound.
-const AMOUNT_CAP = BigInt(Deno.env.get("RELAYER_AMOUNT_CAP") ?? "5000000");
+export const getAmountCap = () => BigInt(Deno.env.get("RELAYER_AMOUNT_CAP") ?? "5000000");
+export const AMOUNT_CAP = getAmountCap();
 // Max network fee the relayer will pay per tx (stroops). Default 2 XLM.
-const FEE_CAP = BigInt(Deno.env.get("RELAYER_FEE_CAP") ?? "20000000");
+export const getFeeCap = () => BigInt(Deno.env.get("RELAYER_FEE_CAP") ?? "20000000");
+export const FEE_CAP = getFeeCap();
 
 const r = new Hono();
 
@@ -178,11 +181,11 @@ r.post("/deploy", async (c) => {
   return c.json({ wallet_id: walletId, funded: FUND_AMOUNT });
 });
 
-interface Verdict { ok: boolean; reason?: string }
+export interface Verdict { ok: boolean; reason?: string }
 
 // THE trust boundary: decide whether a tx is a legitimate slippay op the
 // sponsor will pay gas for. Fail-closed on anything unexpected.
-function validateSponsorable(txXdr: string, sponsorPubkey: string): Verdict {
+export function validateSponsorable(txXdr: string, sponsorPubkey: string): Verdict {
   let tx: ReturnType<typeof TransactionBuilder.fromXDR>;
   try {
     tx = TransactionBuilder.fromXDR(txXdr, PASSPHRASE);
@@ -192,7 +195,7 @@ function validateSponsorable(txXdr: string, sponsorPubkey: string): Verdict {
   // FeeBump not accepted — we want the plain tx whose source we control.
   if ("innerTransaction" in tx) return { ok: false, reason: "fee_bump_not_accepted" };
   if (tx.source !== sponsorPubkey) return { ok: false, reason: "source_not_sponsor" };
-  if (BigInt(tx.fee) > FEE_CAP) return { ok: false, reason: "fee_over_cap" };
+  if (BigInt(tx.fee) > getFeeCap()) return { ok: false, reason: "fee_over_cap" };
   if (tx.operations.length !== 1) return { ok: false, reason: "must_be_single_op" };
 
   const op = tx.operations[0] as { type: string; func?: xdr.HostFunction };
@@ -213,7 +216,8 @@ function validateSponsorable(txXdr: string, sponsorPubkey: string): Verdict {
         return { ok: false, reason: "deploy_not_wasm" };
       }
       const wasmHash = hex(new Uint8Array(exec.wasmHash()));
-      if (!WASM_HASH_HEX || wasmHash !== WASM_HASH_HEX) {
+      const expectedWasmHash = getWasmHashHex();
+      if (!expectedWasmHash || wasmHash !== expectedWasmHash) {
         return { ok: false, reason: "wrong_wasm_hash" };
       }
       return { ok: true };
@@ -246,7 +250,7 @@ function validateSponsorable(txXdr: string, sponsorPubkey: string): Verdict {
       const lo = BigInt(parts.lo().toString());
       const amount = (hi << 64n) + lo;
       if (amount <= 0n) return { ok: false, reason: "amount_not_positive" };
-      if (amount > AMOUNT_CAP) return { ok: false, reason: "amount_over_cap" };
+      if (amount > getAmountCap()) return { ok: false, reason: "amount_over_cap" };
       return { ok: true };
     } catch (e) {
       return { ok: false, reason: `transfer_parse: ${String((e as Error).message ?? e)}` };
