@@ -21,9 +21,19 @@ void main() {
     });
   });
 
-  group('UsdcAmount.fromMinor', () {
+  group('UsdcAmount.fromMinor and constructor', () {
     test('builds from a chain minor-unit string', () {
       expect(UsdcAmount.fromMinor('125000000'), UsdcAmount.parse('12.5'));
+    });
+
+    test('rejects negative minor units in constructor', () {
+      expect(() => UsdcAmount(BigInt.from(-1)), throwsArgumentError);
+      expect(() => UsdcAmount(BigInt.from(-10000000)), throwsArgumentError);
+    });
+
+    test('rejects negative minor units in fromMinor', () {
+      expect(() => UsdcAmount.fromMinor('-1'), throwsArgumentError);
+      expect(() => UsdcAmount.fromMinor(BigInt.from(-50)), throwsArgumentError);
     });
   });
 
@@ -44,6 +54,23 @@ void main() {
       expect((a - b).toHuman(), '7.50');
       expect(a > b, isTrue);
       expect(b < a, isTrue);
+    });
+
+    test('rejects subtraction resulting in negative amount (underflow)', () {
+      final a = UsdcAmount.parse('1');
+      final b = UsdcAmount.parse('2');
+      expect(() => a - b, throwsArgumentError);
+
+      final oneMinor = UsdcAmount.fromMinor(1);
+      final twoMinor = UsdcAmount.fromMinor(2);
+      expect(() => oneMinor - twoMinor, throwsArgumentError);
+    });
+
+    test('allows subtraction resulting in exact zero', () {
+      final a = UsdcAmount.parse('10');
+      final b = UsdcAmount.parse('10');
+      expect((a - b).toHuman(), '0.00');
+      expect((a - b).minor, BigInt.zero);
     });
 
     test('round-trips through minor string with no float drift', () {
