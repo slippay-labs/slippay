@@ -51,3 +51,8 @@ apps/listener/a2a-registry.jsonl
 __pycache__/
 *.py[cod]
 *$py.class
+
+# Superpowers workflow scratch artifacts (keep docs/superpowers tracked)
+.superpowers/
+**/.superpowers/
+
