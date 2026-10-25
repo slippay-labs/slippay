@@ -31,7 +31,7 @@ import { requireApiKey } from "../middleware/auth_apikey.ts";
 import { rateLimit } from "../middleware/rate_limit.ts";
 import { serviceClient } from "../lib/supabase.ts";
 import { generateMemo } from "../lib/memo.ts";
-import { mapDbError } from "../lib/db-error.ts";
+import { mapDbError, type DbErrorStatus } from "../lib/db-error.ts";
 import { clientIp, type ConnInfo } from "../lib/client_ip.ts";
 
 // Audit-005 · H1 — hard cap on concurrent OPEN pending orders per
@@ -104,7 +104,7 @@ r.post("/", requireApiKey, async (c) => {
   }).select("id, slug, usd_amount, description").single();
   if (error) {
     const m = mapDbError(error);
-    return c.json({ error: m.code }, m.status as 400 | 409);
+    return c.json({ error: m.code }, m.status as DbErrorStatus);
   }
   const base = Deno.env.get("CHECKOUT_BASE_URL") ?? "https://api.slippay.cc";
   return c.json({
@@ -123,7 +123,7 @@ r.get("/", requireApiKey, async (c) => {
     .order("created_at", { ascending: false });
   if (error) {
     const m = mapDbError(error);
-    return c.json({ error: m.code }, m.status as 400 | 409);
+    return c.json({ error: m.code }, m.status as DbErrorStatus);
   }
   return c.json({ resources: data ?? [] });
 });
@@ -235,7 +235,7 @@ r.get("/:slug", async (c) => {
     });
     if (ordErr) {
       const m = mapDbError(ordErr);
-      return c.json({ error: m.code }, m.status as 400 | 409);
+      return c.json({ error: m.code }, m.status as DbErrorStatus);
     }
   }
 

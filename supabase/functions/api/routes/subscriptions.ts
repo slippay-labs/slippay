@@ -13,7 +13,7 @@ import { generateMemo } from "../lib/memo.ts";
 import { getBrlPerUsdc } from "../lib/rate.ts";
 import { buildChargeTransaction } from "../lib/soroban.ts";
 import { signCheckoutToken } from "../lib/checkout-token.ts";
-import { mapDbError } from "../lib/db-error.ts";
+import { mapDbError, type DbErrorStatus } from "../lib/db-error.ts";
 
 type Vars = { merchant: { id: string; [k: string]: unknown }; supabase: SupabaseClient };
 const r = new Hono<{ Variables: Vars }>();
@@ -55,7 +55,7 @@ r.post("/", requireApiKey, async (c) => {
     metadata: input.metadata ?? {},
     next_charge_at: new Date().toISOString(),
   }).select("*").single();
-  if (error) { const m = mapDbError(error); return c.json({ error: m.code }, m.status as 400 | 409); }
+  if (error) { const m = mapDbError(error); return c.json({ error: m.code }, m.status as DbErrorStatus); }
   return c.json({ subscription: data }, 201);
 });
 
@@ -69,7 +69,7 @@ r.get("/", requireApiKeyOrJwt, async (c) => {
     .order("created_at", { ascending: false }).limit(limit);
   if (status) q = q.eq("status", status);
   const { data, error } = await q;
-  if (error) { const m = mapDbError(error); return c.json({ error: m.code }, m.status as 400 | 409); }
+  if (error) { const m = mapDbError(error); return c.json({ error: m.code }, m.status as DbErrorStatus); }
   return c.json({ subscriptions: data ?? [] });
 });
 
@@ -109,7 +109,7 @@ r.patch("/:id", requireApiKey, async (c) => {
     .update(patch).eq("id", id).eq("merchant_id", merchant.id)
     .select("*").maybeSingle();
   if (error || !data) {
-    if (error) { const m = mapDbError(error); return c.json({ error: m.code }, m.status as 400 | 409); }
+    if (error) { const m = mapDbError(error); return c.json({ error: m.code }, m.status as DbErrorStatus); }
     return c.json({ error: "not_found" }, 404);
   }
   return c.json({ subscription: data });
@@ -175,7 +175,7 @@ r.post("/:id/charge", requireApiKey, async (c) => {
     platform_fee_bp: feeBp,
     fee_usdc: feeUsdc,
   }).select("*").single();
-  if (orderErr) { const m = mapDbError(orderErr); return c.json({ error: m.code }, m.status as 400 | 409); }
+  if (orderErr) { const m = mapDbError(orderErr); return c.json({ error: m.code }, m.status as DbErrorStatus); }
 
   // Bump subscription bookkeeping; charges_done is incremented on payment in
   // the listener (see matcher.ts), not here, since this is just an invoice.

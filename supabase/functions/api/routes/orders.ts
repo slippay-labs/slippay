@@ -7,7 +7,7 @@ import { generateMemo } from "../lib/memo.ts";
 import { getBrlPerUsdc } from "../lib/rate.ts";
 import { serviceClient } from "../lib/supabase.ts";
 import { signCheckoutToken, verifyCheckoutToken } from "../lib/checkout-token.ts";
-import { mapDbError } from "../lib/db-error.ts";
+import { mapDbError, type DbErrorStatus } from "../lib/db-error.ts";
 
 type Vars = { merchant: { id: string; [k: string]: unknown }; supabase: SupabaseClient };
 const r = new Hono<{ Variables: Vars }>();
@@ -132,7 +132,6 @@ r.get("/", requireApiKeyOrJwt, async (c) => {
   const merchant = c.get("merchant");
   const sb = c.get("supabase");
   const status = c.req.query("status");
-<<<<<<< HEAD
   let limit: number;
   try {
     limit = LimitQuerySchema.parse(c.req.query("limit"));
@@ -140,16 +139,13 @@ r.get("/", requireApiKeyOrJwt, async (c) => {
     const issues = (e as { issues?: unknown }).issues ?? (e as { errors?: unknown }).errors ?? [];
     return c.json({ error: "validation_error", issues }, 400);
   }
-=======
-  const limit = LimitQuerySchema.parse(c.req.query("limit"));
->>>>>>> refs/remotes/pr/294
   let q = sb.from("orders").select("*").eq("merchant_id", merchant.id)
     .order("created_at", { ascending: false }).limit(limit);
   if (status) q = q.eq("status", status);
   const { data, error } = await q;
   if (error) {
     const m = mapDbError(error);
-    return c.json({ error: m.code }, m.status as 400 | 409);
+    return c.json({ error: m.code }, m.status as DbErrorStatus);
   }
   const orders = (data ?? []).map((o: Record<string, unknown>) => serializeOrder(o));
   return c.json({ orders });

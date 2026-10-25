@@ -3,7 +3,7 @@ import type { SupabaseClient } from "supabase";
 import { CreateMerchantInputSchema, PatchMerchantInputSchema, type Merchant } from "@slippay/shared";
 import { requireJwt } from "../middleware/auth_jwt.ts";
 import { generateApiKey, hashApiKey, prefixOf } from "../lib/apikey.ts";
-import { mapDbError } from "../lib/db-error.ts";
+import { mapDbError, type DbErrorStatus } from "../lib/db-error.ts";
 import { StrKey } from "npm:@stellar/stellar-sdk";
 
 // Hono v4 requires Variables typed on the instance for c.get/c.set.
@@ -52,7 +52,7 @@ r.post("/", requireJwt, async (c) => {
     .single();
   if (error) {
     const m = mapDbError(error);
-    return c.json({ error: m.code }, m.status as 400 | 409);
+    return c.json({ error: m.code }, m.status as DbErrorStatus);
   }
   const safe = data;
   return c.json({ merchant: safe as Merchant, api_key: apiKey.plain }, 201);
@@ -82,7 +82,7 @@ r.patch("/me", requireJwt, async (c) => {
     .single();
   if (error) {
     const m = mapDbError(error);
-    return c.json({ error: m.code }, m.status as 400 | 409);
+    return c.json({ error: m.code }, m.status as DbErrorStatus);
   }
   const safe = data;
   return c.json({ merchant: safe });
@@ -102,7 +102,7 @@ r.post("/me/rotate-key", requireJwt, async (c) => {
     .single();
   if (error) {
     const m = mapDbError(error);
-    return c.json({ error: m.code }, m.status as 400 | 409);
+    return c.json({ error: m.code }, m.status as DbErrorStatus);
   }
   return c.json({ api_key: apiKey.plain });
 });

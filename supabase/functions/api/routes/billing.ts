@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { SupabaseClient } from "supabase";
 import { requireApiKeyOrJwt } from "../middleware/auth_any.ts";
-import { mapDbError } from "../lib/db-error.ts";
+import { mapDbError, type DbErrorStatus } from "../lib/db-error.ts";
 
 type Vars = { merchant: { id: string; platform_fee_bp?: number; [k: string]: unknown }; supabase: SupabaseClient };
 const r = new Hono<{ Variables: Vars }>();
@@ -29,7 +29,7 @@ r.get("/fees", requireApiKeyOrJwt, async (c) => {
     .eq("status", "paid")
     .gte("paid_at", from)
     .lte("paid_at", to);
-  if (error) { const m = mapDbError(error); return c.json({ error: m.code }, m.status as 400 | 409); }
+  if (error) { const m = mapDbError(error); return c.json({ error: m.code }, m.status as DbErrorStatus); }
 
   const rows = data ?? [];
   const sum = (k: string) => rows.reduce((a, o) => a + parseFloat((o as Record<string, string>)[k] ?? "0"), 0);
