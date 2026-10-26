@@ -329,3 +329,121 @@ Deno.test("POST /v1/4p/offramp rejects mismatched receiver_wallet when FOURP_OFF
     Deno.env.delete("FOURP_OFFRAMP_RECEIVER");
   }
 });
+
+// ---- ramp_transactions store: upsert and read assertions (#463) ------------
+
+import { getRampTx, saveRampTx, upsertRampTxFromWebhook } from "../lib/ramp/store.ts";
+
+Deno.test("upsertRampTxFromWebhook returns null when gatewayId and partnerTransactionId are missing", async () => {
+  const result = await upsertRampTxFromWebhook({});
+  assertEquals(result, null);
+
+  const emptyIds = await upsertRampTxFromWebhook({
+    ids: { gatewayId: "gw-NOT-UPDATED", partnerTransactionId: "ptx-NOT-UPDATED" },
+  });
+  assertEquals(emptyIds, null);
+});
+
+Deno.test("upsertRampTxFromWebhook strips -NOT-UPDATED sentinels and persists to ramp_transactions", async () => {
+  Deno.env.set("SUPABASE_URL", Deno.env.get("SUPABASE_URL") ?? "http://127.0.0.1:54321");
+  Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "mock_key");
+  const orig = globalThis.fetch;
+  let capturedBody: Record<string, unknown> | null = null;
+  let capturedUrl = "";
+
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/rest/v1/ramp_transactions")) {
+      capturedUrl = url;
+      if (init?.body) {
+        capturedBody = JSON.parse(init.body.toString());
+      }
+      return Promise.resolve(new Response(JSON.stringify([{ gateway_id: "gw_real_123" }]), { status: 201 }));
+    }
+    return orig(input, init);
+  }) as typeof fetch;
+
+  try {
+    const key = await upsertRampTxFromWebhook({
+      ids: {
+        gatewayId: "gw_real_123",
+        partnerTransactionId: "quote_456",
+        transactionId: "tx_789",
+        hashWeb3: "hash-NOT-UPDATED", // should be cleaned to null
+      },
+      transactionPayload: {
+        userId: "usr_1",
+        reaisAmount: 100.50,
+      },
+      transactionType: "onramp",
+      transactionStatus: "completed",
+    });
+
+    assertEquals(key, "gw_real_123");
+    assertEquals(capturedUrl.includes("ramp_transactions"), true);
+    assertEquals(capturedBody?.gateway_id, "gw_real_123");
+    assertEquals(capturedBody?.partner_transaction_id, "quote_456");
+    assertEquals(capturedBody?.transaction_id, "tx_789");
+    assertEquals(capturedBody?.hash_web3, null);
+    assertEquals(capturedBody?.reais_amount, 100.50);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});
+
+Deno.test("saveRampTx and getRampTx roundtrip against ramp_transactions store", async () => {
+  Deno.env.set("SUPABASE_URL", Deno.env.get("SUPABASE_URL") ?? "http://127.0.0.1:54321");
+  Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "mock_key");
+  const orig = globalThis.fetch;
+  const storeDb = new Map<string, Record<string, unknown>>();
+
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input.toString();
+    if (url.includes("/rest/v1/ramp_transactions")) {
+      const method = init?.method ?? "GET";
+      if (method === "POST" && init?.body) {
+        const body = JSON.parse(init.body.toString());
+        storeDb.set(body.gateway_id, body);
+        return Promise.resolve(new Response(JSON.stringify([body]), { status: 201 }));
+      }
+      if (method === "GET") {
+        const decodedUrl = decodeURIComponent(url);
+        const idMatch = decodedUrl.match(/gateway_id\.eq\.([^,\)]+)/);
+        const queryId = idMatch ? idMatch[1] : "gw_roundtrip_1";
+        const found = storeDb.get(queryId);
+        if (found) {
+          return Promise.resolve(new Response(JSON.stringify(found), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }));
+        }
+        return Promise.resolve(new Response(JSON.stringify(null), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }));
+      }
+    }
+    return orig(input, init);
+  }) as typeof fetch;
+
+  try {
+    await saveRampTx({
+      gatewayId: "gw_roundtrip_1",
+      provider: "criptopix",
+      transactionId: "tx_roundtrip_1",
+      transactionStatus: "PAID",
+      reaisAmount: 250,
+    });
+
+    const record = await getRampTx("gw_roundtrip_1");
+    assertEquals(record?.gatewayId, "gw_roundtrip_1");
+    assertEquals(record?.provider, "criptopix");
+    assertEquals(record?.transactionStatus, "PAID");
+    assertEquals(record?.reaisAmount, 250);
+
+    const missing = await getRampTx("gw_non_existent");
+    assertEquals(missing, null);
+  } finally {
+    globalThis.fetch = orig;
+  }
+});

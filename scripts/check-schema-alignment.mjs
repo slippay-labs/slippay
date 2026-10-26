@@ -52,6 +52,41 @@ if (dockerEnvMatch) {
   }
 }
 
+// 4. Verify all .sql database migrations reside strictly inside supabase/migrations/
+const supabaseMigrationsDir = path.resolve(ROOT, "supabase", "migrations");
+const strayMigrations = [];
+
+function scanSqlFiles(dir) {
+  if (!fs.existsSync(dir)) return;
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === "node_modules" || entry.name === ".git" || entry.name === "dist") {
+      continue;
+    }
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (path.resolve(fullPath) === supabaseMigrationsDir) {
+        continue; // skip the legitimate migrations dir
+      }
+      scanSqlFiles(fullPath);
+    } else if (entry.isFile() && entry.name.endsWith(".sql")) {
+      // If it looks like a migration (timestamp prefix) or is in any migrations folder
+      if (/^\d{14}_.*\.sql$/.test(entry.name) || dir.includes("migrations")) {
+        strayMigrations.push(path.relative(ROOT, fullPath));
+      }
+    }
+  }
+}
+
+scanSqlFiles(ROOT);
+
+if (strayMigrations.length > 0) {
+  console.error(
+    `check-schema-alignment: Found stray .sql migration(s) outside supabase/migrations/:\n  - ${strayMigrations.join("\n  - ")}\nAll migrations must be in supabase/migrations/ for Supabase CLI to apply them.`,
+  );
+  process.exit(1);
+}
+
 console.log(
-  `check-schema-alignment: OK. docker-compose.yml default schema and env examples agree with supabase/config.toml exposed schemas [${exposedSchemas.join(", ")}].`,
+  `check-schema-alignment: OK. docker-compose.yml default schema and env examples agree with supabase/config.toml exposed schemas [${exposedSchemas.join(", ")}]. All migrations verified in supabase/migrations/.`,
 );
