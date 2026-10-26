@@ -1,0 +1,12 @@
+{
+  "name": "slippay/woocommerce-slippay",
+  "description": "SlipPay payment gateway for WooCommerce (USDC / PYUSD on Stellar)",
+  "type": "wordpress-plugin",
+  "license": "Apache-2.0",
+  "require": {
+    "php": ">=7.4"
+  },
+  "scripts": {
+    "test": "php tests/run.php"
+  }
+}

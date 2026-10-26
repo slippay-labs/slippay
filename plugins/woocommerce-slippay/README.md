@@ -97,6 +97,20 @@ Then activate from WordPress admin.
 
 ---
 
+## Testing
+
+Run the test suite using the standalone harness or composer:
+
+```sh
+# Via standalone runner (no dependencies required)
+php tests/run.php
+
+# Or via composer
+composer test
+```
+
+---
+
 ## Security
 
 - Plugin never sees buyer's private key. Wallet flow happens on the SlipPay

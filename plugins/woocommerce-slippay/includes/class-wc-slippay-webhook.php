@@ -91,7 +91,7 @@ class WC_Slippay_Webhook {
         }
 
         $slippay_order_id = sanitize_text_field( $payload['data']['id'] );
-        $type             = sanitize_key( $payload['type'] );
+        $type             = sanitize_text_field( $payload['type'] );
         $tx_hash          = isset( $payload['data']['tx_hash'] ) ? sanitize_text_field( $payload['data']['tx_hash'] ) : '';
 
         $wc_order = $this->find_order_by_slippay_id( $slippay_order_id );
