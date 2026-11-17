@@ -6,7 +6,13 @@ import 'package:decimal/decimal.dart';
 ///
 /// Stellar assets carry 7 decimal places, so 1 USDC == 10,000,000 minor units.
 class UsdcAmount implements Comparable<UsdcAmount> {
-  const UsdcAmount(this.minor);
+  /// Construct from minor units.
+  /// Throws [ArgumentError] if [minor] is negative.
+  UsdcAmount(this.minor) {
+    if (minor.isNegative) {
+      throw ArgumentError.value(minor, 'minor', 'amount cannot be negative');
+    }
+  }
 
   /// Minor units (10^-7 USDC). Always an integer, never negative for a balance.
   final BigInt minor;
@@ -51,7 +57,18 @@ class UsdcAmount implements Comparable<UsdcAmount> {
   String toMinorString() => minor.toString();
 
   UsdcAmount operator +(UsdcAmount o) => UsdcAmount(minor + o.minor);
-  UsdcAmount operator -(UsdcAmount o) => UsdcAmount(minor - o.minor);
+
+  /// Subtracts [o] from this amount.
+  /// Throws [ArgumentError] if the result would be negative (underflow).
+  UsdcAmount operator -(UsdcAmount o) {
+    final diff = minor - o.minor;
+    if (diff.isNegative) {
+      throw ArgumentError(
+        'subtraction would result in a negative UsdcAmount: $minor - ${o.minor}',
+      );
+    }
+    return UsdcAmount(diff);
+  }
   bool operator >(UsdcAmount o) => minor > o.minor;
   bool operator <(UsdcAmount o) => minor < o.minor;
 
