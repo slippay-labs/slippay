@@ -35,10 +35,20 @@
 
 ## API reference
 
+* [Overview](api-reference/README.md)
 * [Authentication](api-reference/authentication.md)
 * [Merchants](api-reference/merchants.md)
 * [Orders](api-reference/orders.md)
 * [Subscriptions](api-reference/subscriptions.md)
+* [Billing](api-reference/billing.md)
+* [On/off-ramp](api-reference/offramp.md)
+* [4P Finance](api-reference/fourp.md)
+* [Ramp webhooks](api-reference/ramp.md)
+* [x402](api-reference/x402.md)
+* [Relayer](api-reference/relayer.md)
+* [Ask Slippay](api-reference/ask.md)
+* [Metrics](api-reference/metrics.md)
+* [Route groups](api-reference/route-groups.md)
 * [Webhooks](api-reference/webhooks.md)
 * [Errors](api-reference/errors.md)
 
