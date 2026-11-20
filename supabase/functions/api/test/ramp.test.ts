@@ -234,9 +234,9 @@ Deno.test("FourPClient surfaces network errors, non-JSON responses, and envelope
   }
 });
 
-// ---- 4P routes: dormant when FOURP_API_KEY is unset (#353) ------------------
+// ---- 4P routes: dormant when FOURP_API_KEY is unset (#353, #65) -------------
 
-Deno.test("4P routes stay dormant (enabled: false / 503 ramp_disabled) when FOURP_API_KEY is unset", async () => {
+Deno.test("4P routes stay dormant (enabled: false / 501 ramp_disabled) when FOURP_API_KEY is unset", async () => {
   Deno.env.delete("FOURP_API_KEY");
 
   const statusRes = await req("/v1/4p/status");
@@ -248,7 +248,7 @@ Deno.test("4P routes stay dormant (enabled: false / 503 ramp_disabled) when FOUR
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ token: "tok_1" }),
   });
-  assertEquals(webhookRes.status, 503);
+  assertEquals(webhookRes.status, 501);
   assertEquals((await webhookRes.json()).error, "ramp_disabled");
 
   const quoteRes = await req("/v1/4p/quote", {
@@ -256,7 +256,7 @@ Deno.test("4P routes stay dormant (enabled: false / 503 ramp_disabled) when FOUR
     headers: { "content-type": "application/json", origin: "https://app.slippay.cc" },
     body: JSON.stringify({ amountBrl: 100 }),
   });
-  assertEquals(quoteRes.status, 503);
+  assertEquals(quoteRes.status, 501);
   assertEquals((await quoteRes.json()).error, "ramp_disabled");
 
   const offrampRes = await req("/v1/4p/offramp", {
@@ -270,7 +270,7 @@ Deno.test("4P routes stay dormant (enabled: false / 503 ramp_disabled) when FOUR
       cpf: "12345678901",
     }),
   });
-  assertEquals(offrampRes.status, 503);
+  assertEquals(offrampRes.status, 501);
   assertEquals((await offrampRes.json()).error, "ramp_disabled");
 });
 
@@ -327,5 +327,50 @@ Deno.test("POST /v1/4p/offramp rejects mismatched receiver_wallet when FOURP_OFF
     globalThis.fetch = orig;
     Deno.env.delete("FOURP_API_KEY");
     Deno.env.delete("FOURP_OFFRAMP_RECEIVER");
+  }
+});
+
+// ---- 4P: "not configured" vs a real upstream failure (#65) ------------------
+// A dormant integration (501 ramp_disabled) and a 4P outage (502 fourp_error)
+// must be distinguishable, so the client can keep retrying through an outage
+// instead of latching "off-ramp not available". See docs/api-reference/errors.md.
+
+Deno.test("4P upstream failures answer 502 fourp_error, distinct from 501 ramp_disabled", async () => {
+  const orig = globalThis.fetch;
+  const headers = { "content-type": "application/json", origin: "https://app.slippay.cc" };
+
+  // 1. not configured -> 501
+  Deno.env.delete("FOURP_API_KEY");
+  const disabledRes = await req("/v1/4p/offramp/quote", {
+    method: "POST",
+    headers,
+    body: JSON.stringify({ amountUsdc: 25 }),
+  });
+  assertEquals(disabledRes.status, 501);
+  assertEquals((await disabledRes.json()).error, "ramp_disabled");
+
+  // 2. configured, but 4P is down -> 502
+  Deno.env.set("FOURP_API_KEY", "test-4p-key");
+  globalThis.fetch = (() =>
+    Promise.resolve(new Response("<html>503 Service Unavailable</html>", { status: 503 }))) as typeof fetch;
+  try {
+    const outageRes = await req("/v1/4p/offramp/quote", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ amountUsdc: 25 }),
+    });
+    assertEquals(outageRes.status, 502);
+    assertEquals((await outageRes.json()).error, "fourp_error");
+
+    const onrampOutage = await req("/v1/4p/quote", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ amountBrl: 100 }),
+    });
+    assertEquals(onrampOutage.status, 502);
+    assertEquals((await onrampOutage.json()).error, "fourp_error");
+  } finally {
+    globalThis.fetch = orig;
+    Deno.env.delete("FOURP_API_KEY");
   }
 });
