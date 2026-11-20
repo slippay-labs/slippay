@@ -1,4 +1,11 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+
+// Stub the Supabase-backed auth module (see apiAuth.test.ts) so importing
+// ramp4p.ts never builds a real client or touches the network.
+const { getSession } = vi.hoisted(() => ({ getSession: vi.fn() }));
+vi.mock("./auth.tsx", () => ({ supabase: { auth: { getSession } } }));
+
+import { Ramp4pError, createOfframp4p, quoteOfframp4p } from "./ramp4p.ts";
 
 describe("4P quote margin and rate agreement (Resolves #109)", () => {
   const marginBps = 280; // 2.80% default Slippay margin
@@ -38,5 +45,64 @@ describe("4P quote margin and rate agreement (Resolves #109)", () => {
     // Number of decimal places never exceeds 6 decimals (native USDC)
     const decimals = (String(net).split(".")[1] || "").length;
     expect(decimals).toBeLessThanOrEqual(6);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Resolves #65: "not configured" and "upstream down" must not look the same
+// ---------------------------------------------------------------------------
+
+function jsonResponse(body: unknown, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+describe("4P disabled vs upstream failure (Resolves #65)", () => {
+  beforeEach(() => {
+    getSession.mockResolvedValue({ data: { session: null } });
+    vi.stubGlobal("fetch", vi.fn());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    getSession.mockReset();
+  });
+
+  it("treats 501 ramp_disabled as a disabled integration", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ error: "ramp_disabled" }, 501));
+    await expect(quoteOfframp4p(25)).resolves.toEqual({ brlOut: null, receiver: null, asset: null });
+  });
+
+  it("still treats a 404 off-ramp endpoint as not live yet", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ error: "not_found" }, 404));
+    await expect(quoteOfframp4p(25)).resolves.toEqual({ brlOut: null, receiver: null, asset: null });
+  });
+
+  it("surfaces an upstream 4P outage (502) as a retryable error, not 'disabled'", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ error: "fourp_error", message: "down" }, 502));
+    const err = await quoteOfframp4p(25).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Ramp4pError);
+    expect((err as Ramp4pError).code).toBe("upstream");
+    expect((err as Ramp4pError).status).toBe(502);
+  });
+
+  it("keeps a specific 502 code (receiver_mismatch) instead of flattening it to 'upstream'", async () => {
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse({ error: "receiver_mismatch", message: "4P receiver did not match the pinned address" }, 502),
+    );
+    const err = await createOfframp4p({ usdc: 25, pixKey: "a@b.c", sender: "0x1", email: "a@b.c", doc: "12345678901" })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Ramp4pError);
+    expect((err as Ramp4pError).code).toBe("receiver_mismatch");
+    expect((err as Ramp4pError).message).toBe("4P receiver did not match the pinned address");
+  });
+
+  it("surfaces a bare 503 as an outage, not a disabled integration", async () => {
+    vi.mocked(fetch).mockResolvedValue(jsonResponse({ error: "ramp_error" }, 503));
+    const err = await quoteOfframp4p(25).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(Ramp4pError);
+    expect((err as Ramp4pError).code).toBe("upstream");
+    expect((err as Ramp4pError).status).toBe(503);
   });
 });

@@ -19,7 +19,25 @@ async function handle<T>(res: Response): Promise<T> {
   try { json = await res.json(); } catch { /* non-json */ }
   if (!res.ok) {
     const j = json as { error?: string; message?: string } | null;
-    if (res.status === 503) throw new Ramp4pError("disabled", "Pagamento em Pix ainda não está ligado.", 503);
+    // Branch on the error code as well as the status: 501 `ramp_disabled` means
+    // the integration is not configured (permanent until we turn it on), while
+    // 502/503 is a transient 4P outage that must stay retryable.
+    if (res.status === 501 || j?.error === "ramp_disabled") {
+      throw new Ramp4pError("disabled", "Pagamento em Pix ainda não está ligado.", res.status);
+    }
+    // A 502/503 carrying only a generic upstream code is a transient 4P outage.
+    // One that carries a specific code (e.g. `receiver_mismatch`) falls through
+    // below so its own code and message reach the caller intact.
+    if (
+      (res.status === 502 || res.status === 503) &&
+      (!j?.error || j.error === "fourp_error" || j.error === "ramp_error")
+    ) {
+      throw new Ramp4pError(
+        "upstream",
+        "O provedor de Pix está indisponível agora. Tente de novo em instantes.",
+        res.status,
+      );
+    }
     if (res.status === 401) throw new Ramp4pError("auth", "Entre na sua conta para continuar.", 401);
     throw new Ramp4pError(j?.error ?? "error", j?.message ?? `Erro ${res.status}`, res.status);
   }
@@ -127,7 +145,9 @@ export interface Offramp4pQuote {
 }
 
 /** Returns approximate BRL to be received for `usdc` USDC.
- *  If the endpoint returns 503/404 (not live yet), returns null fields gracefully. */
+ *  If the off-ramp is not live yet (501 `ramp_disabled`, or 404), returns null
+ *  fields gracefully. A provider outage (502/503) throws, so it is reported as a
+ *  temporary failure instead of "off-ramp not available". */
 export async function quoteOfframp4p(usdc: number): Promise<Offramp4pQuote> {
   try {
     const data = await post<{ brlOut?: number; receiver?: string; asset?: string }>(
@@ -140,7 +160,7 @@ export async function quoteOfframp4p(usdc: number): Promise<Offramp4pQuote> {
       asset: data.asset ?? null,
     };
   } catch (e) {
-    if (e instanceof Ramp4pError && (e.status === 503 || e.status === 404)) {
+    if (e instanceof Ramp4pError && (e.code === "disabled" || e.status === 404)) {
       return { brlOut: null, receiver: null, asset: null };
     }
     throw e;

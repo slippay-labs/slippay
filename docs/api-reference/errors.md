@@ -27,7 +27,8 @@ SlipPay returns errors as JSON with consistent shape:
 | 404 | resource not found OR you don't have permission to see it (no leak) |
 | 409 | resource state conflicts with the action (e.g., charge after cancel) |
 | 422 | semantic error in input that schema didn't catch |
-| 5xx | SlipPay broke; safe to retry with backoff |
+| 501 | the integration behind this route is not configured on this deployment; **not** retryable |
+| 5xx | SlipPay broke; safe to retry with backoff (except `501`) |
 
 ## Common error codes
 
@@ -75,12 +76,37 @@ SlipPay returns errors as JSON with consistent shape:
 | 400 | `rotate_failed` | key rotation failed |
 | 404 | `not_found` | no merchant for this auth user |
 
+### Ramps (4P on-ramp / off-ramp, `/v1/4p/*`)
+
+A dormant integration and a provider outage are different conditions and carry
+different status codes. Clients must branch on the status (or the `error` code),
+not treat every 5xx the same:
+
+| status | code | meaning | retry? |
+|---|---|---|---|
+| 501 | `ramp_disabled` | the 4P integration is not configured on this deployment (`FOURP_API_KEY` unset). Permanent until it is turned on. | no |
+| 502 | `fourp_error` | 4P answered with an error or was unreachable; `message` carries 4P's reason | yes |
+| 502 | `ramp_error` | an unexpected server-side failure while talking to 4P | yes |
+| 502 | `receiver_mismatch` | 4P returned a receiver wallet that did not match `FOURP_OFFRAMP_RECEIVER`; nothing was signed | no |
+| 404 | `not_found` | the ramp order id is unknown to the store | no |
+
+`GET /v1/4p/status` always answers `200` with `{ "enabled": false }` while the
+integration is dormant, so a client can probe availability without reading an
+error. `503` is never used to mean "disabled" — a `502`/`503` from a ramp route
+is a transient upstream condition and the caller should retry rather than
+latching "ramp not available".
+
+The same split applies to the Etherfuse off-ramp route (`/v1/offramp/*`), which
+returns `503 offramp_disabled` while dormant; that code is still `503` for
+backwards compatibility and is distinguishable by its `error` value.
+
 ## Retry guidance
 
 | status | retry? |
 |---|---|
 | 4xx | no — the request is wrong; fix and retry manually |
-| 5xx | yes — exponential backoff, max 5 attempts |
+| 501 | no — the feature is not configured on this deployment; retrying will not help |
+| other 5xx | yes — exponential backoff, max 5 attempts |
 | network error / timeout | yes — but be careful about idempotency (orders are not idempotent on POST; use the `subscription.charge` idempotency contract for recurring) |
 
 ## Validation issue shape

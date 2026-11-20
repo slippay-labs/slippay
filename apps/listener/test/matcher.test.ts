@@ -14,11 +14,7 @@ const validEvent: StellarPaymentEvent = {
   memo_b64: Buffer.from("ab".repeat(32), "hex").toString("base64"),
   successful: true,
   asset_code: "USDC",
-<<<<<<< HEAD
   asset_issuer: "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVF4NAT4AQH3ZLLFLA5",
-=======
-  asset_issuer: "GBBD47IF6LWK7P7MDEVCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5",
->>>>>>> refs/remotes/pr/339
   to: "G" + "M".repeat(55),
   amount: "9.9000000",
   hash: "txhash",
