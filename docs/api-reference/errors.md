@@ -117,3 +117,13 @@ with:
 - the request you sent (sanitize the API key)
 - the response body and status
 - timestamp (so we can find the request in server logs)
+
+## 4P ramp availability
+
+| HTTP status | Error | Meaning | Client behavior |
+| --- | --- | --- | --- |
+| `501` | `ramp_disabled` | The 4P integration is not configured on this deployment. | Treat the ramp as unavailable until configuration changes. |
+| `502` / `503` | provider or gateway error | 4P is configured, but the upstream provider failed or is temporarily unavailable. | Surface a temporary error and allow retry; do not cache this as permanently disabled. |
+
+Clients must inspect both the HTTP status and the JSON `error` field. A `503`
+response alone never means that the ramp is disabled.

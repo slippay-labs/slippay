@@ -40,3 +40,17 @@ describe("4P quote margin and rate agreement (Resolves #109)", () => {
     expect(decimals).toBeLessThanOrEqual(6);
   });
 });
+
+describe("4P disabled versus provider outage contract", () => {
+  it("uses the typed 501 response for an unconfigured integration", async () => {
+    const source = await import("./ramp4p.ts?raw");
+    expect(source.default).toContain('status === 501');
+    expect(source.default).toContain('error === "ramp_disabled"');
+  });
+
+  it("does not classify HTTP 503 as permanently disabled", async () => {
+    const source = await import("./ramp4p.ts?raw");
+    expect(source.default).not.toMatch(/status === 503[^\n]*(?:disabled|ramp_disabled)/);
+    expect(source.default).not.toMatch(/status === 404\s*\|\|[^\n]*status === 503/);
+  });
+});
