@@ -27,6 +27,8 @@ SlipPay returns errors as JSON with consistent shape:
 | 404 | resource not found OR you don't have permission to see it (no leak) |
 | 409 | resource state conflicts with the action (e.g., charge after cancel) |
 | 422 | semantic error in input that schema didn't catch |
+| 501 | feature or ramp integration not configured/enabled |
+| 502 | upstream provider outage or gateway error (safe to retry) |
 | 5xx | SlipPay broke; safe to retry with backoff |
 
 ## Common error codes
@@ -74,6 +76,15 @@ SlipPay returns errors as JSON with consistent shape:
 | 400 | `update_failed` | PATCH failed |
 | 400 | `rotate_failed` | key rotation failed |
 | 404 | `not_found` | no merchant for this auth user |
+
+### Ramps (4P / PIX)
+
+| status | code | meaning |
+|---|---|---|
+| 501 | `ramp_disabled` | integration is not configured or disabled on this deployment |
+| 502 | `fourp_error` | upstream 4P provider error or temporary outage (safe to retry) |
+| 502 | `ramp_error` | internal gateway error communicating with ramp provider |
+| 502 | `receiver_mismatch` | provider returned a receiver address differing from pinned config |
 
 ## Retry guidance
 

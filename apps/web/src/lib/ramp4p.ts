@@ -19,7 +19,12 @@ async function handle<T>(res: Response): Promise<T> {
   try { json = await res.json(); } catch { /* non-json */ }
   if (!res.ok) {
     const j = json as { error?: string; message?: string } | null;
-    if (res.status === 503) throw new Ramp4pError("disabled", "Pagamento em Pix ainda não está ligado.", 503);
+    if (res.status === 501 || j?.error === "ramp_disabled") {
+      throw new Ramp4pError("disabled", "Pagamento em Pix ainda não está ligado.", res.status);
+    }
+    if (res.status === 503 || res.status === 502) {
+      throw new Ramp4pError("upstream", j?.message ?? "Serviço temporariamente indisponível.", res.status);
+    }
     if (res.status === 401) throw new Ramp4pError("auth", "Entre na sua conta para continuar.", 401);
     throw new Ramp4pError(j?.error ?? "error", j?.message ?? `Erro ${res.status}`, res.status);
   }
@@ -127,7 +132,7 @@ export interface Offramp4pQuote {
 }
 
 /** Returns approximate BRL to be received for `usdc` USDC.
- *  If the endpoint returns 503/404 (not live yet), returns null fields gracefully. */
+ *  If the endpoint returns 501/404 (not configured or not live yet), returns null fields gracefully. */
 export async function quoteOfframp4p(usdc: number): Promise<Offramp4pQuote> {
   try {
     const data = await post<{ brlOut?: number; receiver?: string; asset?: string }>(
@@ -140,7 +145,7 @@ export async function quoteOfframp4p(usdc: number): Promise<Offramp4pQuote> {
       asset: data.asset ?? null,
     };
   } catch (e) {
-    if (e instanceof Ramp4pError && (e.status === 503 || e.status === 404)) {
+    if (e instanceof Ramp4pError && (e.status === 501 || e.status === 404 || e.code === "disabled")) {
       return { brlOut: null, receiver: null, asset: null };
     }
     throw e;

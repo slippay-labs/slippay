@@ -54,7 +54,7 @@ r.get("/status", (c) => {
 // 4P posts only a notification token; we pull the real status via the API key.
 r.post("/webhook", async (c) => {
   const cl = client();
-  if (!cl) return c.json({ error: "ramp_disabled" }, 503);
+  if (!cl) return c.json({ error: "ramp_disabled" }, 501);
 
   // Defense-in-depth: prefer requests from 4P's documented egress IP.
   const xff = (c.req.header("x-forwarded-for") ?? "").split(",").map((s) => s.trim());
@@ -111,7 +111,7 @@ const QuoteSchema = z.object({ amountBrl: z.number().positive() });
 
 r.post("/quote", async (c) => {
   const cl = client();
-  if (!cl) return c.json({ error: "ramp_disabled" }, 503);
+  if (!cl) return c.json({ error: "ramp_disabled" }, 501);
   let input: z.infer<typeof QuoteSchema>;
   try {
     input = QuoteSchema.parse(await c.req.json());
@@ -161,7 +161,7 @@ const OnrampSchema = z.object({
 
 r.post("/onramp", async (c) => {
   const cl = client();
-  if (!cl) return c.json({ error: "ramp_disabled" }, 503);
+  if (!cl) return c.json({ error: "ramp_disabled" }, 501);
   let input: z.infer<typeof OnrampSchema>;
   try {
     input = OnrampSchema.parse(await c.req.json());
@@ -204,7 +204,7 @@ r.post("/onramp", async (c) => {
 });
 
 r.get("/onramp/:id", async (c) => {
-  if (!client()) return c.json({ error: "ramp_disabled" }, 503);
+  if (!client()) return c.json({ error: "ramp_disabled" }, 501);
   try {
     const rec = await getRampTx(c.req.param("id"));
     if (!rec) return c.json({ error: "not_found" }, 404);
@@ -225,7 +225,7 @@ const OfframpQuoteSchema = z.object({ amountUsdc: z.number().positive() });
 
 r.post("/offramp/quote", async (c) => {
   const cl = client();
-  if (!cl) return c.json({ error: "ramp_disabled" }, 503);
+  if (!cl) return c.json({ error: "ramp_disabled" }, 501);
   let input: z.infer<typeof OfframpQuoteSchema>;
   try {
     input = OfframpQuoteSchema.parse(await c.req.json());
@@ -259,7 +259,7 @@ const OfframpSchema = z.object({
 
 r.post("/offramp", async (c) => {
   const cl = client();
-  if (!cl) return c.json({ error: "ramp_disabled" }, 503);
+  if (!cl) return c.json({ error: "ramp_disabled" }, 501);
   let input: z.infer<typeof OfframpSchema>;
   try {
     input = OfframpSchema.parse(await c.req.json());
@@ -302,7 +302,7 @@ r.post("/offramp", async (c) => {
 });
 
 r.get("/offramp/:id", async (c) => {
-  if (!client()) return c.json({ error: "ramp_disabled" }, 503);
+  if (!client()) return c.json({ error: "ramp_disabled" }, 501);
   try {
     const rec = await getRampTx(c.req.param("id"));
     if (!rec) return c.json({ error: "not_found" }, 404);
