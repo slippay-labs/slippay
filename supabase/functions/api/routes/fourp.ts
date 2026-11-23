@@ -9,7 +9,9 @@
 //   POST /v1/4p/onramp            (authed) — create Pix charge -> wallet
 //   GET  /v1/4p/onramp/:id        (authed) — status from the webhook store
 //
-// Dormant until FOURP_API_KEY is set in the API env.
+// Dormant until FOURP_API_KEY is set in the API env; while dormant the payer-
+// facing routes answer 501 { error: "ramp_disabled" } (not 503, which is
+// reserved for a real 4P outage).
 
 import { Hono, type Context } from "hono";
 import { z } from "zod";
@@ -43,6 +45,13 @@ function fail(c: Context, e: unknown): Response {
   return c.json({ error: "ramp_error", message: String((e as Error)?.message ?? e) }, 502);
 }
 
+// "Not configured" is a deployment state, not an outage: 501 so callers can tell
+// a dormant integration from a genuine upstream failure (502/503), which is
+// transient and retryable. See docs/api-reference/errors.md.
+function disabled(c: Context): Response {
+  return c.json({ error: "ramp_disabled", message: "4P integration is not configured" }, 501);
+}
+
 // ── public ──────────────────────────────────────────────────────────────────
 
 r.get("/status", (c) => {
@@ -54,7 +63,7 @@ r.get("/status", (c) => {
 // 4P posts only a notification token; we pull the real status via the API key.
 r.post("/webhook", async (c) => {
   const cl = client();
-  if (!cl) return c.json({ error: "ramp_disabled" }, 503);
+  if (!cl) return disabled(c);
 
   // Defense-in-depth: prefer requests from 4P's documented egress IP.
   const xff = (c.req.header("x-forwarded-for") ?? "").split(",").map((s) => s.trim());
@@ -111,7 +120,7 @@ const QuoteSchema = z.object({ amountBrl: z.number().positive() });
 
 r.post("/quote", async (c) => {
   const cl = client();
-  if (!cl) return c.json({ error: "ramp_disabled" }, 503);
+  if (!cl) return disabled(c);
   let input: z.infer<typeof QuoteSchema>;
   try {
     input = QuoteSchema.parse(await c.req.json());
@@ -161,7 +170,7 @@ const OnrampSchema = z.object({
 
 r.post("/onramp", async (c) => {
   const cl = client();
-  if (!cl) return c.json({ error: "ramp_disabled" }, 503);
+  if (!cl) return disabled(c);
   let input: z.infer<typeof OnrampSchema>;
   try {
     input = OnrampSchema.parse(await c.req.json());
@@ -204,7 +213,7 @@ r.post("/onramp", async (c) => {
 });
 
 r.get("/onramp/:id", async (c) => {
-  if (!client()) return c.json({ error: "ramp_disabled" }, 503);
+  if (!client()) return disabled(c);
   try {
     const rec = await getRampTx(c.req.param("id"));
     if (!rec) return c.json({ error: "not_found" }, 404);
@@ -225,7 +234,7 @@ const OfframpQuoteSchema = z.object({ amountUsdc: z.number().positive() });
 
 r.post("/offramp/quote", async (c) => {
   const cl = client();
-  if (!cl) return c.json({ error: "ramp_disabled" }, 503);
+  if (!cl) return disabled(c);
   let input: z.infer<typeof OfframpQuoteSchema>;
   try {
     input = OfframpQuoteSchema.parse(await c.req.json());
@@ -259,7 +268,7 @@ const OfframpSchema = z.object({
 
 r.post("/offramp", async (c) => {
   const cl = client();
-  if (!cl) return c.json({ error: "ramp_disabled" }, 503);
+  if (!cl) return disabled(c);
   let input: z.infer<typeof OfframpSchema>;
   try {
     input = OfframpSchema.parse(await c.req.json());
@@ -302,7 +311,7 @@ r.post("/offramp", async (c) => {
 });
 
 r.get("/offramp/:id", async (c) => {
-  if (!client()) return c.json({ error: "ramp_disabled" }, 503);
+  if (!client()) return disabled(c);
   try {
     const rec = await getRampTx(c.req.param("id"));
     if (!rec) return c.json({ error: "not_found" }, 404);
