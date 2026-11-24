@@ -48,13 +48,22 @@ async function legacyHashApiKey(plain: string): Promise<string> {
   return bufToHex(buf);
 }
 
-export async function verifyApiKey(plain: string, hash: string): Promise<boolean> {
-  // Try the peppered hash first.
+/**
+ * Hashes to look up for `plain`, in priority order: the canonical peppered
+ * hash, then the legacy unsalted SHA-256 so existing keys still authenticate
+ * until the merchant rotates via /me/rotate-key. Remove the legacy entry
+ * (and `legacyHashApiKey`) once rotation is complete — this is the only
+ * place that needs to change.
+ */
+export async function hashCandidates(plain: string): Promise<[string, string]> {
   const peppered = await hashApiKey(plain);
-  if (constantTimeEqual(peppered, hash)) return true;
-  // Fall back to legacy SHA-256 so existing keys still authenticate until
-  // the merchant rotates. Remove this branch once rotation is complete.
   const legacy = await legacyHashApiKey(plain);
+  return [peppered, legacy];
+}
+
+export async function verifyApiKey(plain: string, hash: string): Promise<boolean> {
+  const [peppered, legacy] = await hashCandidates(plain);
+  if (constantTimeEqual(peppered, hash)) return true;
   return constantTimeEqual(legacy, hash);
 }
 
