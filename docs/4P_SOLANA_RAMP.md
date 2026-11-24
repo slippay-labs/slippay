@@ -45,3 +45,18 @@ POST https://api.slippay.cc/api/v1/4p/onramp
 - Did NOT flip `FOURP_CHAIN` global to Solana (per-request override is enough and
   keeps Base intact).
 - Did NOT create a 4P onramp (outward-facing side effect).
+
+## Margin rounding (single rule, both directions)
+
+Slippay applies its spread as integer basis points through
+supabase/functions/api/lib/fourp/margin.ts:
+
+- marginBps is an integer in [0, 1000] (0-10%). Anything else falls back to 280.
+- The amount is scaled to integer minor units first (2 decimals for BRL, 6 for USDC),
+  the margin is applied as units * (10000 - marginBps) / 10000, and the result is
+  floored, so a sub-unit remainder always stays with the platform.
+- The net figure drives the displayed rate. On the off-ramp brlOut is the floored net,
+  so brlOut / cryptoOut is the rate the user actually receives; on the on-ramp the net
+  price per asset is floored to 6 decimals.
+- Money values are never produced with toFixed, which truncates a string
+  representation and can disagree with what 4P settles.

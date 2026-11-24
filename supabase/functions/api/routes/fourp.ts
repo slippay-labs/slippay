@@ -17,6 +17,7 @@ import { rateLimit } from "../middleware/rate_limit.ts";
 import { FourPClient, FourPError } from "../lib/fourp/client.ts";
 import { getRampTx, saveRampTx } from "../lib/ramp/store.ts";
 import { isAllowedOrigin } from "@slippay/shared";
+import { applyMargin, resolveMarginBps } from "../lib/fourp/margin.ts";
 
 const r = new Hono();
 
@@ -123,19 +124,16 @@ r.post("/quote", async (c) => {
     // Slippay spread (default 2.8%). Applied to the displayed crypto output.
     // NOTE: real capture requires 4P to settle the NET amount (fee field) or a
     // rev-share — on a direct-to-user on-ramp the Pix lands at 4P, not Slippay.
-    const bps = Number(Deno.env.get("FOURP_MARGIN_BPS"));
-    const marginBps = Number.isFinite(bps) && bps >= 0 && bps <= 1000 ? bps : 280;
+    const marginBps = resolveMarginBps(Deno.env.get("FOURP_MARGIN_BPS"));
     // Capture the gross (4P) price per asset before applying our margin, so the
     // client can show the user the exact dollar rate AND the fee transparently.
     const map = q.quote ?? {};
     const gross: Record<string, number> = {};
-    const netBps = 10_000 - marginBps;
     for (const k of Object.keys(map)) {
       gross[k] = map[k].price;
-      // Integer basis points: net multiplier (10_000 - marginBps).
-      // Explicit rounding direction: round down (Math.floor) to native USDC precision (6 decimals),
-      // in the platform's disfavour, eliminating 8-decimal toFixed string truncation.
-      const net = Math.floor(gross[k] * netBps * 1e2) / 1e6;
+      // Integer basis points, floored to native USDC precision (6 decimals) in
+      // the platform's disfavour. No toFixed string truncation of money.
+      const net = applyMargin(gross[k], marginBps, 6);
       map[k] = {
         ...map[k],
         price: net,
@@ -234,12 +232,13 @@ r.post("/offramp/quote", async (c) => {
   }
   try {
     const q = await cl.quoteOfframp(String(input.amountUsdc));
-    const bps = Number(Deno.env.get("FOURP_MARGIN_BPS"));
-    const marginBps = Number.isFinite(bps) && bps >= 0 && bps <= 1000 ? bps : 280;
+    const marginBps = resolveMarginBps(Deno.env.get("FOURP_MARGIN_BPS"));
     const entry = q.quote ? Object.values(q.quote)[0] : undefined;
     const brlGross = entry?.price;
+    // Same integer-basis-point rule as the on-ramp: floored to cent precision so
+    // the quoted BRL always matches what 4P actually settles.
     const brlOut = typeof brlGross === "number"
-      ? Number((brlGross * (1 - marginBps / 10_000)).toFixed(2))
+      ? applyMargin(brlGross, marginBps, 2)
       : null;
     return c.json({ brlOut, receiver: Deno.env.get("FOURP_OFFRAMP_RECEIVER")?.trim() || null, asset: cl.asset, marginBps });
   } catch (e) {
